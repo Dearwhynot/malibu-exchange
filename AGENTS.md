@@ -1,0 +1,183 @@
+# AGENTS.md — Malibu Exchange
+
+## Project overview
+- WordPress theme for "Malibu Exchange".
+- This is a small backoffice project for a Telegram bot related to currency exchange operations.
+- The project is intentionally lightweight.
+- It is not a React app and should not be turned into one unless explicitly requested.
+- Visual direction: premium beach-inspired backoffice with themes of Thailand, Russia, surfing, sea, beach, sun.
+- UI mood: clean, calm, polished, operator-friendly.
+
+## Main product idea
+- Small internal operator workspace.
+- Several simple pages only.
+- Main use cases:
+  - dashboard
+  - orders / exchange requests
+  - rates
+  - settings
+  - logs / service utilities if needed later
+- The system should stay fast, understandable and easy to maintain.
+
+## Stack
+- WordPress theme
+- PHP
+- HTML
+- CSS
+- JavaScript
+- jQuery is allowed and preferred for practical UI behavior and AJAX
+- Bootstrap-compatible markup is acceptable
+- No React / Vue / TypeScript / build pipeline unless explicitly requested
+
+## Architecture rules
+1. Keep the project small and easy to reason about.
+2. Prefer plain WordPress PHP templates over abstractions.
+3. Prefer reusable template parts only where they genuinely simplify code.
+4. Do not introduce heavy frameworks or unnecessary dependencies.
+5. Do not overengineer.
+6. Keep business logic out of templates when practical.
+7. Keep CSS overrides and local JS separate from vendor code.
+8. Do not edit third-party vendor files directly unless absolutely necessary.
+9. Add code in a way that remains deployable by simple file upload.
+10. Preserve readability over cleverness.
+
+## Theme structure intent
+- Root page templates may include:
+  - `page-login.php`
+  - `page-dashboard.php`
+  - `page-orders.php`
+  - `page-rates.php`
+  - `page-settings.php`
+- Shared layout parts may include:
+  - `header.php`
+  - `footer.php`
+  - `sidebar.php`
+  - `topbar.php`
+- Logic files live in:
+  - `inc/setup.php`
+  - `inc/helpers.php`
+  - `inc/security.php`
+  - `inc/enqueue.php`
+  - `inc/ajax/*.php`
+- Assets live in:
+  - `assets/css/`
+  - `assets/js/`
+  - `assets/img/`
+
+## Access control
+- This is a backoffice theme, not a public marketing site.
+- Logged-out users should be redirected to the login page.
+- Backoffice pages should require authentication.
+- Role-based restrictions may be added later if needed.
+
+## Data / DB usage
+- WordPress may be used with:
+  - standard WP pages and options
+  - custom AJAX handlers
+  - direct `$wpdb` queries for custom tables if needed
+- Keep DB access explicit and simple.
+- Avoid hiding important queries behind unnecessary abstraction layers.
+
+## UI / UX principles
+- Clean operator interface.
+- Premium but restrained visual style.
+- Readability first.
+- Quick actions matter more than decorative animation.
+- Forms, status badges, tables and compact dashboards are the priority.
+- Avoid visual clutter.
+- Avoid giant enterprise-dashboard complexity.
+
+## Visual direction
+- Theme name: Malibu Exchange
+- Mood keywords:
+  - Thailand
+  - Russia
+  - surfing
+  - sea
+  - beach
+  - sun
+  - tropical premium backoffice
+- The UI should feel visually distinct from previous projects like Doverka.
+- It should not resemble a heavy Metronic-style corporate admin panel.
+
+## JavaScript rules
+- Prefer jQuery for:
+  - AJAX actions
+  - filters
+  - forms
+  - modals
+  - quick UI interactions
+- Keep scripts small and page-focused.
+- Load page-specific scripts only where needed.
+- Do not introduce frontend complexity without a clear reason.
+
+## CSS rules
+- Keep selectors understandable.
+- Avoid specificity wars.
+- Put project styling in local theme files such as:
+  - `assets/css/app.css`
+  - optional page-level CSS if really needed
+- If vendor CSS exists, override it in local override files instead of editing vendor files.
+
+## Deployment workflow
+- After each meaningful code change, deploy changed files to the test server immediately.
+- Preferred command for changed files:
+  - `./nodejs_scripts/sftp-deploy.sh <file1> <file2> ...`
+- Full theme sync is allowed when needed:
+  - `./nodejs_scripts/sftp-deploy.sh`
+- Deployment config source:
+  - `.vscode/sftp.json`
+- Assume target folders must already exist on the server unless known otherwise.
+
+## Collaboration protocol
+- Work in small, testable steps.
+- Do not jump ahead too far.
+- Do not start large refactors without need.
+- After each completed change, always provide this exact QA block:
+
+ОБЯЗАТЕЛЬНОЕ ТЕСТИРОВАНИЕ (сделай сразу):
+1) Где открыть
+2) Что нажать (пошагово)
+3) Ожидаемый результат
+4) Что считается провалом
+
+- Do not move to the next task until the user confirms the result.
+- If the result is negative, make a focused fix immediately.
+- No UI improvisation when fixing a specific bug.
+
+## Good first tasks
+1. Finalize the login flow and access protection.
+2. Build a clean dashboard page shell.
+3. Build the orders page with a practical table layout.
+4. Build the rates page with manual save logic.
+5. Add settings persistence via WordPress options.
+6. Add small reusable UI parts for cards, alerts and tables.
+7. Add AJAX actions gradually, only where actually needed.
+
+## Avoid
+- React migration
+- heavy admin frameworks
+- unnecessary build systems
+- abstract architecture for a small project
+- loading all scripts everywhere
+- turning a small operator backoffice into a giant platform
+
+## Telegram callback rules
+- Telegram bot callback must be publicly accessible without WordPress login.
+- Preferred implementation: custom WordPress REST API endpoint.
+- Keep the first version minimal:
+  - accept request
+  - read raw body
+  - decode JSON
+  - write payload to a safe debug log or temporary diagnostic mechanism
+  - return HTTP 200 response
+- Do not place Telegram callback logic inside page templates.
+- Do not couple callback processing to front-end rendering.
+- Keep callback code isolated in a dedicated include or handler.
+- The callback route must not be blocked by forced login logic.
+- Design the callback so it can later support:
+  - secret token validation
+  - update type routing
+  - command/message handlers
+  - service-layer business logic
+- Avoid overengineering in the first implementation.

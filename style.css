@@ -1,0 +1,17 @@
+/*
+Theme Name: Malibu Exchange
+Theme URI: https://example.com/malibu-exchange
+Author: OpenAI
+Author URI: https://openai.com
+Description: Lightweight WordPress backoffice theme for a Telegram bot exchange dashboard. Beach-inspired admin UI shell.
+Version: 1.0.0
+Requires at least: 6.0
+Tested up to: 6.8
+Requires PHP: 7.4
+Text Domain: malibu-exchange
+*/
+
+/*
+ * Minimal file on purpose.
+ * Real styles live in assets/css/app.css
+ */
