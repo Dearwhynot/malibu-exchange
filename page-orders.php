@@ -1,6 +1,7 @@
 <?php
 /*
 Template Name: Orders
+Slug: orders
 */
 malibu_exchange_require_login();
 get_header();

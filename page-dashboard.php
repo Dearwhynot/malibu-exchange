@@ -1,6 +1,7 @@
 <?php
 /*
 Template Name: Dashboard
+Slug: dashboard
 */
 malibu_exchange_require_login();
 get_header();

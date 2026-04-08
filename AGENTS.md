@@ -2,6 +2,8 @@
 
 ## Project overview
 - WordPress theme for "Malibu Exchange".
+- The entire working project lives inside this theme root, including `project-kit-rich/`.
+- `project-kit-rich/` is not an external sibling folder; it is part of the theme tree and is deployable with the same SFTP workflow.
 - This is a small backoffice project for a Telegram bot related to currency exchange operations.
 - The project is intentionally lightweight.
 - It is not a React app and should not be turned into one unless explicitly requested.
@@ -48,6 +50,9 @@
   - `page-orders.php`
   - `page-rates.php`
   - `page-settings.php`
+- When creating or editing a root page template, always add a comment directly below `Template Name` with the exact WordPress page slug to create.
+- Preferred format inside the PHP header comment:
+  - `Slug: authorization`
 - Shared layout parts may include:
   - `header.php`
   - `footer.php`
@@ -133,6 +138,7 @@
 - Work in small, testable steps.
 - Do not jump ahead too far.
 - Do not start large refactors without need.
+- By default, reply to the user in Russian unless the user explicitly asks for another language.
 - After each completed change, always provide this exact QA block:
 
 ОБЯЗАТЕЛЬНОЕ ТЕСТИРОВАНИЕ (сделай сразу):
@@ -181,3 +187,100 @@
   - command/message handlers
   - service-layer business logic
 - Avoid overengineering in the first implementation.
+
+## UI source of truth (VERY IMPORTANT)
+
+- The project includes a folder:
+  `theme source html bootstrap demo`
+
+- This folder contains the original purchased HTML admin template.
+- This is the PRIMARY source of UI, layout and components.
+
+Rules:
+1. Always use this folder as the main reference for:
+   - layout structure
+   - CSS classes
+   - components
+   - markup patterns
+
+2. Before creating any new UI:
+   - search for an existing example in the source folder
+   - reuse existing markup whenever possible
+
+3. Do NOT invent new UI styles if an equivalent exists in the template.
+
+4. Do NOT replace the design system with a custom one.
+
+5. Adapt the template to WordPress, not redesign it.
+
+6. Extract only necessary parts:
+   - do not copy entire demo pages blindly
+   - reuse components carefully
+
+7. Keep vendor styles and scripts separated from custom overrides.
+
+8. The goal is:
+   use the template as a UI-kit, not as a static HTML site.
+
+## Multi-organization architecture (VERY IMPORTANT)
+- The system must be designed from the beginning for multiple isolated organizations.
+- This is not a single-company backoffice.
+- Every business entity in the project should be treated as belonging to a specific organization.
+- Data of one organization must not leak into another organization.
+
+### Core rule
+- All important business data must be organization-scoped by default.
+
+### This includes, but is not limited to:
+- bot settings
+- API credentials
+- login/password pairs for external services
+- tokens and secrets
+- exchange settings
+- rates configuration
+- templates and organization-specific texts
+- operational settings
+- logs, if they are organization-specific
+
+### Storage rule
+- Organization-specific settings must be stored in the database as settings belonging to that organization.
+- Do not assume one global settings set for the whole project if the data logically belongs to an organization.
+- Avoid hardcoding credentials or service settings in theme files or global config when they belong to a specific organization.
+
+### Access / isolation rule
+- Code must always be written with organization isolation in mind.
+- Queries, settings reads and writes, and business operations should always clearly identify the target organization.
+- Do not build logic that implicitly assumes only one organization exists.
+
+### Implementation guidance
+- Prefer a simple and explicit architecture.
+- Do not overengineer multi-tenancy.
+- It is acceptable to start with:
+  - an organizations table
+  - organization_id references in related data
+  - organization-scoped settings storage
+- Keep the structure understandable and maintainable.
+
+### Credentials rule
+- Logins, passwords, tokens, secrets and similar sensitive integration data must be stored per organization in the database if they belong to that organization.
+- Do not scatter organization credentials across code, constants, or unrelated settings.
+- Make it easy to retrieve all integration settings for one organization in a consistent way.
+
+### Future-safe rule
+- Even if the first release starts with one organization, the code must be written so adding more organizations does not require rewriting the whole architecture.   
+
+## UI source of truth (VERY IMPORTANT)
+- The primary UI source is the purchased HTML template in:
+  `theme source html bootstrap demo/condensed`
+- Always use this folder as the first reference for layout, components, markup and styling decisions.
+- Before inventing any new UI, check whether the same component already exists in the source template.
+- Adapt the template to WordPress instead of redesigning it.
+- Do not mix multiple template variants unless explicitly requested.
+
+## Settings architecture rule
+- Do not store organization-specific settings as one global project-wide settings set.
+- If a setting belongs to a specific organization, it must be stored and accessed as organization-specific data.
+
+## Sensitive data note
+- Organization-specific credentials may need protected storage and careful handling.
+- The first implementation may store them in the database in an organization-scoped manner, but the architecture should allow later strengthening of security practices without major rewrites.

@@ -1,6 +1,7 @@
 <?php
 /*
 Template Name: Rates
+Slug: rates
 */
 malibu_exchange_require_login();
 get_header();

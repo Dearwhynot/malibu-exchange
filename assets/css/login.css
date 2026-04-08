@@ -1,0 +1,8 @@
+html,
+body.page-template-page-login {
+  height: 100%;
+}
+
+body.page-template-page-login {
+  min-height: 100vh;
+}

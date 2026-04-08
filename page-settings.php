@@ -1,6 +1,7 @@
 <?php
 /*
 Template Name: Settings
+Slug: settings
 */
 malibu_exchange_require_login();
 get_header();
