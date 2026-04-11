@@ -1,10 +1,11 @@
+<?php $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img'; ?>
 <div class="overlay hide" data-pages="search">
     <!-- BEGIN Overlay Content !-->
     <div class="overlay-content has-results m-t-20">
         <!-- BEGIN Overlay Header !-->
         <div class="container-fluid">
             <!-- BEGIN Overlay Logo !-->
-            <img class="overlay-brand" src="assets/img/logo.png" alt="logo" data-src="assets/img/logo.png" data-src-retina="assets/img/logo_2x.png" width="78" height="22">
+            <img class="overlay-brand" src="<?php echo esc_url($vendor_img_uri . '/logo.png'); ?>" alt="logo" data-src="<?php echo esc_url($vendor_img_uri . '/logo.png'); ?>" data-src-retina="<?php echo esc_url($vendor_img_uri . '/logo_2x.png'); ?>" width="78" height="22">
             <!-- END Overlay Logo !-->
             <!-- BEGIN Overlay Close !-->
             <a href="#" class="close-icon-light btn-link btn-rounded  overlay-close text-black">
@@ -41,7 +42,7 @@
                         <div class="d-flex m-t-15">
                             <!-- BEGIN Search Result Item Thumbnail !-->
                             <div class="thumbnail-wrapper d48 circular bg-success text-white ">
-                                <img width="36" height="36" src="assets/img/profiles/avatar.jpg" data-src="assets/img/profiles/avatar.jpg" data-src-retina="assets/img/profiles/avatar2x.jpg" alt="">
+                                <img width="36" height="36" src="<?php echo esc_url($vendor_img_uri . '/profiles/avatar.jpg'); ?>" data-src="<?php echo esc_url($vendor_img_uri . '/profiles/avatar.jpg'); ?>" data-src-retina="<?php echo esc_url($vendor_img_uri . '/profiles/avatar2x.jpg'); ?>" alt="">
                             </div>
                             <!-- END Search Result Item Thumbnail !-->
                             <div class="p-l-10">

@@ -1,15 +1,20 @@
 <?php
-require_once get_template_directory() . '/inc/setup.php';
-require_once get_template_directory() . '/inc/helpers.php';
-require_once get_template_directory() . '/inc/security.php';
-require_once get_template_directory() . '/inc/menus.php';
-require_once get_template_directory() . '/inc/enqueue.php';
-require_once get_template_directory() . '/inc/template-tags.php';
-require_once get_template_directory() . '/inc/migration-runner.php';
-require_once get_template_directory() . '/inc/telegram-callback.php';
-require_once get_template_directory() . '/inc/ajax/bot-actions.php';
-require_once get_template_directory() . '/inc/ajax/rates.php';
-require_once get_template_directory() . '/inc/ajax/orders.php';
+
+if (!defined('ABSPATH')) {
+	exit;
+}
+
+// require_once get_template_directory() . '/inc/setup.php';
+// require_once get_template_directory() . '/inc/helpers.php';
+// require_once get_template_directory() . '/inc/security.php';
+// require_once get_template_directory() . '/inc/menus.php';
+// require_once get_template_directory() . '/inc/enqueue.php';
+// require_once get_template_directory() . '/inc/template-tags.php';
+// require_once get_template_directory() . '/inc/migration-runner.php';
+// require_once get_template_directory() . '/inc/telegram-callback.php';
+// require_once get_template_directory() . '/inc/ajax/bot-actions.php';
+// require_once get_template_directory() . '/inc/ajax/rates.php';
+// require_once get_template_directory() . '/inc/ajax/orders.php';
 
 // дебаг лог -->
 require_once get_template_directory() . '/includes/debug-log-2.php';
@@ -23,161 +28,14 @@ require_once get_template_directory() . '/includes/simple-captcha.php';
 require_once get_template_directory() . '/includes/daily-force-relogin.php';
 // <-- ежедневный форс-логин
 
-
+// форс-логин -->
 require_once get_template_directory() . '/includes/force-login.php';
+// форс-логин -->
 
-// начало чтобы убрать всякую чушь лишнию 
-// <----DEARWHYNOT
-add_filter('show_admin_bar', '__return_false');
+// рабочий сетам для старта форс-логин -->
+require_once get_template_directory() . '/includes/dearwhynot-start.php';
+// <-- рабочий сетам для старта
 
-remove_action('wp_head',             'print_emoji_detection_script', 7);
-remove_action('admin_print_scripts', 'print_emoji_detection_script');
-remove_action('wp_print_styles',     'print_emoji_styles');
-remove_action('admin_print_styles',  'print_emoji_styles');
-
-remove_action('wp_head', 'wp_resource_hints', 2); //remove dns-prefetch
-remove_action('wp_head', 'wp_generator'); //remove meta name="generator"
-remove_action('wp_head', 'wlwmanifest_link'); //remove wlwmanifest
-remove_action('wp_head', 'rsd_link'); // remove EditURI
-remove_action('wp_head', 'rest_output_link_wp_head'); // remove 'https://api.w.org/
-remove_action('wp_head', 'rel_canonical'); //remove canonical
-remove_action('wp_head', 'wp_shortlink_wp_head', 10); //remove shortlink
-remove_action('wp_head', 'wp_oembed_add_discovery_links'); //remove alternate
-
-// SFTP test marker: visible only to admins in page HTML.
-function doverka_sftp_test_marker()
-{
-	if (!is_user_logged_in() || !current_user_can('manage_options')) {
-		return;
-	}
-	echo "\n<!-- DOVERKA SFTP TEST V3 " . esc_html(current_time('Y-m-d H:i:s')) . " -->\n";
-}
-add_action('wp_footer', 'doverka_sftp_test_marker', 99);
-
-add_filter('updraftplus_textdomain', '__return_false');
-
-// Блокирует REST API доступ к комментариям
-add_filter('rest_endpoints', function ($endpoints) {
-	if (isset($endpoints['/wp/v2/comments'])) {
-		unset($endpoints['/wp/v2/comments']);
-	}
-	return $endpoints;
-});
-
-// Полностью отключаем комментарии и пингбеки
-add_action('admin_init', function () {
-	// Удалить метабокс с комментами
-	remove_meta_box('dashboard_recent_comments', 'dashboard', 'normal');
-
-	// Перенаправление при попытке доступа к страницам комментариев
-	global $pagenow;
-	if ($pagenow === 'edit-comments.php') {
-		wp_redirect(admin_url());
-		exit;
-	}
-
-	// Отключить поддержку комментов у всех типов записей
-	foreach (get_post_types() as $post_type) {
-		if (post_type_supports($post_type, 'comments')) {
-			remove_post_type_support($post_type, 'comments');
-			remove_post_type_support($post_type, 'trackbacks');
-		}
-	}
-});
-
-add_action('admin_init', function () {
-	if ((function_exists('wp_doing_ajax') && wp_doing_ajax()) || (defined('DOING_AJAX') && DOING_AJAX)) {
-		return;
-	}
-	if (!is_user_logged_in()) {
-		return;
-	}
-	if (current_user_can('manage_options')) {
-		return;
-	}
-
-	wp_safe_redirect(home_url('/'));
-	exit;
-}, 1);
-
-// Отключить вывод комментариев на фронте
-add_filter('comments_open', '__return_false', 20, 2);
-add_filter('pings_open', '__return_false', 20, 2);
-add_filter('comments_array', '__return_empty_array', 10, 2);
-// Скрыть меню комментариев в админке
-add_action('admin_menu', function () {
-	remove_menu_page('edit-comments.php');
-});
-
-// Удаление меню "Записи" из админки
-add_action('admin_menu', function () {
-	remove_menu_page('edit.php');
-}, 999);
-// Полное отключение стандартного типа записи "post"
-add_action('init', function () {
-	unregister_post_type('post');
-}, 100);
-// Убираем виджет "Быстрая публикация" на главной админки
-add_action('wp_dashboard_setup', function () {
-	remove_meta_box('dashboard_quick_press', 'dashboard', 'side');
-});
-// Убираем блок "Последние записи"
-add_action('wp_dashboard_setup', function () {
-	remove_meta_box('dashboard_recent_posts', 'dashboard', 'normal');
-});
-
-function is_superviser()
-{
-	// Получаем текущего пользователя
-	$current_user = wp_get_current_user();
-
-	// Проверяем ID пользователя
-	if ($current_user->ID == 1) {
-		return true; // Пользователь имеет ID равный 1 Superviser
-	} else {
-		return false; // Пользователь не имеет ID равный 1 Superviser
-	}
-}
-
-// Disable global-styles-inline-css
-add_action('wp_enqueue_scripts', 'remove_global_styles');
-function remove_global_styles()
-{
-	wp_dequeue_style('global-styles');
-}
-
-/*  DISABLE GUTENBERG STYLE IN HEADER| WordPress 5.9 */
-function wps_deregister_styles()
-{
-	$ver = time(); // версия для сброса кеша браузера (dev)
-	wp_enqueue_script('jquery');
-	wp_deregister_script('wp-embed'); // удалим wp-embed.min.js?ver=5.7.2' в футере
-
-	wp_dequeue_style('global-styles');
-}
-add_action('wp_enqueue_scripts', 'wps_deregister_styles', 100);
-
-// to delete JQMIGRATE: Migrate is installed, version 3.3.2
-function wpschool_remove_jquery_migrate($scripts)
-{
-	if (!is_admin() && isset($scripts->registered['jquery'])) {
-		$script = $scripts->registered['jquery'];
-		if ($script->deps) {
-			$script->deps = array_diff($script->deps, array('jquery-migrate'));
-		}
-	}
-}
-add_action('wp_default_scripts', 'wpschool_remove_jquery_migrate');
-
-// удалить ссылку, а изменить сопровождающий её текст ошибки на сайте
-add_filter('gettext', function ($translated_text, $text, $domain) {
-	if ($text === 'Learn more about troubleshooting WordPress.') {
-		return ''; // Заменяет текст на пустоту
-	}
-	return $translated_text;
-}, 20, 3);
-// конец чтобы убрать всякую чушь лишнию 
-// DEARWHYNOT---->
 
 /**
  * Основные функции темы Malibu Exchange Pages Starter.
@@ -188,230 +46,74 @@ add_filter('gettext', function ($translated_text, $text, $domain) {
  * - готовим платформу, от которой потом удобно плодить страницы.
  */
 
-if (!defined('ABSPATH')) {
-	exit;
-}
+// /**
+//  * Базовая настройка темы.
+//  */
+// function malibu_exchange_theme_setup(): void
+// {
+// 	add_theme_support('title-tag');
+// 	add_theme_support('post-thumbnails');
+// 	add_theme_support('html5', ['search-form', 'comment-form', 'comment-list', 'gallery', 'caption', 'style', 'script']);
+
+// 	register_nav_menus([
+// 		'primary' => 'Primary Menu',
+// 		'sidebar' => 'Sidebar Menu',
+// 	]);
+// }
+// add_action('after_setup_theme', 'malibu_exchange_theme_setup');
 
 /**
- * Базовая настройка темы.
+ * PAGES assets: single source of truth.
+ * Удалить все ручные <script> и <link> из шаблонов.
+ * Удалить/отключить другие enqueue этих же файлов.
  */
-function malibu_exchange_theme_setup(): void
+function malibu_exchange_enqueue_pages_assets(): void
 {
-	add_theme_support('title-tag');
-	add_theme_support('post-thumbnails');
-	add_theme_support('html5', ['search-form', 'comment-form', 'comment-list', 'gallery', 'caption', 'style', 'script']);
-
-	register_nav_menus([
-		'primary' => 'Primary Menu',
-		'sidebar' => 'Sidebar Menu',
-	]);
-}
-add_action('after_setup_theme', 'malibu_exchange_theme_setup');
-
-/**
- * Подключение CSS/JS.
- *
- * ВАЖНО:
- * 1. Пути сделаны под структуру demo-шаблона.
- * 2. Если ты скопируешь все vendor/assets из Pages внутрь темы,
- *    всё начнет оживать без большой переделки.
- * 3. Demo stylesheet assets/css/style.css специально НЕ подключаем,
- *    потому что в самом HTML было замечание, что это demo-слой.
- */
-function malibu_exchange_enqueue_assets(): void
-{
-	$theme_uri = get_template_directory_uri();
-	$theme_ver = wp_get_theme()->get('Version');
-
-	// --- CSS ---
-	wp_enqueue_style(
-		'malibu-pace',
-		$theme_uri . '/vendor/pages/assets/plugins/pace/pace-theme-flash.css',
-		[],
-		$theme_ver
-	);
-
-	wp_enqueue_style(
-		'malibu-bootstrap',
-		$theme_uri . '/vendor/pages/assets/plugins/bootstrap/css/bootstrap.min.css',
-		[],
-		$theme_ver
-	);
-
-	wp_enqueue_style(
-		'malibu-material-icons',
-		'https://fonts.googleapis.com/icon?family=Material+Icons',
-		[],
-		null
-	);
-
-	wp_enqueue_style(
-		'malibu-jquery-scrollbar',
-		$theme_uri . '/vendor/pages/assets/plugins/jquery-scrollbar/jquery.scrollbar.css',
-		[],
-		$theme_ver
-	);
-
-	wp_enqueue_style(
-		'malibu-select2',
-		$theme_uri . '/vendor/pages/assets/plugins/select2/css/select2.min.css',
-		[],
-		$theme_ver
-	);
-
-	wp_enqueue_style(
-		'malibu-pages-core',
-		$theme_uri . '/pages/css/pages.css',
-		['malibu-bootstrap'],
-		$theme_ver
-	);
-
-	// --- JS ---
-	wp_enqueue_script('jquery');
-
-	wp_enqueue_script(
-		'malibu-pace',
-		$theme_uri . '/vendor/pages/assets/plugins/pace/pace.min.js',
-		[],
-		$theme_ver,
-		false
-	);
-
-	wp_enqueue_script(
-		'malibu-liga',
-		$theme_uri . '/vendor/pages/assets/plugins/liga.js',
-		[],
-		$theme_ver,
-		true
-	);
-
-	wp_enqueue_script(
-		'malibu-modernizr',
-		$theme_uri . '/vendor/pages/assets/plugins/modernizr.custom.js',
-		[],
-		$theme_ver,
-		true
-	);
-
-	wp_enqueue_script(
-		'malibu-jquery-ui',
-		$theme_uri . '/vendor/pages/assets/plugins/jquery-ui/jquery-ui.min.js',
-		['jquery'],
-		$theme_ver,
-		true
-	);
-
-	wp_enqueue_script(
-		'malibu-popper',
-		$theme_uri . '/vendor/pages/assets/plugins/popper/umd/popper.min.js',
-		[],
-		$theme_ver,
-		true
-	);
-
-	wp_enqueue_script(
-		'malibu-bootstrap',
-		$theme_uri . '/vendor/pages/assets/plugins/bootstrap/js/bootstrap.min.js',
-		['jquery', 'malibu-popper'],
-		$theme_ver,
-		true
-	);
-
-	wp_enqueue_script(
-		'malibu-jquery-easy',
-		$theme_uri . '/vendor/pages/assets/plugins/jquery/jquery-easy.js',
-		['jquery'],
-		$theme_ver,
-		true
-	);
-
-	wp_enqueue_script(
-		'malibu-jquery-unveil',
-		$theme_uri . '/vendor/pages/assets/plugins/jquery-unveil/jquery.unveil.min.js',
-		['jquery'],
-		$theme_ver,
-		true
-	);
-
-	wp_enqueue_script(
-		'malibu-jquery-ios-list',
-		$theme_uri . '/vendor/pages/assets/plugins/jquery-ios-list/jquery.ioslist.min.js',
-		['jquery'],
-		$theme_ver,
-		true
-	);
-
-	wp_enqueue_script(
-		'malibu-jquery-actual',
-		$theme_uri . '/vendor/pages/assets/plugins/jquery-actual/jquery.actual.min.js',
-		['jquery'],
-		$theme_ver,
-		true
-	);
-
-	wp_enqueue_script(
-		'malibu-jquery-scrollbar',
-		$theme_uri . '/vendor/pages/assets/plugins/jquery-scrollbar/jquery.scrollbar.min.js',
-		['jquery'],
-		$theme_ver,
-		true
-	);
-
-	wp_enqueue_script(
-		'malibu-select2',
-		$theme_uri . '/vendor/pages/assets/plugins/select2/js/select2.full.min.js',
-		['jquery'],
-		$theme_ver,
-		true
-	);
-
-	wp_enqueue_script(
-		'malibu-classie',
-		$theme_uri . '/vendor/pages/assets/plugins/classie/classie.js',
-		[],
-		$theme_ver,
-		true
-	);
-
-	wp_enqueue_script(
-		'malibu-pages-core',
-		$theme_uri . '/pages/js/pages.js',
-		['jquery', 'malibu-bootstrap'],
-		$theme_ver,
-		true
-	);
-
-	wp_enqueue_script(
-		'malibu-pages-custom',
-		$theme_uri . '/vendor/pages/assets/js/scripts.js',
-		['jquery', 'malibu-pages-core'],
-		$theme_ver,
-		true
-	);
-}
-add_action('wp_enqueue_scripts', 'malibu_exchange_enqueue_assets');
-
-/**
- * Хелпер для безопасного подключения template part с fallback-комментарием.
- *
- * Это удобно, когда ты временно удалил блок или еще не успел его сделать.
- */
-function malibu_exchange_get_part(string $slug, ?string $name = null): void
-{
-	$templates = [];
-
-	if ($name) {
-		$templates[] = $slug . '-' . $name . '.php';
-	}
-
-	$templates[] = $slug . '.php';
-
-	$located = locate_template($templates, false, false);
-
-	if ($located) {
-		load_template($located, false);
+	if (is_admin()) {
 		return;
 	}
 
-	echo "\n<!-- Template part not found: " . esc_html(implode(', ', $templates)) . " -->\n";
+	$theme_uri = get_template_directory_uri();
+	$ver = wp_get_theme()->get('Version');
+
+	/**
+	 * Используем jQuery из шаблона Pages,
+	 * чтобы совпадало с оригинальным default_layout.html
+	 */
+	wp_deregister_script('jquery');
+	wp_register_script( 'jquery', $theme_uri . '/vendor/pages/assets/plugins/jquery/jquery-3.2.1.min.js', [], '3.2.1', true );
+
+	/* =========================
+	 * CSS
+	 * ========================= */
+	wp_enqueue_style( 'pages-pace',             $theme_uri . '/vendor/pages/assets/plugins/pace/pace-theme-flash.css',             [], $ver );
+	wp_enqueue_style( 'pages-bootstrap',        $theme_uri . '/vendor/pages/assets/plugins/bootstrap/css/bootstrap.min.css',       [], $ver );
+	wp_enqueue_style( 'pages-material-icons',   'https://fonts.googleapis.com/icon?family=Material+Icons',                         [], null );
+	wp_enqueue_style( 'pages-jquery-scrollbar', $theme_uri . '/vendor/pages/assets/plugins/jquery-scrollbar/jquery.scrollbar.css', [], $ver );
+	wp_enqueue_style( 'pages-select2',          $theme_uri . '/vendor/pages/assets/plugins/select2/css/select2.min.css',           [], $ver );
+	wp_enqueue_style( 'pages-core',             $theme_uri . '/vendor/pages/pages/css/pages.css',                                  ['pages-bootstrap'], $ver );
+	// wp_enqueue_style( 'pages-demo-style', $theme_uri . '/vendor/pages/assets/css/style.css', ['pages-core'], $ver );
+
+	/* =========================
+	 * JS
+	 * ========================= */
+
+	// В оригинале pace грузится раньше остальных.
+	wp_enqueue_script( 'pages-pace',             $theme_uri . '/vendor/pages/assets/plugins/pace/pace.min.js',                        [], $ver, false );
+	wp_enqueue_script('jquery');
+	wp_enqueue_script( 'pages-liga',             $theme_uri . '/vendor/pages/assets/plugins/liga.js',                                 [], $ver, true );
+	wp_enqueue_script( 'pages-modernizr',        $theme_uri . '/vendor/pages/assets/plugins/modernizr.custom.js',                     [], $ver, true );
+	wp_enqueue_script( 'pages-jquery-ui',        $theme_uri . '/vendor/pages/assets/plugins/jquery-ui/jquery-ui.min.js',              ['jquery'], $ver, true );
+	wp_enqueue_script( 'pages-popper',           $theme_uri . '/vendor/pages/assets/plugins/popper/umd/popper.min.js',                [], $ver, true );
+	wp_enqueue_script( 'pages-bootstrap',        $theme_uri . '/vendor/pages/assets/plugins/bootstrap/js/bootstrap.min.js',           ['jquery', 'pages-popper'], $ver, true );
+	wp_enqueue_script( 'pages-jquery-easy',      $theme_uri . '/vendor/pages/assets/plugins/jquery/jquery-easy.js',                   ['jquery'], $ver, true );
+	wp_enqueue_script( 'pages-jquery-unveil',    $theme_uri . '/vendor/pages/assets/plugins/jquery-unveil/jquery.unveil.min.js',      ['jquery'], $ver, true );
+	wp_enqueue_script( 'pages-jquery-ios-list',  $theme_uri . '/vendor/pages/assets/plugins/jquery-ios-list/jquery.ioslist.min.js',   ['jquery'], $ver, true );
+	wp_enqueue_script( 'pages-jquery-actual',    $theme_uri . '/vendor/pages/assets/plugins/jquery-actual/jquery.actual.min.js',      ['jquery'], $ver, true );
+	wp_enqueue_script( 'pages-jquery-scrollbar', $theme_uri . '/vendor/pages/assets/plugins/jquery-scrollbar/jquery.scrollbar.min.js', ['jquery'], $ver, true );
+	wp_enqueue_script( 'pages-select2',          $theme_uri . '/vendor/pages/assets/plugins/select2/js/select2.full.min.js',          ['jquery'], $ver, true );
+	wp_enqueue_script( 'pages-classie',          $theme_uri . '/vendor/pages/assets/plugins/classie/classie.js',                      [], $ver, true );
+	wp_enqueue_script( 'pages-core-js',          $theme_uri . '/vendor/pages/pages/js/pages.js',                                      ['jquery', 'pages-bootstrap', 'pages-jquery-ui', 'pages-jquery-easy', 'pages-jquery-unveil', 'pages-jquery-ios-list', 'pages-jquery-actual', 'pages-jquery-scrollbar', 'pages-select2', 'pages-classie'], $ver, true );
+	wp_enqueue_script( 'pages-custom-js',        $theme_uri . '/vendor/pages/assets/js/scripts.js',                                   ['pages-core-js'], $ver, true );
 }
+add_action('wp_enqueue_scripts', 'malibu_exchange_enqueue_pages_assets', 20);

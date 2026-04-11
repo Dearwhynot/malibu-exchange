@@ -19,6 +19,7 @@ if (!defined('ABSPATH')) {
 
 $theme_uri = get_template_directory_uri();
 $current_id = get_queried_object_id();
+$vendor_img_uri = $theme_uri . '/vendor/pages/assets/img';
 ?>
 
 <nav class="page-sidebar" data-pages="sidebar">
@@ -26,21 +27,21 @@ $current_id = get_queried_object_id();
     <div class="sidebar-overlay-slide from-top" id="appMenu">
         <div class="row">
             <div class="col-sm-6 no-padding">
-                <a href="#" class="p-l-40"><img src="assets/img/demo/social_app.svg" alt="socail">
+                <a href="#" class="p-l-40"><img src="<?php echo esc_url($vendor_img_uri . '/demo/social_app.svg'); ?>" alt="socail">
                 </a>
             </div>
             <div class="col-sm-6 no-padding">
-                <a href="#" class="p-l-10"><img src="assets/img/demo/email_app.svg" alt="socail">
+                <a href="#" class="p-l-10"><img src="<?php echo esc_url($vendor_img_uri . '/demo/email_app.svg'); ?>" alt="socail">
                 </a>
             </div>
         </div>
         <div class="row">
             <div class="col-sm-6 m-t-20 no-padding">
-                <a href="#" class="p-l-40"><img src="assets/img/demo/calendar_app.svg" alt="socail">
+                <a href="#" class="p-l-40"><img src="<?php echo esc_url($vendor_img_uri . '/demo/calendar_app.svg'); ?>" alt="socail">
                 </a>
             </div>
             <div class="col-sm-6 m-t-20 no-padding">
-                <a href="#" class="p-l-10"><img src="assets/img/demo/add_more.svg" alt="socail">
+                <a href="#" class="p-l-10"><img src="<?php echo esc_url($vendor_img_uri . '/demo/add_more.svg'); ?>" alt="socail">
                 </a>
             </div>
         </div>
@@ -48,7 +49,7 @@ $current_id = get_queried_object_id();
     <!-- END SIDEBAR MENU TOP TRAY CONTENT-->
     <!-- BEGIN SIDEBAR MENU HEADER-->
     <div class="sidebar-header">
-        <img src="assets/img/logo_white.png" alt="logo" class="brand" data-src="assets/img/logo_white.png" data-src-retina="assets/img/logo_white_2x.png" width="78" height="22">
+        <img src="<?php echo esc_url($vendor_img_uri . '/logo_white.png'); ?>" alt="logo" class="brand" data-src="<?php echo esc_url($vendor_img_uri . '/logo_white.png'); ?>" data-src-retina="<?php echo esc_url($vendor_img_uri . '/logo_white_2x.png'); ?>" width="78" height="22">
         <div class="sidebar-header-controls">
             <button aria-label="Toggle Drawer" type="button" class="btn btn-icon-link invert sidebar-slide-toggle m-l-20 m-r-10" data-pages-toggle="#appMenu">
                 <i class="pg-icon">chevron_down</i>

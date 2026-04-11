@@ -1,3 +1,4 @@
+<?php $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img'; ?>
 <div class="page-container ">
     <!-- START HEADER -->
     <div class="header ">
@@ -7,7 +8,7 @@
         <!-- END MOBILE SIDEBAR TOGGLE -->
         <div class="">
             <div class="brand inline   ">
-                <img src="assets/img/logo.png" alt="logo" data-src="assets/img/logo.png" data-src-retina="assets/img/logo_2x.png" width="78" height="22">
+                <img src="<?php echo esc_url($vendor_img_uri . '/logo.png'); ?>" alt="logo" data-src="<?php echo esc_url($vendor_img_uri . '/logo.png'); ?>" data-src-retina="<?php echo esc_url($vendor_img_uri . '/logo_2x.png'); ?>" width="78" height="22">
             </div>
             <!-- START NOTIFICATION LIST -->
             <ul class="d-lg-inline-block d-none notification-list no-margin d-lg-inline-block b-grey b-l b-r no-style p-l-20 p-r-20">
@@ -97,7 +98,7 @@
                                     <div class="notification-item unread clearfix">
                                         <div class="heading">
                                             <div class="thumbnail-wrapper d24 circular b-white m-r-5 b-a b-white m-t-10 m-r-10">
-                                                <img width="30" height="30" data-src-retina="assets/img/profiles/1x.jpg" data-src="assets/img/profiles/1.jpg" alt="" src="assets/img/profiles/1.jpg">
+                                                <img width="30" height="30" data-src-retina="<?php echo esc_url($vendor_img_uri . '/profiles/1x.jpg'); ?>" data-src="<?php echo esc_url($vendor_img_uri . '/profiles/1.jpg'); ?>" alt="" src="<?php echo esc_url($vendor_img_uri . '/profiles/1.jpg'); ?>">
                                             </div>
                                             <a href="#" class="text-complete pull-left">
                                                 <span class="bold">Revox Design Labs</span>
@@ -148,8 +149,8 @@
             <div class="dropdown pull-right d-lg-block d-none">
                 <button class="profile-dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false" aria-label="profile dropdown">
                     <span class="thumbnail-wrapper d32 circular inline">
-                        <img src="assets/img/profiles/avatar.jpg" alt="" data-src="assets/img/profiles/avatar.jpg"
-                            data-src-retina="assets/img/profiles/avatar_small2x.jpg" width="32" height="32">
+                        <img src="<?php echo esc_url($vendor_img_uri . '/profiles/avatar.jpg'); ?>" alt="" data-src="<?php echo esc_url($vendor_img_uri . '/profiles/avatar.jpg'); ?>"
+                            data-src-retina="<?php echo esc_url($vendor_img_uri . '/profiles/avatar_small2x.jpg'); ?>" width="32" height="32">
                     </span>
                 </button>
                 <div class="dropdown-menu dropdown-menu-right profile-dropdown" role="menu">
