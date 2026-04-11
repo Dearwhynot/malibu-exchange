@@ -96,6 +96,12 @@ $vendor_img_uri = $theme_uri . '/vendor/pages/assets/img';
                 </ul>
             </li>
             <li class="">
+                <a href="<?php echo esc_url(home_url('/users/')); ?>">
+                    <span class="title">Пользователи</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">users</i></span>
+            </li>
+            <li class="">
                 <a href="<?php echo esc_url(home_url('/settings/')); ?>">
                     <span class="title">Настройки</span>
                 </a>

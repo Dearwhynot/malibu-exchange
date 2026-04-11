@@ -1,7 +1,7 @@
 <?php
 /*
-Template Name: Default Page
-Slug: default-page
+Template Name: Users Page
+Slug: users
 */
 ?> 
 
