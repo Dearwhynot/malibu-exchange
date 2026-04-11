@@ -92,19 +92,6 @@
 - Avoid visual clutter.
 - Avoid giant enterprise-dashboard complexity.
 
-## Visual direction
-- Theme name: Malibu Exchange
-- Mood keywords:
-  - Thailand
-  - Russia
-  - surfing
-  - sea
-  - beach
-  - sun
-  - tropical premium backoffice
-- The UI should feel visually distinct from previous projects like Doverka.
-- It should not resemble a heavy Metronic-style corporate admin panel.
-
 ## JavaScript rules
 - Prefer jQuery for:
   - AJAX actions
@@ -191,7 +178,7 @@
 ## UI source of truth (VERY IMPORTANT)
 
 - The project includes a folder:
-  `theme source html bootstrap demo`
+    `theme source html bootstrap demo/condensed`
 
 - This folder contains the original purchased HTML admin template.
 - This is the PRIMARY source of UI, layout and components.

@@ -170,11 +170,248 @@ function wpschool_remove_jquery_migrate($scripts)
 add_action('wp_default_scripts', 'wpschool_remove_jquery_migrate');
 
 // удалить ссылку, а изменить сопровождающий её текст ошибки на сайте
-add_filter( 'gettext', function( $translated_text, $text, $domain ) {
-    if ( $text === 'Learn more about troubleshooting WordPress.' ) {
-        return ''; // Заменяет текст на пустоту
-    }
-    return $translated_text;
-}, 20, 3 );
+add_filter('gettext', function ($translated_text, $text, $domain) {
+	if ($text === 'Learn more about troubleshooting WordPress.') {
+		return ''; // Заменяет текст на пустоту
+	}
+	return $translated_text;
+}, 20, 3);
 // конец чтобы убрать всякую чушь лишнию 
 // DEARWHYNOT---->
+
+/**
+ * Основные функции темы Malibu Exchange Pages Starter.
+ *
+ * Подход здесь намеренно быстрый и практичный:
+ * - не переусложняем архитектуру;
+ * - подключаем только базовые вещи;
+ * - готовим платформу, от которой потом удобно плодить страницы.
+ */
+
+if (!defined('ABSPATH')) {
+	exit;
+}
+
+/**
+ * Базовая настройка темы.
+ */
+function malibu_exchange_theme_setup(): void
+{
+	add_theme_support('title-tag');
+	add_theme_support('post-thumbnails');
+	add_theme_support('html5', ['search-form', 'comment-form', 'comment-list', 'gallery', 'caption', 'style', 'script']);
+
+	register_nav_menus([
+		'primary' => 'Primary Menu',
+		'sidebar' => 'Sidebar Menu',
+	]);
+}
+add_action('after_setup_theme', 'malibu_exchange_theme_setup');
+
+/**
+ * Подключение CSS/JS.
+ *
+ * ВАЖНО:
+ * 1. Пути сделаны под структуру demo-шаблона.
+ * 2. Если ты скопируешь все vendor/assets из Pages внутрь темы,
+ *    всё начнет оживать без большой переделки.
+ * 3. Demo stylesheet assets/css/style.css специально НЕ подключаем,
+ *    потому что в самом HTML было замечание, что это demo-слой.
+ */
+function malibu_exchange_enqueue_assets(): void
+{
+	$theme_uri = get_template_directory_uri();
+	$theme_ver = wp_get_theme()->get('Version');
+
+	// --- CSS ---
+	wp_enqueue_style(
+		'malibu-pace',
+		$theme_uri . '/vendor/pages/assets/plugins/pace/pace-theme-flash.css',
+		[],
+		$theme_ver
+	);
+
+	wp_enqueue_style(
+		'malibu-bootstrap',
+		$theme_uri . '/vendor/pages/assets/plugins/bootstrap/css/bootstrap.min.css',
+		[],
+		$theme_ver
+	);
+
+	wp_enqueue_style(
+		'malibu-material-icons',
+		'https://fonts.googleapis.com/icon?family=Material+Icons',
+		[],
+		null
+	);
+
+	wp_enqueue_style(
+		'malibu-jquery-scrollbar',
+		$theme_uri . '/vendor/pages/assets/plugins/jquery-scrollbar/jquery.scrollbar.css',
+		[],
+		$theme_ver
+	);
+
+	wp_enqueue_style(
+		'malibu-select2',
+		$theme_uri . '/vendor/pages/assets/plugins/select2/css/select2.min.css',
+		[],
+		$theme_ver
+	);
+
+	wp_enqueue_style(
+		'malibu-pages-core',
+		$theme_uri . '/pages/css/pages.css',
+		['malibu-bootstrap'],
+		$theme_ver
+	);
+
+	// --- JS ---
+	wp_enqueue_script('jquery');
+
+	wp_enqueue_script(
+		'malibu-pace',
+		$theme_uri . '/vendor/pages/assets/plugins/pace/pace.min.js',
+		[],
+		$theme_ver,
+		false
+	);
+
+	wp_enqueue_script(
+		'malibu-liga',
+		$theme_uri . '/vendor/pages/assets/plugins/liga.js',
+		[],
+		$theme_ver,
+		true
+	);
+
+	wp_enqueue_script(
+		'malibu-modernizr',
+		$theme_uri . '/vendor/pages/assets/plugins/modernizr.custom.js',
+		[],
+		$theme_ver,
+		true
+	);
+
+	wp_enqueue_script(
+		'malibu-jquery-ui',
+		$theme_uri . '/vendor/pages/assets/plugins/jquery-ui/jquery-ui.min.js',
+		['jquery'],
+		$theme_ver,
+		true
+	);
+
+	wp_enqueue_script(
+		'malibu-popper',
+		$theme_uri . '/vendor/pages/assets/plugins/popper/umd/popper.min.js',
+		[],
+		$theme_ver,
+		true
+	);
+
+	wp_enqueue_script(
+		'malibu-bootstrap',
+		$theme_uri . '/vendor/pages/assets/plugins/bootstrap/js/bootstrap.min.js',
+		['jquery', 'malibu-popper'],
+		$theme_ver,
+		true
+	);
+
+	wp_enqueue_script(
+		'malibu-jquery-easy',
+		$theme_uri . '/vendor/pages/assets/plugins/jquery/jquery-easy.js',
+		['jquery'],
+		$theme_ver,
+		true
+	);
+
+	wp_enqueue_script(
+		'malibu-jquery-unveil',
+		$theme_uri . '/vendor/pages/assets/plugins/jquery-unveil/jquery.unveil.min.js',
+		['jquery'],
+		$theme_ver,
+		true
+	);
+
+	wp_enqueue_script(
+		'malibu-jquery-ios-list',
+		$theme_uri . '/vendor/pages/assets/plugins/jquery-ios-list/jquery.ioslist.min.js',
+		['jquery'],
+		$theme_ver,
+		true
+	);
+
+	wp_enqueue_script(
+		'malibu-jquery-actual',
+		$theme_uri . '/vendor/pages/assets/plugins/jquery-actual/jquery.actual.min.js',
+		['jquery'],
+		$theme_ver,
+		true
+	);
+
+	wp_enqueue_script(
+		'malibu-jquery-scrollbar',
+		$theme_uri . '/vendor/pages/assets/plugins/jquery-scrollbar/jquery.scrollbar.min.js',
+		['jquery'],
+		$theme_ver,
+		true
+	);
+
+	wp_enqueue_script(
+		'malibu-select2',
+		$theme_uri . '/vendor/pages/assets/plugins/select2/js/select2.full.min.js',
+		['jquery'],
+		$theme_ver,
+		true
+	);
+
+	wp_enqueue_script(
+		'malibu-classie',
+		$theme_uri . '/vendor/pages/assets/plugins/classie/classie.js',
+		[],
+		$theme_ver,
+		true
+	);
+
+	wp_enqueue_script(
+		'malibu-pages-core',
+		$theme_uri . '/pages/js/pages.js',
+		['jquery', 'malibu-bootstrap'],
+		$theme_ver,
+		true
+	);
+
+	wp_enqueue_script(
+		'malibu-pages-custom',
+		$theme_uri . '/vendor/pages/assets/js/scripts.js',
+		['jquery', 'malibu-pages-core'],
+		$theme_ver,
+		true
+	);
+}
+add_action('wp_enqueue_scripts', 'malibu_exchange_enqueue_assets');
+
+/**
+ * Хелпер для безопасного подключения template part с fallback-комментарием.
+ *
+ * Это удобно, когда ты временно удалил блок или еще не успел его сделать.
+ */
+function malibu_exchange_get_part(string $slug, ?string $name = null): void
+{
+	$templates = [];
+
+	if ($name) {
+		$templates[] = $slug . '-' . $name . '.php';
+	}
+
+	$templates[] = $slug . '.php';
+
+	$located = locate_template($templates, false, false);
+
+	if ($located) {
+		load_template($located, false);
+		return;
+	}
+
+	echo "\n<!-- Template part not found: " . esc_html(implode(', ', $templates)) . " -->\n";
+}
