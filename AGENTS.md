@@ -53,22 +53,7 @@
 - When creating or editing a root page template, always add a comment directly below `Template Name` with the exact WordPress page slug to create.
 - Preferred format inside the PHP header comment:
   - `Slug: authorization`
-- Shared layout parts may include:
-  - `header.php`
-  - `footer.php`
-  - `sidebar.php`
-  - `topbar.php`
-- Logic files live in:
-  - `inc/setup.php`
-  - `inc/helpers.php`
-  - `inc/security.php`
-  - `inc/enqueue.php`
-  - `inc/ajax/*.php`
-- Assets live in:
-  - `assets/css/`
-  - `assets/js/`
-  - `assets/img/`
-
+  
 ## Access control
 - This is a backoffice theme, not a public marketing site.
 - Logged-out users should be redirected to the login page.
