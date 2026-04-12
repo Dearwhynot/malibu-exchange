@@ -92,6 +92,30 @@ $vendor_img_uri   = get_template_directory_uri() . '/vendor/pages/assets/img';
 $nonce_save   = wp_create_nonce( 'me_users_save' );
 $nonce_status = wp_create_nonce( 'me_users_status' );
 $nonce_delete = wp_create_nonce( 'me_users_delete' );
+$nonce_roles  = wp_create_nonce( 'me_roles_save' );
+
+// ─── Данные для вкладки "Роли" ───────────────────────────────────────────────
+$can_edit_roles = crm_user_has_permission( get_current_user_id(), 'roles.edit' );
+
+$all_perms_raw = $wpdb->get_results( 'SELECT * FROM crm_permissions ORDER BY module, action' ) ?: [];
+$all_permissions_grouped = [];
+foreach ( $all_perms_raw as $_p ) {
+	$all_permissions_grouped[ $_p->module ][] = $_p;
+}
+
+$rp_rows = $wpdb->get_results( 'SELECT role_id, permission_id FROM crm_role_permissions' ) ?: [];
+$role_permissions_map = [];
+foreach ( $rp_rows as $_rp ) {
+	$role_permissions_map[ (int) $_rp->role_id ][] = (int) $_rp->permission_id;
+}
+
+$uc_rows = $wpdb->get_results( 'SELECT role_id, COUNT(*) as cnt FROM crm_user_roles GROUP BY role_id' ) ?: [];
+$roles_user_counts = [];
+foreach ( $uc_rows as $_uc ) {
+	$roles_user_counts[ (int) $_uc->role_id ] = (int) $_uc->cnt;
+}
+
+$all_crm_roles_full = $wpdb->get_results( 'SELECT * FROM crm_roles ORDER BY id ASC' ) ?: [];
 
 get_header();
 ?>
@@ -154,6 +178,25 @@ get_header();
 
 			<div class="container-fluid container-fixed-lg mt-4">
 
+				<!-- ─── TAB NAV ───────────────────────────────────────────────── -->
+				<ul class="nav nav-tabs nav-tabs-simple m-b-0" role="tablist" data-init-reponsive-tabs="dropdownfx">
+					<li class="nav-item">
+						<a class="active" data-bs-toggle="tab" role="tab" data-bs-target="#tab-users" href="#">
+							Пользователи
+						</a>
+					</li>
+					<li class="nav-item">
+						<a data-bs-toggle="tab" role="tab" data-bs-target="#tab-roles" href="#">
+							Роли и права
+						</a>
+					</li>
+				</ul>
+
+				<div class="tab-content" style="padding:0;overflow:visible">
+
+				<!-- ─── TAB: USERS ────────────────────────────────────────────── -->
+				<div class="tab-pane active" id="tab-users">
+
 				<!-- Page heading -->
 				<div class="d-flex align-items-center justify-content-between m-b-20">
 					<p class="hint-text m-b-0">Всего в выборке: <strong><?php echo (int) $total; ?></strong></p>
@@ -165,18 +208,16 @@ get_header();
 
 				<!-- ─── FILTERS ────────────────────────────────────────────────── -->
 				<div class="card card-default m-b-20">
-					<div class="card-body">
+					<div class="card-body p-t-15 p-b-15">
 						<form method="get" action="<?php echo esc_url( $page_url ); ?>" id="users-filter-form">
-							<div class="row">
-								<div class="col-md-5 m-b-10">
-									<div class="input-group">
-										<span class="input-group-text"><i class="pg-icon">search</i></span>
-										<input type="text" class="form-control"
-										       name="me_s" value="<?php echo esc_attr( $s ); ?>"
-										       placeholder="Поиск по логину, email, имени…">
-									</div>
+							<div class="d-flex align-items-center gap-3">
+								<div class="input-group flex-grow-1">
+									<span class="input-group-text"><i class="pg-icon">search</i></span>
+									<input type="text" class="form-control"
+									       name="me_s" value="<?php echo esc_attr( $s ); ?>"
+									       placeholder="Поиск по логину, email, имени…">
 								</div>
-								<div class="col-md-3 m-b-10">
+								<div style="min-width:180px;">
 									<select class="full-width" name="me_role" data-init-plugin="select2">
 										<option value="">Все роли</option>
 										<?php foreach ( $all_crm_roles as $crm_role ) : ?>
@@ -187,7 +228,7 @@ get_header();
 										<?php endforeach; ?>
 									</select>
 								</div>
-								<div class="col-md-2 m-b-10">
+								<div style="min-width:210px;">
 									<select class="full-width" name="me_status" data-init-plugin="select2">
 										<option value=""        <?php selected( $f_status, '' ); ?>>Активные (без архивных)</option>
 										<option value="active"   <?php selected( $f_status, 'active' ); ?>>Только активные</option>
@@ -197,7 +238,7 @@ get_header();
 										<option value="all"      <?php selected( $f_status, 'all' ); ?>>Все</option>
 									</select>
 								</div>
-								<div class="col-md-2 m-b-10 d-flex gap-2">
+								<div class="d-flex gap-2 flex-shrink-0">
 									<button type="submit" class="btn btn-primary btn-sm">
 										<i class="pg-icon">search</i>
 									</button>
@@ -497,6 +538,88 @@ get_header();
 
 				</div><!-- /.card -->
 
+				</div><!-- /#tab-users -->
+
+				<!-- ─── TAB: ROLES ───────────────────────────────────────────── -->
+				<div class="tab-pane" id="tab-roles">
+
+					<div class="card card-default m-t-20">
+						<div class="card-header">
+							<div class="card-title">Роли и права доступа</div>
+						</div>
+						<div class="card-body no-padding">
+							<div class="table-responsive">
+								<table class="table table-hover m-b-0" id="roles-table">
+									<thead>
+										<tr>
+											<th style="width:50px">ID</th>
+											<th>Название</th>
+											<th>Описание</th>
+											<th style="width:80px">Прав</th>
+											<th style="width:120px">Пользователей</th>
+											<th style="width:60px"></th>
+										</tr>
+									</thead>
+									<tbody>
+										<?php foreach ( $all_crm_roles_full as $crm_r ) :
+											$r_perm_count = isset( $role_permissions_map[ (int) $crm_r->id ] )
+												? count( $role_permissions_map[ (int) $crm_r->id ] )
+												: 0;
+											$r_user_count = $roles_user_counts[ (int) $crm_r->id ] ?? 0;
+											$r_is_owner   = $crm_r->code === 'owner';
+											$r_perm_ids   = $role_permissions_map[ (int) $crm_r->id ] ?? [];
+											$r_json       = esc_attr( wp_json_encode( [
+												'id'       => (int) $crm_r->id,
+												'name'     => $crm_r->name,
+												'perm_ids' => $r_perm_ids,
+											] ) );
+										?>
+										<tr id="rrow-<?php echo (int) $crm_r->id; ?>">
+											<td class="v-align-middle">
+												<span class="hint-text fs-12">#<?php echo (int) $crm_r->id; ?></span>
+											</td>
+											<td class="v-align-middle">
+												<span class="semi-bold"><?php echo esc_html( $crm_r->name ); ?></span>
+												<?php if ( $crm_r->is_system ) : ?>
+													<span class="badge badge-secondary m-l-5">System</span>
+												<?php endif; ?>
+											</td>
+											<td class="v-align-middle hint-text fs-12">
+												<?php echo esc_html( $crm_r->description ?: '—' ); ?>
+											</td>
+											<td class="v-align-middle">
+												<?php if ( $r_is_owner ) : ?>
+													<span class="hint-text fs-12">Все</span>
+												<?php else : ?>
+													<span id="rperm-count-<?php echo (int) $crm_r->id; ?>"><?php echo (int) $r_perm_count; ?></span>
+												<?php endif; ?>
+											</td>
+											<td class="v-align-middle">
+												<span class="hint-text fs-12"><?php echo (int) $r_user_count; ?></span>
+											</td>
+											<td class="v-align-middle">
+												<?php if ( ! $r_is_owner && $can_edit_roles ) : ?>
+													<button type="button"
+													        class="btn btn-default btn-xs js-edit-role"
+													        data-role="<?php echo $r_json; ?>"
+													        data-bs-toggle="modal"
+													        data-bs-target="#modal-role-perms">
+														<i class="pg-icon">edit</i>
+													</button>
+												<?php endif; ?>
+											</td>
+										</tr>
+										<?php endforeach; ?>
+									</tbody>
+								</table>
+							</div>
+						</div>
+					</div>
+
+				</div><!-- /#tab-roles -->
+
+				</div><!-- /.tab-content -->
+
 			</div><!-- /.container-fluid -->
 		</div><!-- /.content -->
 
@@ -724,6 +847,37 @@ get_header();
 </div>
 
 <!-- ════════════════════════════════════════════════════════════════════════
+     MODAL: ROLE PERMISSIONS
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modal-role-perms" tabindex="-1"
+     aria-labelledby="modal-role-perms-title" aria-hidden="true">
+	<div class="modal-dialog modal-lg">
+		<div class="modal-content">
+
+			<div class="modal-header clearfix text-left">
+				<button aria-label="Закрыть" type="button" class="close" data-bs-dismiss="modal" aria-hidden="true">
+					<i class="pg-icon">close</i>
+				</button>
+				<h5 class="modal-title" id="modal-role-perms-title">Права роли</h5>
+			</div>
+
+			<div class="modal-body" id="modal-role-perms-body">
+				<!-- заполняется через JS -->
+			</div>
+
+			<div class="modal-footer">
+				<button type="button" class="btn btn-default" data-bs-dismiss="modal">Отмена</button>
+				<button type="button" class="btn btn-primary" id="btn-save-role-perms">
+					<span class="btn-label">Сохранить</span>
+					<i class="pg-icon spin d-none" id="btn-role-perms-spinner">refresh</i>
+				</button>
+			</div>
+
+		</div>
+	</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
      INLINE STYLES
      ════════════════════════════════════════════════════════════════════ -->
 <style>
@@ -751,10 +905,16 @@ get_header();
 @keyframes spin { to { transform:rotate(360deg); } }
 .dropdown-menu .dropdown-item { display:flex; align-items:center; }
 .dropdown-menu .dropdown-item .pg-icon { flex-shrink:0; line-height:1; }
+/* ── Tabs ── */
+#tab-users, #tab-roles { padding: 0; }
+.nav-tabs ~ .tab-content { overflow: visible; }
+.perm-module-title { font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:#aaa; margin:14px 0 6px; padding-bottom:4px; border-bottom:1px solid rgba(0,0,0,.06); }
+.perm-check-label { font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+.perm-check-label input { flex-shrink:0; }
 </style>
 
 <?php
-add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_delete, $f_status, $can_assign_roles ) {
+add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_delete, $nonce_roles, $f_status, $can_assign_roles, $can_edit_roles, $all_permissions_grouped, $role_permissions_map ) {
 ?>
 <script>
 (function ($) {
@@ -985,6 +1145,78 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 		})
 		.fail(function () { showToast('Ошибка сервера.', 'error'); });
 	}
+
+
+	// ── Roles: permissions modal ──────────────────────────────────────────────
+	var PERMS_GROUPED  = <?php echo wp_json_encode( $all_permissions_grouped ); ?>;
+	var NONCE_ROLES    = '<?php echo esc_js( $nonce_roles ); ?>';
+	var _editRoleId    = 0;
+	var $roleModal     = $('#modal-role-perms');
+
+	$(document).on('click', '.js-edit-role', function () {
+		var role = $(this).data('role');
+		_editRoleId = role.id;
+
+		$('#modal-role-perms-title').text('Права роли: ' + role.name);
+
+		var activeIds = (role.perm_ids || []).map(Number);
+		var html = '';
+
+		$.each(PERMS_GROUPED, function (module, perms) {
+			html += '<div class="perm-module-title">' + module + '</div><div class="row">';
+			$.each(perms, function (i, perm) {
+				var pid     = parseInt(perm.id, 10);
+				var checked = activeIds.indexOf(pid) !== -1 ? ' checked' : '';
+				html += '<div class="col-md-6">' +
+					'<label class="perm-check-label">' +
+					'<input type="checkbox" class="perm-checkbox" value="' + pid + '"' + checked + '>' +
+					'<span>' + perm.name + ' <small class="hint-text">(' + perm.code + ')</small></span>' +
+					'</label></div>';
+			});
+			html += '</div>';
+		});
+
+		$('#modal-role-perms-body').html(html);
+		$('#btn-save-role-perms').prop('disabled', false)
+			.find('.btn-label').show()
+			.end().find('#btn-role-perms-spinner').addClass('d-none');
+	});
+
+	$('#btn-save-role-perms').on('click', function () {
+		if (!_editRoleId) return;
+
+		var permIds = [];
+		$('#modal-role-perms-body .perm-checkbox:checked').each(function () {
+			permIds.push(parseInt($(this).val(), 10));
+		});
+
+		var $btn = $(this);
+		$btn.prop('disabled', true).find('.btn-label').hide()
+			.end().find('#btn-role-perms-spinner').removeClass('d-none');
+
+		$.post(AJAX_URL, {
+			action:         'me_save_role_permissions',
+			role_id:        _editRoleId,
+			permission_ids: permIds,
+			_nonce:         NONCE_ROLES
+		})
+		.done(function (res) {
+			if (res.success) {
+				showToast(res.data.message, 'success');
+				$('#rperm-count-' + _editRoleId).text(res.data.count);
+				bootstrap.Modal.getInstance($roleModal[0]).hide();
+			} else {
+				showToast(res.data.message || 'Ошибка.', 'error');
+				$btn.prop('disabled', false).find('.btn-label').show()
+					.end().find('#btn-role-perms-spinner').addClass('d-none');
+			}
+		})
+		.fail(function () {
+			showToast('Ошибка сервера.', 'error');
+			$btn.prop('disabled', false).find('.btn-label').show()
+				.end().find('#btn-role-perms-spinner').addClass('d-none');
+		});
+	});
 
 }(jQuery));
 </script>

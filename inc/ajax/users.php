@@ -279,6 +279,61 @@ function me_ajax_delete_user(): void {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// 6. СОХРАНИТЬ ПРАВА РОЛИ
+// ════════════════════════════════════════════════════════════════════════════
+add_action( 'wp_ajax_me_save_role_permissions', 'me_ajax_save_role_permissions' );
+function me_ajax_save_role_permissions(): void {
+	if ( ! is_user_logged_in() || ! crm_can_access( 'roles.edit' ) ) {
+		_me_ajax_error( 'Недостаточно прав.' );
+	}
+
+	if ( ! isset( $_POST['_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_nonce'] ) ), 'me_roles_save' ) ) {
+		_me_ajax_error( 'Нарушена безопасность запроса.' );
+	}
+
+	$role_id        = (int) ( $_POST['role_id'] ?? 0 );
+	$permission_ids = array_map( 'intval', (array) ( $_POST['permission_ids'] ?? [] ) );
+
+	if ( $role_id <= 0 ) {
+		_me_ajax_error( 'Неверный ID роли.' );
+	}
+
+	global $wpdb;
+
+	$role = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM crm_roles WHERE id = %d', $role_id ) );
+	if ( ! $role ) {
+		_me_ajax_error( 'Роль не найдена.' );
+	}
+	if ( $role->code === 'owner' ) {
+		_me_ajax_error( 'Права роли Owner изменить нельзя.' );
+	}
+
+	if ( ! empty( $permission_ids ) ) {
+		$placeholders = implode( ',', array_fill( 0, count( $permission_ids ), '%d' ) );
+		// phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
+		$valid_count = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM crm_permissions WHERE id IN ($placeholders)", $permission_ids ) );
+		if ( $valid_count !== count( $permission_ids ) ) {
+			_me_ajax_error( 'Некоторые права не найдены.' );
+		}
+	}
+
+	$wpdb->delete( 'crm_role_permissions', [ 'role_id' => $role_id ], [ '%d' ] );
+
+	foreach ( $permission_ids as $perm_id ) {
+		$wpdb->insert(
+			'crm_role_permissions',
+			[ 'role_id' => $role_id, 'permission_id' => $perm_id ],
+			[ '%d', '%d' ]
+		);
+	}
+
+	wp_send_json_success( [
+		'message' => "Права роли «{$role->name}» сохранены.",
+		'count'   => count( $permission_ids ),
+	] );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // 4. ПОЛУЧИТЬ ДАННЫЕ ПОЛЬЗОВАТЕЛЯ ДЛЯ ФОРМЫ РЕДАКТИРОВАНИЯ
 // ════════════════════════════════════════════════════════════════════════════
 add_action( 'wp_ajax_me_get_user_data', 'me_ajax_get_user_data' );

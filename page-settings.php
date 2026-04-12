@@ -18,6 +18,9 @@ if ( ! crm_user_has_permission( get_current_user_id(), 'settings.view' ) ) {
 $settings       = crm_get_all_settings( CRM_DEFAULT_ORG_ID );
 $telegram_token = $settings['telegram_bot_token'] ?? '';
 
+$pair       = rates_get_pair( RATES_PAIR_CODE, CRM_DEFAULT_ORG_ID );
+$coeff      = $pair ? rates_get_coefficient( (int) $pair->id, RATES_PROVIDER_EX24, RATES_PROVIDER_SOURCE ) : 0.05;
+
 $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
 $nonce_save     = wp_create_nonce( 'me_settings_save' );
 
@@ -118,6 +121,39 @@ get_header();
 					</div>
 				</div>
 
+				<!-- ─── Курсы ──────────────────────────────────────────────────── -->
+				<div class="card card-default m-b-30">
+					<div class="card-header">
+						<div class="card-title">Курсы — RUB/THB</div>
+					</div>
+					<div class="card-body">
+						<form id="rates-settings-form">
+							<div class="row">
+								<div class="col-md-4 col-lg-3">
+									<div class="form-group">
+										<label for="rates_coefficient">Коэффициент вычитания (Ex24 / <?php echo esc_html( RATES_PROVIDER_SOURCE ); ?>)</label>
+										<input type="number"
+										       class="form-control"
+										       id="rates_coefficient"
+										       name="rates_coefficient"
+										       value="<?php echo esc_attr( number_format( $coeff, 4, '.', '' ) ); ?>"
+										       step="0.0001"
+										       min="0"
+										       placeholder="0.0500">
+										<p class="hint-text m-t-5">
+											Наш курс = курс конкурента − этот коэффициент.<br>
+											Пример: 27.70 − 0.05 = 27.65
+										</p>
+									</div>
+								</div>
+							</div>
+							<button type="submit" class="btn btn-primary btn-cons">
+								Сохранить коэффициент
+							</button>
+						</form>
+					</div>
+				</div>
+
 			</div>
 		</div>
 		<!-- START COPYRIGHT -->
@@ -146,34 +182,43 @@ add_action( 'wp_footer', function () use ( $nonce_save ) {
 	var AJAX_URL = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
 	var NONCE    = '<?php echo esc_js( $nonce_save ); ?>';
 
-	$('#settings-form').on('submit', function (e) {
-		e.preventDefault();
+	function handleSettingsForm($form, $alert, extraData, resetLabel) {
+		$form.on('submit', function (e) {
+			e.preventDefault();
+			var $btn = $(this).find('[type=submit]');
+			$btn.prop('disabled', true).text('Сохраняем…');
+			$alert.addClass('d-none').removeClass('alert-success alert-danger');
 
-		var $btn   = $(this).find('[type=submit]');
-		var $alert = $('#settings-alert');
-
-		$btn.prop('disabled', true).text('Сохраняем…');
-		$alert.addClass('d-none').removeClass('alert-success alert-danger');
-
-		$.post(AJAX_URL, {
-			action: 'me_settings_save',
-			nonce: NONCE,
-			telegram_bot_token: $('#telegram_bot_token').val()
-		})
-		.done(function (res) {
-			if (res.success) {
-				$alert.removeClass('d-none alert-danger').addClass('alert-success').text(res.data.message || 'Сохранено');
-			} else {
-				$alert.removeClass('d-none alert-success').addClass('alert-danger').text(res.data.message || 'Ошибка сохранения');
-			}
-		})
-		.fail(function () {
-			$alert.removeClass('d-none alert-success').addClass('alert-danger').text('Сетевая ошибка. Попробуйте ещё раз.');
-		})
-		.always(function () {
-			$btn.prop('disabled', false).text('Сохранить настройки');
+			$.post(AJAX_URL, $.extend({ action: 'me_settings_save', nonce: NONCE }, extraData()))
+			.done(function (res) {
+				if (res.success) {
+					$alert.removeClass('d-none alert-danger').addClass('alert-success').text(res.data.message || 'Сохранено');
+				} else {
+					$alert.removeClass('d-none alert-success').addClass('alert-danger').text(res.data.message || 'Ошибка сохранения');
+				}
+			})
+			.fail(function () {
+				$alert.removeClass('d-none alert-success').addClass('alert-danger').text('Сетевая ошибка. Попробуйте ещё раз.');
+			})
+			.always(function () {
+				$btn.prop('disabled', false).text(resetLabel);
+			});
 		});
-	});
+	}
+
+	handleSettingsForm(
+		$('#settings-form'),
+		$('#settings-alert'),
+		function () { return { section: 'telegram', telegram_bot_token: $('#telegram_bot_token').val() }; },
+		'Сохранить настройки'
+	);
+
+	handleSettingsForm(
+		$('#rates-settings-form'),
+		$('#settings-alert'),
+		function () { return { section: 'rates_coefficient', rates_coefficient: $('#rates_coefficient').val() }; },
+		'Сохранить коэффициент'
+	);
 
 }(jQuery));
 </script>

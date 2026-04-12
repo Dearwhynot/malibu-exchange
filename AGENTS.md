@@ -316,3 +316,16 @@ Rules:
 | `crm_user_roles`        | User → role assignment           | inc/sql/rbac.sql      |
 | `crm_user_accounts`     | Extended user profile & status   | inc/sql/rbac.sql      |
 | `crm_settings`          | Organization-scoped settings     | inc/sql/settings.sql  |
+| `crm_currencies`        | Справочник валют (RUB, THB, USDT)| inc/migrations/0002   |
+| `crm_rate_pairs`        | Валютные пары (THB_RUB и др.)    | inc/migrations/0003   |
+| `crm_pair_coefficients` | Коэффициент пары per провайдер   | inc/migrations/0004   |
+| `crm_rate_history`      | История снимков курсов           | inc/migrations/0005   |
+
+## Rates architecture (IMPORTANT)
+- Курсы конкурента получаем через `rates_get_ex24(string $source)` из `inc/rates.php`.
+- Наш курс = курс конкурента − коэффициент. Коэффициент хранится в `crm_pair_coefficients`.
+- Коэффициент явно привязан к: `pair_id` + `provider` (ex24) + `source_param` (phuket).
+- **Открытие страницы** курсов НЕ записывает ничего в БД — только отображает свежие данные Ex24.
+- **Запись в историю** происходит только по нажатию кнопки (AJAX `me_rates_save`).
+- При добавлении новых валют — добавлять их через миграцию в `crm_currencies`.
+- При добавлении новых пар — добавлять через миграцию в `crm_rate_pairs` и `crm_pair_coefficients`.

@@ -4,7 +4,7 @@ if (!defined('ABSPATH')) {
 	exit;
 }
 
-error_log('functions.php загружен');
+// error_log('functions.php загружен');
 
 // require_once get_template_directory() . '/inc/setup.php';
 // require_once get_template_directory() . '/inc/helpers.php';
@@ -22,13 +22,17 @@ require_once get_template_directory() . '/inc/ajax/users.php';
 // Настройки системы (crm_settings)
 require_once get_template_directory() . '/inc/settings.php';
 require_once get_template_directory() . '/inc/ajax/settings.php';
+
+// Курсы валют
+require_once get_template_directory() . '/inc/rates.php';
+require_once get_template_directory() . '/inc/ajax/rates.php';
+
 // require_once get_template_directory() . '/inc/menus.php';
 // require_once get_template_directory() . '/inc/enqueue.php';
 // require_once get_template_directory() . '/inc/template-tags.php';
 require_once get_template_directory() . '/inc/migration-runner.php';
 require_once get_template_directory() . '/inc/telegram-callback.php';
 // require_once get_template_directory() . '/inc/ajax/bot-actions.php';
-// require_once get_template_directory() . '/inc/ajax/rates.php';
 // require_once get_template_directory() . '/inc/ajax/orders.php';
 
 // дебаг лог -->
