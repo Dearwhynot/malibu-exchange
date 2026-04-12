@@ -210,35 +210,40 @@ get_header();
 				<div class="card card-default m-b-20">
 					<div class="card-body p-t-15 p-b-15">
 						<form method="get" action="<?php echo esc_url( $page_url ); ?>" id="users-filter-form">
-							<div class="d-flex align-items-center gap-3">
-								<div class="input-group flex-grow-1">
+							<div style="display:grid; grid-template-columns:1fr auto 1fr; gap:12px; align-items:center;">
+								<!-- Поиск — левый край -->
+								<div class="input-group">
 									<span class="input-group-text"><i class="pg-icon">search</i></span>
 									<input type="text" class="form-control"
 									       name="me_s" value="<?php echo esc_attr( $s ); ?>"
 									       placeholder="Поиск по логину, email, имени…">
 								</div>
-								<div style="min-width:180px;">
-									<select class="full-width" name="me_role" data-init-plugin="select2">
-										<option value="">Все роли</option>
-										<?php foreach ( $all_crm_roles as $crm_role ) : ?>
-											<option value="<?php echo esc_attr( $crm_role->code ); ?>"
-											        <?php selected( $f_role, $crm_role->code ); ?>>
-												<?php echo esc_html( $crm_role->name ); ?>
-											</option>
-										<?php endforeach; ?>
-									</select>
+								<!-- Фильтры — по центру -->
+								<div class="d-flex gap-3">
+									<div style="min-width:180px;">
+										<select class="full-width" name="me_role" data-init-plugin="select2">
+											<option value="">Все роли</option>
+											<?php foreach ( $all_crm_roles as $crm_role ) : ?>
+												<option value="<?php echo esc_attr( $crm_role->code ); ?>"
+												        <?php selected( $f_role, $crm_role->code ); ?>>
+													<?php echo esc_html( $crm_role->name ); ?>
+												</option>
+											<?php endforeach; ?>
+										</select>
+									</div>
+									<div style="min-width:210px;">
+										<select class="full-width" name="me_status" data-init-plugin="select2">
+											<option value=""        <?php selected( $f_status, '' ); ?>>Активные (без архивных)</option>
+											<option value="active"   <?php selected( $f_status, 'active' ); ?>>Только активные</option>
+											<option value="blocked"  <?php selected( $f_status, 'blocked' ); ?>>Заблокированные</option>
+											<option value="pending"  <?php selected( $f_status, 'pending' ); ?>>Ожидающие</option>
+											<option value="archived" <?php selected( $f_status, 'archived' ); ?>>Архивные</option>
+											<option value="all"      <?php selected( $f_status, 'all' ); ?>>Все</option>
+										</select>
+									</div>
 								</div>
-								<div style="min-width:210px;">
-									<select class="full-width" name="me_status" data-init-plugin="select2">
-										<option value=""        <?php selected( $f_status, '' ); ?>>Активные (без архивных)</option>
-										<option value="active"   <?php selected( $f_status, 'active' ); ?>>Только активные</option>
-										<option value="blocked"  <?php selected( $f_status, 'blocked' ); ?>>Заблокированные</option>
-										<option value="pending"  <?php selected( $f_status, 'pending' ); ?>>Ожидающие</option>
-										<option value="archived" <?php selected( $f_status, 'archived' ); ?>>Архивные</option>
-										<option value="all"      <?php selected( $f_status, 'all' ); ?>>Все</option>
-									</select>
-								</div>
-								<div class="d-flex gap-2 flex-shrink-0">
+								<!-- Кнопки — правый край -->
+								<div class="d-flex gap-2 justify-content-end">
 									<button type="submit" class="btn btn-primary btn-sm">
 										<i class="pg-icon">search</i>
 									</button>
