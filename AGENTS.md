@@ -80,11 +80,6 @@
 - When writing SQL for new tables, always use `crm_` prefix.
 - When referencing custom tables in PHP via `$wpdb`, use the literal `crm_` prefix (not `$wpdb->prefix`).
 
-## Custom tables created so far
-| Table                   | Purpose                              | Created by  |
-|-------------------------|--------------------------------------|-------------|
-| `crm_user_last_login`   | Login history per WP user (optional) | inc/users.php SQL comment |
-
 ## UI / UX principles
 - Clean operator interface.
 - Premium but restrained visual style.
@@ -273,3 +268,51 @@ Rules:
 ## Sensitive data note
 - Organization-specific credentials may need protected storage and careful handling.
 - The first implementation may store them in the database in an organization-scoped manner, but the architecture should allow later strengthening of security practices without major rewrites.
+
+## Database migrations rule (IMPORTANT)
+- All changes to the database schema (new tables, columns, indexes) must be done via the migration runner, NOT via raw SQL in phpMyAdmin.
+- Migration runner: `inc/migration-runner.php` — must be included in `functions.php` (already enabled).
+- Migrations live in: `inc/migrations/*.php` — each file returns a PHP array with `key`, `title`, `callback`.
+- Naming convention: `NNNN_description.php` (e.g. `0001_create_crm_settings.php`). Use incremental 4-digit prefix.
+- The callback runs once automatically on the next page load after deploy. Already-applied migrations are skipped (tracked in `wp_malibu_migration_history`).
+- The `inc/sql/` folder is kept for documentation/reference only. The actual schema is always applied through migrations.
+- When creating a new table:
+  1. Write a migration file in `inc/migrations/`.
+  2. Deploy it to the server.
+  3. Open any page — migration runs automatically.
+  4. Verify in phpMyAdmin that the table exists.
+
+## Settings storage rule (IMPORTANT)
+- All persistent system settings must be stored in the `crm_settings` table.
+- Do NOT use WordPress `wp_options` for project-specific settings.
+- Do NOT hardcode tokens, credentials, or configurable values in theme files or constants.
+- Use `crm_get_setting( $key )` to read and `crm_set_setting( $key, $value )` to write.
+- Every new setting that an operator may need to configure must be:
+  1. Added to `inc/sql/settings.sql` as an `INSERT IGNORE` seed row.
+  2. Exposed on the Settings page (`page-settings.php`) in the appropriate section.
+  3. Saved via the AJAX handler in `inc/ajax/settings.php`.
+- Settings are always scoped to an `org_id`. Use `CRM_DEFAULT_ORG_ID` (= 1) until multi-org is active.
+
+## Page creation rule (IMPORTANT)
+- All new backoffice pages must be created by copying an existing page template.
+- Preferred base: `page-users.php` (the most complete and up-to-date pattern).
+- Fallback base: `page-default.php` for purely blank shells.
+- Copy → rename → adjust Template Name, Slug and content only. Do not invent new layout patterns.
+- Every page template must have:
+  - `Template Name:` and `Slug:` in the PHP header comment.
+  - `malibu_exchange_require_login()` guard at the top.
+  - Permission check via `crm_user_has_permission()` before rendering any content.
+  - The standard header block (logo, profile dropdown, quickview toggle) copied verbatim from the base page.
+  - The standard jumbotron breadcrumb block.
+  - `get_template_part('template-parts/quickview')` and `get_template_part('template-parts/overlay')` before `get_footer()`.
+
+## Custom tables created so far
+| Table           | Purpose                                  | SQL file              |
+|-----------------|------------------------------------------|-----------------------|
+| `crm_user_last_login`   | Login history per WP user        | inc/users.php SQL comment |
+| `crm_roles`             | CRM roles                        | inc/sql/rbac.sql      |
+| `crm_permissions`       | CRM permissions                  | inc/sql/rbac.sql      |
+| `crm_role_permissions`  | Role → permission mapping        | inc/sql/rbac.sql      |
+| `crm_user_roles`        | User → role assignment           | inc/sql/rbac.sql      |
+| `crm_user_accounts`     | Extended user profile & status   | inc/sql/rbac.sql      |
+| `crm_settings`          | Organization-scoped settings     | inc/sql/settings.sql  |

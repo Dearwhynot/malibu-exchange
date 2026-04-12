@@ -18,11 +18,15 @@ require_once get_template_directory() . '/inc/users.php';
 
 // AJAX-обработчики управления пользователями
 require_once get_template_directory() . '/inc/ajax/users.php';
+
+// Настройки системы (crm_settings)
+require_once get_template_directory() . '/inc/settings.php';
+require_once get_template_directory() . '/inc/ajax/settings.php';
 // require_once get_template_directory() . '/inc/menus.php';
 // require_once get_template_directory() . '/inc/enqueue.php';
 // require_once get_template_directory() . '/inc/template-tags.php';
-// require_once get_template_directory() . '/inc/migration-runner.php';
-// require_once get_template_directory() . '/inc/telegram-callback.php';
+require_once get_template_directory() . '/inc/migration-runner.php';
+require_once get_template_directory() . '/inc/telegram-callback.php';
 // require_once get_template_directory() . '/inc/ajax/bot-actions.php';
 // require_once get_template_directory() . '/inc/ajax/rates.php';
 // require_once get_template_directory() . '/inc/ajax/orders.php';
@@ -50,6 +54,7 @@ require_once get_template_directory() . '/includes/force-login.php';
 // рабочий сетам для старта форс-логин -->
 require_once get_template_directory() . '/includes/dearwhynot-start.php';
 // <-- рабочий сетам для старта
+
 
 
 /**
