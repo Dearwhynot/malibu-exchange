@@ -4,11 +4,16 @@ if (!defined('ABSPATH')) {
 	exit;
 }
 
+error_log('functions.php загружен');
+
 // require_once get_template_directory() . '/inc/setup.php';
 // require_once get_template_directory() . '/inc/helpers.php';
 require_once get_template_directory() . '/inc/security.php';
 
-// Управление пользователями: хуки блокировки, трекинг last_login, хелперы
+// CRM RBAC: роли, права, статусы пользователей
+require_once get_template_directory() . '/inc/rbac.php';
+
+// Управление пользователями: трекинг last_login, хелперы
 require_once get_template_directory() . '/inc/users.php';
 
 // AJAX-обработчики управления пользователями
@@ -23,6 +28,10 @@ require_once get_template_directory() . '/inc/ajax/users.php';
 // require_once get_template_directory() . '/inc/ajax/orders.php';
 
 // дебаг лог -->
+//? Нужны три константы в wp-config.php:
+//? define( 'WP_DEBUG',         true  );   // включить режим отладки
+//? define( 'WP_DEBUG_LOG',     true  );   // писать ошибки в wp-content/debug.log
+//? define( 'WP_DEBUG_DISPLAY', false );   // не выводить ошибки на страницу
 require_once get_template_directory() . '/includes/debug-log-2.php';
 // <-- дебаг лог
 
