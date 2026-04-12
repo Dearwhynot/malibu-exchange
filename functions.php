@@ -7,6 +7,12 @@ if (!defined('ABSPATH')) {
 // require_once get_template_directory() . '/inc/setup.php';
 // require_once get_template_directory() . '/inc/helpers.php';
 require_once get_template_directory() . '/inc/security.php';
+
+// Управление пользователями: хуки блокировки, трекинг last_login, хелперы
+require_once get_template_directory() . '/inc/users.php';
+
+// AJAX-обработчики управления пользователями
+require_once get_template_directory() . '/inc/ajax/users.php';
 // require_once get_template_directory() . '/inc/menus.php';
 // require_once get_template_directory() . '/inc/enqueue.php';
 // require_once get_template_directory() . '/inc/template-tags.php';

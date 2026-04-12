@@ -68,6 +68,23 @@
 - Keep DB access explicit and simple.
 - Avoid hiding important queries behind unnecessary abstraction layers.
 
+## Custom database table prefix (IMPORTANT)
+- All new custom tables in this project use the prefix `crm_`.
+- Do NOT use the standard WordPress prefix (`wp_`) for custom tables.
+- Do NOT use any other prefix (e.g. `me_`, `mex_`, `malibu_`) for new tables.
+- Examples of correct naming:
+  - `crm_user_last_login`
+  - `crm_organizations`
+  - `crm_orders`
+  - `crm_rates`
+- When writing SQL for new tables, always use `crm_` prefix.
+- When referencing custom tables in PHP via `$wpdb`, use the literal `crm_` prefix (not `$wpdb->prefix`).
+
+## Custom tables created so far
+| Table                   | Purpose                              | Created by  |
+|-------------------------|--------------------------------------|-------------|
+| `crm_user_last_login`   | Login history per WP user (optional) | inc/users.php SQL comment |
+
 ## UI / UX principles
 - Clean operator interface.
 - Premium but restrained visual style.
