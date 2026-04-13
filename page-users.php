@@ -179,14 +179,14 @@ get_header();
 			<div class="container-fluid container-fixed-lg mt-4">
 
 				<!-- ─── TAB NAV ───────────────────────────────────────────────── -->
-				<ul class="nav nav-tabs nav-tabs-simple m-b-0" role="tablist" data-init-reponsive-tabs="dropdownfx">
+				<ul class="nav nav-tabs nav-tabs-simple m-b-0" id="users-page-tabs" role="tablist" data-init-reponsive-tabs="dropdownfx">
 					<li class="nav-item">
-						<a class="active" data-bs-toggle="tab" role="tab" data-bs-target="#tab-users" href="#">
+						<a class="active" data-bs-toggle="tab" role="tab" data-bs-target="#tab-users" data-target="#tab-users" href="#tab-users">
 							Пользователи
 						</a>
 					</li>
 					<li class="nav-item">
-						<a data-bs-toggle="tab" role="tab" data-bs-target="#tab-roles" href="#">
+						<a data-bs-toggle="tab" role="tab" data-bs-target="#tab-roles" data-target="#tab-roles" href="#tab-roles">
 							Роли и права
 						</a>
 					</li>
@@ -198,7 +198,7 @@ get_header();
 				<div class="tab-pane active" id="tab-users">
 
 				<!-- Page heading -->
-				<div class="d-flex align-items-center justify-content-between m-b-20">
+				<div class="d-flex align-items-center justify-content-between m-b-20 ms-2 mt-3">
 					<p class="hint-text m-b-0">Всего в выборке: <strong><?php echo (int) $total; ?></strong></p>
 					<button type="button" class="btn btn-primary btn-cons"
 					        data-bs-toggle="modal" data-bs-target="#modal-user-form">
@@ -207,20 +207,29 @@ get_header();
 				</div>
 
 				<!-- ─── FILTERS ────────────────────────────────────────────────── -->
-				<div class="card card-default m-b-20 align-items-center">
+				<style>
+				@media (max-width: 991px) {
+				    .users-filter-card > .card-body { padding-left: 2px; padding-right: 2px; }
+				    .users-filter-card .select2-container { width: 100% !important; }
+				    .users-filter-card .users-filter-buttons { width: 100%; }
+				}
+				</style>
+				<div class="card card-default users-filter-card m-b-20">
 					<div class="card-body p-t-15 p-b-15">
 						<form method="get" action="<?php echo esc_url( $page_url ); ?>" id="users-filter-form">
-							<div style="display:grid; grid-template-columns:1fr auto 1fr; gap:12px; align-items:center;">
-								<!-- Поиск — левый край -->
-								<div class="input-group">
-									<span class="input-group-text"><i class="pg-icon">search</i></span>
-									<input type="text" class="form-control"
-									       name="me_s" value="<?php echo esc_attr( $s ); ?>"
-									       placeholder="Поиск по логину, email, имени…">
+							<div class="row g-2 align-items-center">
+								<!-- Поиск — 6 колонок -->
+								<div class="col-12 col-lg-6">
+									<div class="input-group">
+										<span class="input-group-text"><i class="pg-icon">search</i></span>
+										<input type="text" class="form-control"
+										       name="me_s" value="<?php echo esc_attr( $s ); ?>"
+										       placeholder="Поиск по логину, email, имени…">
+									</div>
 								</div>
-								<!-- Фильтры — по центру -->
-								<div class="d-flex gap-3">
-									<div style="min-width:180px;">
+								<!-- Правая половина: 2 селекта + 2 кнопки — 6 колонок -->
+								<div class="col-12 col-lg-6">
+									<div class="d-flex flex-column flex-sm-row gap-2">
 										<select class="full-width" name="me_role" data-init-plugin="select2">
 											<option value="">Все роли</option>
 											<?php foreach ( $all_crm_roles as $crm_role ) : ?>
@@ -230,8 +239,6 @@ get_header();
 												</option>
 											<?php endforeach; ?>
 										</select>
-									</div>
-									<div style="min-width:210px;">
 										<select class="full-width" name="me_status" data-init-plugin="select2">
 											<option value=""        <?php selected( $f_status, '' ); ?>>Активные (без архивных)</option>
 											<option value="active"   <?php selected( $f_status, 'active' ); ?>>Только активные</option>
@@ -240,17 +247,16 @@ get_header();
 											<option value="archived" <?php selected( $f_status, 'archived' ); ?>>Архивные</option>
 											<option value="all"      <?php selected( $f_status, 'all' ); ?>>Все</option>
 										</select>
+										<div class="d-flex gap-2 users-filter-buttons flex-shrink-0">
+											<button type="submit" class="btn btn-primary btn-sm flex-fill flex-sm-grow-0">
+												<i class="pg-icon">search</i>
+											</button>
+											<a href="<?php echo esc_url( $page_url ); ?>"
+											   class="btn btn-default btn-sm flex-fill flex-sm-grow-0">
+												<i class="pg-icon">close</i>
+											</a>
+										</div>
 									</div>
-								</div>
-								<!-- Кнопки — правый край -->
-								<div class="d-flex gap-2 justify-content-end">
-									<button type="submit" class="btn btn-primary btn-sm">
-										<i class="pg-icon">search</i>
-									</button>
-									<a href="<?php echo esc_url( $page_url ); ?>"
-									   class="btn btn-default btn-sm">
-										<i class="pg-icon">close</i>
-									</a>
 								</div>
 							</div>
 						</form>
@@ -924,6 +930,62 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 <script>
 (function ($) {
 	'use strict';
+
+	// ── Tab switching (fix Pages + Bootstrap 5 incompatibility) ─────────────────
+	var $usersTabNav   = $('#users-page-tabs');
+	var $usersTabLinks = $usersTabNav.find('a[data-bs-toggle="tab"]');
+	var $usersTabPanes = $('#tab-users, #tab-roles');
+
+	function activateTab(targetId) {
+		if ( ! targetId || targetId === 'undefined' ) {
+			return;
+		}
+
+		var $activeLink = $usersTabLinks.filter('[data-bs-target="' + targetId + '"]');
+		if ( ! $activeLink.length ) {
+			return;
+		}
+
+		$usersTabLinks.removeClass('active').attr('aria-selected', 'false');
+		$usersTabLinks.parent('.nav-item').removeClass('active');
+		$activeLink.addClass('active').attr('aria-selected', 'true');
+		$activeLink.parent('.nav-item').addClass('active');
+
+		$usersTabPanes.removeClass('show active');
+		$(targetId).addClass('show active');
+	}
+	// Desktop: перехватываем клик; .data('bs-target') не работает в jQuery 3 — используем .attr()
+	$(document).on('click.me-tabs', '#users-page-tabs a[data-bs-toggle="tab"]', function (e) {
+		e.preventDefault();
+		e.stopImmediatePropagation();
+		activateTab($(this).attr('data-bs-target'));
+	});
+	// Mobile: Pages создаёт select с value="undefined" (не находит data-target),
+	// поэтому сначала пробуем value, а затем корректно fallback'аемся к selectedIndex
+	function bindMobileTabDropdown(attempt) {
+		var $select = $usersTabNav.nextAll('.nav-tab-dropdown').find('select').first();
+		if ( ! $select.length ) {
+			if ( attempt < 10 ) {
+				setTimeout(function () {
+					bindMobileTabDropdown(attempt + 1);
+				}, 150);
+			}
+			return;
+		}
+
+		$select.off('change.me-tabs').on('change.me-tabs', function () {
+			var targetId = this.value;
+
+			if ( ! targetId || targetId === 'undefined' ) {
+				var $link = $usersTabLinks.eq(this.selectedIndex);
+				targetId = $link.attr('data-bs-target');
+			}
+
+			activateTab(targetId);
+		});
+	}
+
+	bindMobileTabDropdown(0);
 
 	var AJAX_URL = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
 	var NONCES   = {
