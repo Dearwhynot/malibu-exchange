@@ -207,7 +207,7 @@ get_header();
 				</div>
 
 				<!-- ─── FILTERS ────────────────────────────────────────────────── -->
-				<div class="card card-default m-b-20">
+				<div class="card card-default m-b-20 align-items-center">
 					<div class="card-body p-t-15 p-b-15">
 						<form method="get" action="<?php echo esc_url( $page_url ); ?>" id="users-filter-form">
 							<div style="display:grid; grid-template-columns:1fr auto 1fr; gap:12px; align-items:center;">

@@ -140,6 +140,28 @@ function malibu_exchange_enqueue_pages_assets(): void
 	wp_enqueue_script( 'pages-core-js',          $theme_uri . '/vendor/pages/pages/js/pages.js',                                      ['jquery', 'pages-bootstrap', 'pages-jquery-ui', 'pages-jquery-easy', 'pages-jquery-unveil', 'pages-jquery-ios-list', 'pages-jquery-actual', 'pages-jquery-scrollbar', 'pages-select2', 'pages-classie'], $ver, true );
 	wp_enqueue_script( 'pages-custom-js',        $theme_uri . '/vendor/pages/assets/js/scripts.js',                                   ['pages-core-js'], $ver, true );
 
+	// Sidebar pin persistence: remember pinned state across page loads (desktop only)
+	wp_add_inline_script( 'pages-custom-js', <<<'JS'
+(function($){
+    var KEY = 'malibu_sidebar_pinned';
+    $(function(){
+        if ($(window).width() >= 1200 && localStorage.getItem(KEY) === '1') {
+            $('body').addClass('menu-pin').removeClass('menu-unpinned');
+        }
+        $(document).on('click.malibu.pin', '[data-toggle-pin="sidebar"]', function(){
+            setTimeout(function(){
+                if ($('body').hasClass('menu-pin')) {
+                    localStorage.setItem(KEY, '1');
+                } else {
+                    localStorage.removeItem(KEY);
+                }
+            }, 0);
+        });
+    });
+})(jQuery);
+JS
+	);
+
 	if (is_page_template('page-login.php')) {
 		wp_enqueue_script( 'pages-jquery-validate', $theme_uri . '/vendor/pages/assets/plugins/jquery-validation/js/jquery.validate.min.js', ['jquery'], $ver, true );
 		wp_add_inline_script( 'pages-jquery-validate', "jQuery(function($){ $('#form-login').validate(); });" );
