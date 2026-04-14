@@ -121,6 +121,12 @@ function me_ajax_save_user(): void {
 			crm_assign_roles( $user_id, $crm_role_ids, $current_uid );
 		}
 
+		crm_log_user( 'user.created', 'create',
+			"Создан пользователь «{$user_login}»",
+			$user_id,
+			[ 'context' => [ 'created_by' => $current_uid, 'status' => $crm_status ] ]
+		);
+
 		wp_send_json_success( [
 			'message' => "Пользователь «{$user_login}» создан.",
 			'user_id' => $user_id,
@@ -178,6 +184,25 @@ function me_ajax_save_user(): void {
 		crm_assign_roles( $user_id, $crm_role_ids, $current_uid );
 	}
 
+	// Логировать обновление; отдельно — смену пароля
+	if ( isset( $userdata['user_pass'] ) ) {
+		crm_log( 'user.password_changed', [
+			'category'    => 'users',
+			'level'       => 'security',
+			'action'      => 'password_change',
+			'message'     => "Изменён пароль пользователя «{$target_user->user_login}»",
+			'target_type' => 'user',
+			'target_id'   => $user_id,
+			'context'     => [ 'changed_by' => $current_uid ],
+		] );
+	}
+
+	crm_log_user( 'user.updated', 'update',
+		"Обновлён пользователь «{$target_user->user_login}»",
+		$user_id,
+		[ 'context' => [ 'updated_by' => $current_uid ] ]
+	);
+
 	wp_send_json_success( [
 		'message' => "Пользователь «{$target_user->user_login}» обновлён.",
 		'user_id' => $user_id,
@@ -218,6 +243,20 @@ function me_ajax_set_user_status(): void {
 		$sessions = WP_Session_Tokens::get_instance( $user_id );
 		$sessions->destroy_all();
 	}
+
+	$target_user_obj = get_userdata( $user_id );
+	$target_login    = $target_user_obj ? $target_user_obj->user_login : "#{$user_id}";
+	$is_security     = in_array( $status, [ CRM_STATUS_BLOCKED, CRM_STATUS_ARCHIVED ], true );
+
+	crm_log( 'user.status_changed', [
+		'category'    => $is_security ? 'security' : 'users',
+		'level'       => $is_security ? 'security' : 'info',
+		'action'      => 'status_change',
+		'message'     => "Статус пользователя «{$target_login}» изменён на «" . crm_status_label( $status ) . '»',
+		'target_type' => 'user',
+		'target_id'   => $user_id,
+		'context'     => [ 'status' => $status, 'changed_by' => $current_uid ],
+	] );
 
 	wp_send_json_success( [
 		'message'     => 'Статус изменён на «' . crm_status_label( $status ) . '».',
@@ -261,6 +300,15 @@ function me_ajax_delete_user(): void {
 		if ( ! wp_delete_user( $user_id ) ) {
 			_me_ajax_error( 'Ошибка при удалении.' );
 		}
+		crm_log( 'user.hard_deleted', [
+			'category'    => 'users',
+			'level'       => 'security',
+			'action'      => 'delete',
+			'message'     => "Пользователь «{$target_user->user_login}» физически удалён",
+			'target_type' => 'user',
+			'target_id'   => $user_id,
+			'context'     => [ 'deleted_by' => $current_uid, 'hard' => true ],
+		] );
 		wp_send_json_success( [
 			'message' => "Пользователь «{$target_user->user_login}» физически удалён.",
 			'hard'    => true,
@@ -271,6 +319,12 @@ function me_ajax_delete_user(): void {
 	crm_set_user_status( $user_id, CRM_STATUS_ARCHIVED );
 	$sessions = WP_Session_Tokens::get_instance( $user_id );
 	$sessions->destroy_all();
+
+	crm_log_user( 'user.archived', 'delete',
+		"Пользователь «{$target_user->user_login}» перемещён в архив",
+		$user_id,
+		[ 'context' => [ 'deleted_by' => $current_uid, 'hard' => false ] ]
+	);
 
 	wp_send_json_success( [
 		'message' => "Пользователь «{$target_user->user_login}» перемещён в архив.",
@@ -326,6 +380,16 @@ function me_ajax_save_role_permissions(): void {
 			[ '%d', '%d' ]
 		);
 	}
+
+	crm_log( 'role.permissions_updated', [
+		'category'    => 'users',
+		'level'       => 'security',
+		'action'      => 'role_change',
+		'message'     => "Обновлены права роли «{$role->name}»",
+		'target_type' => 'role',
+		'target_id'   => $role_id,
+		'context'     => [ 'permission_count' => count( $permission_ids ) ],
+	] );
 
 	wp_send_json_success( [
 		'message' => "Права роли «{$role->name}» сохранены.",

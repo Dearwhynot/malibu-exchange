@@ -41,6 +41,13 @@ function me_ajax_settings_save(): void {
 			wp_send_json_error( [ 'message' => 'Ошибка сохранения коэффициента.' ], 500 );
 		}
 
+		crm_log_entity( 'settings.rates_coefficient_saved', 'settings', 'update',
+			"Обновлён коэффициент курса: {$coeff}",
+			'settings',
+			0,
+			[ 'context' => [ 'section' => 'rates_coefficient', 'coefficient' => $coeff ] ]
+		);
+
 		wp_send_json_success( [ 'message' => 'Коэффициент сохранён.' ] );
 		return;
 	}
@@ -55,6 +62,13 @@ function me_ajax_settings_save(): void {
 	if ( ! $ok ) {
 		wp_send_json_error( [ 'message' => 'Ошибка сохранения в базе данных' ], 500 );
 	}
+
+	crm_log_entity( 'settings.telegram_saved', 'settings', 'update',
+		'Обновлён токен Telegram-бота',
+		'settings',
+		0,
+		[ 'context' => [ 'section' => 'telegram' ] ]
+	);
 
 	wp_send_json_success( [ 'message' => 'Настройки сохранены' ] );
 }

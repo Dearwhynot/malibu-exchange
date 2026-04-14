@@ -8,6 +8,9 @@ if (!defined('ABSPATH')) {
 
 // require_once get_template_directory() . '/inc/setup.php';
 // require_once get_template_directory() . '/inc/helpers.php';
+// Централизованный аудит-лог (загружается первым — нужен для хуков аутентификации)
+require_once get_template_directory() . '/inc/audit-log.php';
+
 require_once get_template_directory() . '/inc/security.php';
 
 // CRM RBAC: роли, права, статусы пользователей
@@ -26,6 +29,9 @@ require_once get_template_directory() . '/inc/ajax/settings.php';
 // Курсы валют
 require_once get_template_directory() . '/inc/rates.php';
 require_once get_template_directory() . '/inc/ajax/rates.php';
+
+// Журнал действий (страница логов)
+require_once get_template_directory() . '/inc/ajax/logs.php';
 
 // require_once get_template_directory() . '/inc/menus.php';
 // require_once get_template_directory() . '/inc/enqueue.php';
