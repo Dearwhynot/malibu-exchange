@@ -1,6 +1,7 @@
 .vscode/
 .DS_Store
 node_modules/
+vendorsphp/
 .env/
 theme source html bootstrap demo/
 /интеграция

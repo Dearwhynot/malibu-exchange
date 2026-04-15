@@ -103,6 +103,7 @@ if (!function_exists('tg_require_qrcode_lib')) {
             return true;
         }
 
+        // phpqrcode v1.1.4 — https://github.com/t0k4rt/phpqrcode
         $paths = [
             __DIR__ . '/vendorsphp/phpqrcode/qrlib.php',
             dirname(__DIR__, 4) . '/vendorsphp/phpqrcode/qrlib.php',
