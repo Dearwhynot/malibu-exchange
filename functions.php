@@ -33,13 +33,28 @@ require_once get_template_directory() . '/inc/ajax/rates.php';
 // Журнал действий (страница логов)
 require_once get_template_directory() . '/inc/ajax/logs.php';
 
+// Fintech: платёжный gateway + callback handler
+require_once get_template_directory() . '/inc/fintech-payment-gateway.php';
+require_once get_template_directory() . '/inc/fintech-payment-callback-handler.php';
+
+// Fintech: бизнес-логика ордеров (создание, статусы, QR, hook-подписчик)
+require_once get_template_directory() . '/inc/fintech-orders.php';
+
+// Ордера: AJAX-обработчики
+require_once get_template_directory() . '/inc/ajax/orders.php';
+
+// Fintech: cron-опрос открытых ордеров + Telegram-уведомления
+require_once get_template_directory() . '/inc/fintech-cron.php';
+
+// Telegram: project-хуки для ордеров (должно быть до dispatch)
+require_once get_template_directory() . '/inc/telegram-orders-handler.php';
+
 // require_once get_template_directory() . '/inc/menus.php';
 // require_once get_template_directory() . '/inc/enqueue.php';
 // require_once get_template_directory() . '/inc/template-tags.php';
 require_once get_template_directory() . '/inc/migration-runner.php';
 require_once get_template_directory() . '/inc/telegram-callback.php';
 // require_once get_template_directory() . '/inc/ajax/bot-actions.php';
-// require_once get_template_directory() . '/inc/ajax/orders.php';
 
 // дебаг лог -->
 //? Нужны три константы в wp-config.php:

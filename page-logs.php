@@ -18,6 +18,12 @@ if ( ! crm_can_access( 'logs.view' ) ) {
 $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
 $nonce          = wp_create_nonce( 'me_logs_list' );
 
+$filter_users = get_users( [
+	'orderby' => 'user_login',
+	'order'   => 'ASC',
+	'fields'  => [ 'ID', 'user_login', 'display_name' ],
+] );
+
 get_header();
 ?>
 
@@ -98,6 +104,10 @@ get_header();
 									<option value="users">users</option>
 									<option value="rates">rates</option>
 									<option value="orders">orders</option>
+									<option value="payments">payments</option>
+									<option value="callbacks">callbacks</option>
+									<option value="integrations">integrations</option>
+									<option value="cron">cron</option>
 									<option value="settings">settings</option>
 									<option value="system">system</option>
 									<option value="security">security</option>
@@ -123,7 +133,20 @@ get_header();
 
 						<div class="row g-2 align-items-center">
 							<div class="col-6 col-md-2">
-								<input type="text" id="f-user-login" class="form-control" placeholder="Пользователь">
+								<select id="f-user-login" class="full-width" data-init-plugin="select2"
+								        data-placeholder="Пользователь" data-allow-clear="true">
+									<option value=""></option>
+									<?php foreach ( $filter_users as $u ) : ?>
+										<option value="<?php echo esc_attr( $u->user_login ); ?>">
+											<?php
+											echo esc_html( $u->user_login );
+											if ( $u->display_name && $u->display_name !== $u->user_login ) {
+												echo ' — ' . esc_html( $u->display_name );
+											}
+											?>
+										</option>
+									<?php endforeach; ?>
+								</select>
 							</div>
 							<div class="col-6 col-md-2">
 								<select id="f-action" class="full-width" data-init-plugin="select2">
@@ -137,6 +160,9 @@ get_header();
 									<option value="status_change">status_change</option>
 									<option value="role_change">role_change</option>
 									<option value="snapshot">snapshot</option>
+									<option value="callback">callback</option>
+									<option value="reconcile">reconcile</option>
+									<option value="expire">expire</option>
 								</select>
 							</div>
 							<div class="col-6 col-md-2">
@@ -147,6 +173,9 @@ get_header();
 									<option value="market_snapshot">market_snapshot</option>
 									<option value="settings">settings</option>
 									<option value="role">role</option>
+									<option value="payment_order">payment_order</option>
+									<option value="company">company</option>
+									<option value="company_office">company_office</option>
 								</select>
 							</div>
 							<div class="col-6 col-md-2">
@@ -561,11 +590,10 @@ add_action( 'wp_footer', function () use ( $nonce ) {
 
 	$('#btn-logs-reset').on('click', function () {
 		$('#f-search').val('');
-		$('#f-user-login').val('');
 		$('#f-date-from').val('');
 		$('#f-date-to').val('');
 		// Select2 — сброс через trigger('change') чтобы UI обновился
-		$('#f-category, #f-level, #f-action, #f-target-type, #f-is-success').val('').trigger('change');
+		$('#f-category, #f-level, #f-action, #f-target-type, #f-is-success, #f-user-login').val('').trigger('change');
 		$('#f-per-page').val('25').trigger('change');
 		currentPage = 1;
 		fetchLogs(1);

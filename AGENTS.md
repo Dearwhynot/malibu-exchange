@@ -99,6 +99,7 @@
 - Keep scripts small and page-focused.
 - Load page-specific scripts only where needed.
 - Do not introduce frontend complexity without a clear reason.
+- For Select2 dropdowns see: [select2.md](select2.md)
 
 ## CSS rules
 - Keep selectors understandable.
@@ -322,6 +323,22 @@ Rules:
 | `crm_rate_history`      | История снимков курсов           | inc/migrations/0005   |
 | `crm_market_snapshots_usdt` | Рыночные снимки USDT        | inc/migrations/0006   |
 | `crm_audit_log`         | Журнал аудита действий           | inc/migrations/0007   |
+| `crm_companies`         | Компании (top-level бизнес-сущность) | inc/migrations/0010 |
+| `crm_company_offices`   | Офисы компаний                   | inc/migrations/0010   |
+| `crm_user_companies`    | Членство пользователей в компаниях | inc/migrations/0010 |
+| `crm_user_company_offices` | Назначение пользователей на офисы | inc/migrations/0010 |
+| `crm_fintech_payment_orders` | Платёжные ордера (fintech) | inc/migrations/0011   |
+| `crm_fintech_payment_order_status_history` | История статусов ордеров | inc/migrations/0012 |
+| `crm_fintech_payment_callbacks` | Transport-лог входящих callbacks | inc/migrations/0013 |
+
+## Fintech Payment Layer
+- Gateway helper: `inc/fintech-payment-gateway.php` — класс `Fintech_Payment_Gateway`, провайдеры: `kanyon`, `doverka`
+- Настройки читаются через `crm_fintech_settings(int $company_id)` → `crm_get_setting()`
+- Callback handler: `inc/fintech-payment-callback-handler.php` — REST endpoint `POST /wp-json/malibu/v1/fintech-callback`
+- Callback URL провайдера: `home_url('/fintech-payment-callback/')`
+- Бизнес-логика callback подключается через: `add_action('fintech_payment_callback_received', fn($event, $payload, $headers, $callback_id) => ...)`
+- Ключи настроек в `crm_settings`: `fintech_active_provider`, `fintech_company_name`, `fintech_merchant_order_prefix`, `fintech_pay2day_login`, `fintech_pay2day_password`, `fintech_pay2day_tsp_id`, `fintech_pay2day_order_currency`, `fintech_doverka_api_key`, `fintech_doverka_currency_id`, `fintech_doverka_approve_url`, `fintech_doverka_kyc_redirect_url`, `fintech_debug`, `fintech_kanyon_verify_signature`, `fintech_kanyon_public_key_pem`
+- `company_id` в платёжных таблицах = `id` в `crm_companies`; также используется как `org_id` при обращении к `crm_settings`
 
 ## Rates architecture (IMPORTANT)
 - Курсы конкурента получаем через `rates_get_ex24(string $source)` из `inc/rates.php`.

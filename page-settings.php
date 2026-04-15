@@ -18,6 +18,24 @@ if ( ! crm_user_has_permission( get_current_user_id(), 'settings.view' ) ) {
 $settings       = crm_get_all_settings( CRM_DEFAULT_ORG_ID );
 $telegram_token = $settings['telegram_bot_token'] ?? '';
 
+// Fintech settings
+$fintech = [
+	'company_name'              => $settings['fintech_company_name']              ?? '',
+	'merchant_order_prefix'     => $settings['fintech_merchant_order_prefix']     ?? 'MALIBU',
+	'active_provider'           => $settings['fintech_active_provider']           ?? 'kanyon',
+	'debug'                     => ( $settings['fintech_debug'] ?? '0' ) === '1',
+	'pay2day_login'             => $settings['fintech_pay2day_login']             ?? '',
+	'pay2day_password'          => $settings['fintech_pay2day_password']          ?? '',
+	'pay2day_tsp_id'            => $settings['fintech_pay2day_tsp_id']            ?? '',
+	'pay2day_order_currency'    => $settings['fintech_pay2day_order_currency']    ?? 'USDT',
+	'doverka_api_key'           => $settings['fintech_doverka_api_key']           ?? '',
+	'doverka_currency_id'       => $settings['fintech_doverka_currency_id']       ?? '',
+	'doverka_approve_url'       => $settings['fintech_doverka_approve_url']       ?? '',
+	'doverka_kyc_redirect_url'  => $settings['fintech_doverka_kyc_redirect_url']  ?? '',
+	'kanyon_verify_signature'   => ( $settings['fintech_kanyon_verify_signature'] ?? '0' ) === '1',
+	'kanyon_public_key_pem'     => $settings['fintech_kanyon_public_key_pem']     ?? '',
+];
+
 $pair       = rates_get_pair( RATES_PAIR_CODE, CRM_DEFAULT_ORG_ID );
 $coeff      = $pair ? rates_get_coefficient( (int) $pair->id, RATES_PROVIDER_EX24, RATES_PROVIDER_SOURCE ) : 0.05;
 
@@ -154,6 +172,167 @@ get_header();
 					</div>
 				</div>
 
+				<!-- ─── Fintech: Общие ──────────────────────────────────────── -->
+				<div class="card card-default m-b-20">
+					<div class="card-header">
+						<div class="card-title">Платёжный шлюз — Общие настройки</div>
+					</div>
+					<div class="card-body">
+						<form id="fintech-settings-form">
+							<div class="row">
+								<div class="col-md-4 col-lg-3">
+									<div class="form-group">
+										<label for="fintech_company_name">Название компании</label>
+										<input type="text" class="form-control" id="fintech_company_name" name="fintech_company_name"
+										       value="<?php echo esc_attr( $fintech['company_name'] ); ?>" placeholder="Malibu Exchange">
+									</div>
+								</div>
+								<div class="col-md-3 col-lg-2">
+									<div class="form-group">
+										<label for="fintech_merchant_order_prefix">Префикс ордера</label>
+										<input type="text" class="form-control" id="fintech_merchant_order_prefix" name="fintech_merchant_order_prefix"
+										       value="<?php echo esc_attr( $fintech['merchant_order_prefix'] ); ?>" placeholder="MALIBU" maxlength="16">
+									</div>
+								</div>
+								<div class="col-md-3 col-lg-2">
+									<div class="form-group">
+										<label for="fintech_active_provider">Активный провайдер</label>
+										<select class="full-width" id="fintech_active_provider" name="fintech_active_provider" data-init-plugin="select2">
+											<option value="kanyon" <?php selected( $fintech['active_provider'], 'kanyon' ); ?>>Kanyon (Pay2Day)</option>
+											<option value="doverka" <?php selected( $fintech['active_provider'], 'doverka' ); ?>>Doverka</option>
+										</select>
+									</div>
+								</div>
+								<div class="col-md-2">
+									<div class="form-group">
+										<label>&nbsp;</label>
+										<div class="checkbox check-success" style="margin-top:7px">
+											<input type="checkbox" id="fintech_debug" name="fintech_debug" value="1" <?php checked( $fintech['debug'] ); ?>>
+											<label for="fintech_debug">Debug-лог</label>
+										</div>
+									</div>
+								</div>
+							</div>
+							<button type="submit" class="btn btn-primary btn-cons">
+								Сохранить
+							</button>
+						</form>
+					</div>
+				</div>
+
+				<!-- ─── Fintech: Kanyon / Pay2Day ────────────────────────────── -->
+				<div class="card card-default m-b-20">
+					<div class="card-header">
+						<div class="card-title">Kanyon / Pay2Day — Учётные данные</div>
+					</div>
+					<div class="card-body">
+						<form id="fintech-kanyon-form">
+							<div class="row">
+								<div class="col-md-4">
+									<div class="form-group">
+										<label for="fintech_pay2day_login">Логин (Login)</label>
+										<input type="text" class="form-control" id="fintech_pay2day_login" name="fintech_pay2day_login"
+										       value="<?php echo esc_attr( $fintech['pay2day_login'] ); ?>"
+										       placeholder="your@login" autocomplete="off">
+									</div>
+								</div>
+								<div class="col-md-4">
+									<div class="form-group">
+										<label for="fintech_pay2day_password">Пароль (Password)</label>
+										<input type="password" class="form-control" id="fintech_pay2day_password" name="fintech_pay2day_password"
+										       value="<?php echo esc_attr( $fintech['pay2day_password'] ); ?>"
+										       placeholder="••••••••" autocomplete="new-password">
+									</div>
+								</div>
+								<div class="col-md-2">
+									<div class="form-group">
+										<label for="fintech_pay2day_tsp_id">TSP ID</label>
+										<input type="number" class="form-control" id="fintech_pay2day_tsp_id" name="fintech_pay2day_tsp_id"
+										       value="<?php echo esc_attr( $fintech['pay2day_tsp_id'] ); ?>" min="0" placeholder="0">
+									</div>
+								</div>
+								<div class="col-md-2">
+									<div class="form-group">
+										<label for="fintech_pay2day_order_currency">Код валюты</label>
+										<input type="text" class="form-control" id="fintech_pay2day_order_currency" name="fintech_pay2day_order_currency"
+										       value="<?php echo esc_attr( $fintech['pay2day_order_currency'] ); ?>"
+										       placeholder="USDT" maxlength="8">
+										<p class="hint-text m-t-3">Например: USDT</p>
+									</div>
+								</div>
+							</div>
+							<div class="row m-t-10 m-b-10">
+								<div class="col-md-8">
+									<div class="checkbox check-success">
+										<input type="checkbox" id="fintech_kanyon_verify_signature" name="fintech_kanyon_verify_signature" value="1"
+										       <?php checked( $fintech['kanyon_verify_signature'] ); ?>>
+										<label for="fintech_kanyon_verify_signature">Проверять подпись callback (HMAC)</label>
+									</div>
+								</div>
+							</div>
+							<div class="row" id="kanyon-pubkey-row"<?php echo $fintech['kanyon_verify_signature'] ? '' : ' style="display:none"'; ?>>
+								<div class="col-md-8">
+									<div class="form-group">
+										<label for="fintech_kanyon_public_key_pem">Публичный ключ провайдера (PEM)</label>
+										<textarea class="form-control" id="fintech_kanyon_public_key_pem" name="fintech_kanyon_public_key_pem"
+										          rows="5" style="font-family:monospace;font-size:12px"><?php echo esc_textarea( $fintech['kanyon_public_key_pem'] ); ?></textarea>
+									</div>
+								</div>
+							</div>
+							<button type="submit" class="btn btn-primary btn-cons m-t-10">
+								Сохранить Kanyon
+							</button>
+						</form>
+					</div>
+				</div>
+
+				<!-- ─── Fintech: Doverka ──────────────────────────────────────── -->
+				<div class="card card-default m-b-30">
+					<div class="card-header">
+						<div class="card-title">Doverka — Учётные данные</div>
+					</div>
+					<div class="card-body">
+						<form id="fintech-doverka-form">
+							<div class="row">
+								<div class="col-md-5">
+									<div class="form-group">
+										<label for="fintech_doverka_api_key">API Key</label>
+										<input type="password" class="form-control" id="fintech_doverka_api_key" name="fintech_doverka_api_key"
+										       value="<?php echo esc_attr( $fintech['doverka_api_key'] ); ?>"
+										       placeholder="••••••••••••••••" autocomplete="new-password">
+									</div>
+								</div>
+								<div class="col-md-2">
+									<div class="form-group">
+										<label for="fintech_doverka_currency_id">Currency ID</label>
+										<input type="number" class="form-control" id="fintech_doverka_currency_id" name="fintech_doverka_currency_id"
+										       value="<?php echo esc_attr( $fintech['doverka_currency_id'] ); ?>" min="0" placeholder="0">
+									</div>
+								</div>
+							</div>
+							<div class="row">
+								<div class="col-md-5">
+									<div class="form-group">
+										<label for="fintech_doverka_approve_url">Approve URL</label>
+										<input type="url" class="form-control" id="fintech_doverka_approve_url" name="fintech_doverka_approve_url"
+										       value="<?php echo esc_attr( $fintech['doverka_approve_url'] ); ?>" placeholder="https://...">
+									</div>
+								</div>
+								<div class="col-md-5">
+									<div class="form-group">
+										<label for="fintech_doverka_kyc_redirect_url">KYC Redirect URL</label>
+										<input type="url" class="form-control" id="fintech_doverka_kyc_redirect_url" name="fintech_doverka_kyc_redirect_url"
+										       value="<?php echo esc_attr( $fintech['doverka_kyc_redirect_url'] ); ?>" placeholder="https://...">
+									</div>
+								</div>
+							</div>
+							<button type="submit" class="btn btn-primary btn-cons">
+								Сохранить Doverka
+							</button>
+						</form>
+					</div>
+				</div>
+
 			</div>
 		</div>
 		<!-- START COPYRIGHT -->
@@ -219,6 +398,58 @@ add_action( 'wp_footer', function () use ( $nonce_save ) {
 		function () { return { section: 'rates_coefficient', rates_coefficient: $('#rates_coefficient').val() }; },
 		'Сохранить коэффициент'
 	);
+
+	handleSettingsForm(
+		$('#fintech-settings-form'),
+		$('#settings-alert'),
+		function () {
+			return {
+				section:                       'fintech_general',
+				fintech_company_name:          $('#fintech_company_name').val(),
+				fintech_merchant_order_prefix: $('#fintech_merchant_order_prefix').val(),
+				fintech_active_provider:       $('#fintech_active_provider').val(),
+				fintech_debug:                 $('#fintech_debug').is(':checked') ? '1' : '0',
+			};
+		},
+		'Сохранить'
+	);
+
+	handleSettingsForm(
+		$('#fintech-kanyon-form'),
+		$('#settings-alert'),
+		function () {
+			return {
+				section:                         'fintech_kanyon',
+				fintech_pay2day_login:           $('#fintech_pay2day_login').val(),
+				fintech_pay2day_password:        $('#fintech_pay2day_password').val(),
+				fintech_pay2day_tsp_id:          $('#fintech_pay2day_tsp_id').val(),
+				fintech_pay2day_order_currency:  $('#fintech_pay2day_order_currency').val(),
+				fintech_kanyon_verify_signature: $('#fintech_kanyon_verify_signature').is(':checked') ? '1' : '0',
+				fintech_kanyon_public_key_pem:   $('#fintech_kanyon_public_key_pem').val(),
+			};
+		},
+		'Сохранить Kanyon'
+	);
+
+	handleSettingsForm(
+		$('#fintech-doverka-form'),
+		$('#settings-alert'),
+		function () {
+			return {
+				section:                         'fintech_doverka',
+				fintech_doverka_api_key:         $('#fintech_doverka_api_key').val(),
+				fintech_doverka_currency_id:     $('#fintech_doverka_currency_id').val(),
+				fintech_doverka_approve_url:     $('#fintech_doverka_approve_url').val(),
+				fintech_doverka_kyc_redirect_url: $('#fintech_doverka_kyc_redirect_url').val(),
+			};
+		},
+		'Сохранить Doverka'
+	);
+
+	// Toggle PEM key field visibility
+	$('#fintech_kanyon_verify_signature').on('change', function () {
+		$('#kanyon-pubkey-row').toggle(this.checked);
+	});
 
 }(jQuery));
 </script>

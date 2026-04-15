@@ -76,24 +76,17 @@ $vendor_img_uri = $theme_uri . '/vendor/pages/assets/img';
                 </a>
                 <span class="icon-thumbnail"><i class="pg-icon">chart</i></span>
             </li>
-            <li>
-                <a href="javascript:;"><span class="title">Ордера</span>
-                    <span class="arrow"></span></a>
+            <li class="">
+                <a href="<?php echo esc_url(home_url('/orders/')); ?>">
+                    <span class="title">Ордера</span>
+                </a>
                 <span class="icon-thumbnail"><i class="pg-icon">table</i></span>
-                <ul class="sub-menu">
-                    <li class="">
-                        <a href="<?php echo esc_url(home_url('/orders/open/')); ?>">Открытые</a>
-                        <span class="icon-thumbnail"><i class="pg-icon">circle</i></span>
-                    </li>
-                    <li class="">
-                        <a href="<?php echo esc_url(home_url('/orders/closed/')); ?>">Закрытые</a>
-                        <span class="icon-thumbnail"><i class="pg-icon">tick</i></span>
-                    </li>
-                    <li class="">
-                        <a href="<?php echo esc_url(home_url('/orders/cancelled/')); ?>">Отмененные</a>
-                        <span class="icon-thumbnail"><i class="pg-icon">disable</i></span>
-                    </li>
-                </ul>
+            </li>
+            <li class="">
+                <a href="<?php echo esc_url(home_url('/create-order/')); ?>">
+                    <span class="title">Создать ордер</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">add</i></span>
             </li>
             <li class="">
                 <a href="<?php echo esc_url(home_url('/users/')); ?>">

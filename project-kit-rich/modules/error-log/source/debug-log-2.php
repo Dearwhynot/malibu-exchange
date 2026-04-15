@@ -7,7 +7,7 @@
 add_action('admin_menu', 'register_clear_log_menu_page');
 function register_clear_log_menu_page()
 {
-    add_menu_page('🪲 Журнал отладки', 'Журнал отладки', 'manage_options', 'debug-log', 'debug_log_page', 'dashicons-visibility', 100);
+    add_menu_page('🪲 Debug Log', 'Debug Log', 'manage_options', 'debug-log', 'debug_log_page', 'dashicons-visibility', 100);
 }
 
 function debug_log_page()
@@ -62,7 +62,7 @@ function debug_log_page()
     $log_content = get_debug_log_content($log_file, $lines_per_page, $current_page, $search_term, $use_emojis);
 ?>
     <div class="wrap">
-        <h1>Журнал отладки</h1>
+        <h1>Debug Log</h1>
 
         <form method="post" action="">
             <p style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
