@@ -15,7 +15,10 @@ if ( ! crm_user_has_permission( get_current_user_id(), 'settings.view' ) ) {
 	exit;
 }
 
-$settings       = crm_get_all_settings( CRM_DEFAULT_ORG_ID );
+// Root (uid=1) имеет org_id = 0 — системный контекст, отдельный от всех компаний.
+// Обычный пользователь — org_id его компании.
+$org_id   = crm_is_root( get_current_user_id() ) ? 0 : crm_get_current_user_company_id( get_current_user_id() );
+$settings = crm_get_all_settings( $org_id );
 $telegram_token = $settings['telegram_bot_token'] ?? '';
 
 // Fintech settings
@@ -36,7 +39,9 @@ $fintech = [
 	'kanyon_public_key_pem'     => $settings['fintech_kanyon_public_key_pem']     ?? '',
 ];
 
-$pair       = rates_get_pair( RATES_PAIR_CODE, CRM_DEFAULT_ORG_ID );
+$current_tz = $settings['timezone'] ?? 'UTC';
+
+$pair       = rates_get_pair( RATES_PAIR_CODE, $org_id );
 $coeff      = $pair ? rates_get_coefficient( (int) $pair->id, RATES_PROVIDER_EX24, RATES_PROVIDER_SOURCE ) : 0.05;
 
 $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
@@ -105,6 +110,79 @@ get_header();
 
 				<!-- Алерт результата сохранения -->
 				<div id="settings-alert" class="alert d-none m-b-20" role="alert"></div>
+
+				<!-- ─── Система / Таймзона ─────────────────────────────────────────── -->
+				<div class="card card-default m-b-30">
+					<div class="card-header">
+						<div class="card-title">Система — Общие</div>
+					</div>
+					<div class="card-body">
+						<form id="system-settings-form">
+							<div class="row">
+								<div class="col-md-5 col-lg-4">
+									<div class="form-group">
+										<label for="timezone">Часовой пояс (отображение дат)</label>
+										<select class="full-width" id="timezone" name="timezone" data-init-plugin="select2">
+											<?php
+											$tz_groups = [
+												'Универсальный' => [ 'UTC' ],
+												'Россия' => [
+													'Europe/Kaliningrad',
+													'Europe/Moscow',
+													'Europe/Samara',
+													'Asia/Yekaterinburg',
+													'Asia/Omsk',
+													'Asia/Krasnoyarsk',
+													'Asia/Irkutsk',
+													'Asia/Yakutsk',
+													'Asia/Vladivostok',
+													'Asia/Magadan',
+													'Asia/Kamchatka',
+												],
+												'Азия' => [
+													'Asia/Dubai',
+													'Asia/Bangkok',
+													'Asia/Singapore',
+													'Asia/Tokyo',
+												],
+												'Европа' => [
+													'Europe/London',
+													'Europe/Berlin',
+													'Europe/Kiev',
+												],
+											];
+											foreach ( $tz_groups as $group => $tzs ) {
+												echo '<optgroup label="' . esc_attr( $group ) . '">';
+												foreach ( $tzs as $tz ) {
+													$label = $tz;
+													try {
+														$dtz    = new DateTimeZone( $tz );
+														$offset = $dtz->getOffset( new DateTime( 'now', $dtz ) );
+														$sign   = $offset >= 0 ? '+' : '-';
+														$abs    = abs( $offset );
+														$h      = (int) floor( $abs / 3600 );
+														$m_m    = (int) floor( ( $abs % 3600 ) / 60 );
+														$label  = 'UTC' . $sign . str_pad( $h, 2, '0', STR_PAD_LEFT ) . ':' . str_pad( $m_m, 2, '0', STR_PAD_LEFT ) . ' — ' . $tz;
+													} catch ( \Exception $e ) {}
+													echo '<option value="' . esc_attr( $tz ) . '"' . selected( $current_tz, $tz, false ) . '>' . esc_html( $label ) . '</option>';
+												}
+												echo '</optgroup>';
+											}
+											?>
+										</select>
+										<p class="hint-text m-t-5">
+											Даты в таблицах логов и ордеров конвертируются из UTC в выбранный пояс.<br>
+											Убедитесь, что MySQL-сервер хранит даты в UTC.
+										</p>
+									</div>
+								</div>
+							</div>
+							<button type="submit" class="btn btn-primary btn-cons">
+								Сохранить
+							</button>
+						</form>
+					</div>
+				</div>
 
 				<!-- ─── Telegram ───────────────────────────────────────────────────── -->
 				<div class="card card-default m-b-30">
@@ -384,6 +462,13 @@ add_action( 'wp_footer', function () use ( $nonce_save ) {
 			});
 		});
 	}
+
+	handleSettingsForm(
+		$('#system-settings-form'),
+		$('#settings-alert'),
+		function () { return { section: 'system', timezone: $('#timezone').val() }; },
+		'Сохранить'
+	);
 
 	handleSettingsForm(
 		$('#settings-form'),

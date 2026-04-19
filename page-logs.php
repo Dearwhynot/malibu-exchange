@@ -17,6 +17,8 @@ if ( ! crm_can_access( 'logs.view' ) ) {
 
 $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
 $nonce          = wp_create_nonce( 'me_logs_list' );
+$_logs_org = crm_is_root( get_current_user_id() ) ? (int) CRM_DEFAULT_ORG_ID : crm_get_current_user_company_id( get_current_user_id() );
+$tz_label  = crm_get_timezone_label( $_logs_org ?: (int) CRM_DEFAULT_ORG_ID );
 
 $filter_users = get_users( [
 	'orderby' => 'user_login',
@@ -90,7 +92,7 @@ get_header();
 					<div class="card-body p-t-20 p-b-15">
 
 						<div class="row g-2 align-items-center m-b-10">
-							<div class="col-12 col-md-4 col-lg-3">
+							<div class="col-12 col-md-4">
 								<div class="input-group">
 									<span class="input-group-text"><i class="pg-icon">search</i></span>
 									<input type="search" id="f-search" class="form-control"
@@ -192,7 +194,7 @@ get_header();
 									<option value="100">100</option>
 								</select>
 							</div>
-							<div class="col-8 col-md-3 d-flex gap-2">
+							<div class="col-8 col-md-3 d-flex gap-2 justify-content-end">
 								<button type="button" id="btn-logs-search" class="btn btn-primary">
 									<i class="pg-icon">search</i> Найти
 								</button>
@@ -208,9 +210,15 @@ get_header();
 				<!-- ─── Счётчик ────────────────────────────────────────────────────── -->
 				<div class="d-flex justify-content-between align-items-center m-b-10">
 					<div id="logs-stats" class="text-muted small"></div>
-					<div id="logs-loading" class="text-muted small d-none">
-						<span class="pg-icon" style="animation:spin 1s linear infinite;display:inline-block;">refresh</span>
-						Загрузка…
+					<div class="d-flex align-items-center gap-2">
+						<span class="text-muted small" title="Часовой пояс отображения дат">
+							<i class="pg-icon" style="font-size:13px;vertical-align:middle">time</i>
+							<?php echo esc_html( $tz_label ); ?>
+						</span>
+						<div id="logs-loading" class="text-muted small d-none">
+							<span class="pg-icon" style="animation:spin 1s linear infinite;display:inline-block;">refresh</span>
+							Загрузка…
+						</div>
 					</div>
 				</div>
 

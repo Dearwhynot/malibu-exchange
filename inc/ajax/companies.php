@@ -1,0 +1,172 @@
+<?php
+/**
+ * Malibu Exchange — Companies AJAX Handlers
+ *
+ * Все операции требуют uid=1 (root).
+ * Root — единственный пользователь, управляющий компаниями.
+ *
+ * Actions:
+ *   me_list_companies      — список компаний с числом пользователей
+ *   me_create_company      — создать новую компанию
+ *   me_assign_user_company — назначить пользователя в компанию
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * Guard: только uid=1 может управлять компаниями.
+ */
+function _me_companies_root_only(): void {
+	if ( ! is_user_logged_in() || get_current_user_id() !== 1 ) {
+		wp_send_json_error( [ 'message' => 'Недостаточно прав.' ] );
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 1. СПИСОК КОМПАНИЙ
+// ════════════════════════════════════════════════════════════════════════════
+add_action( 'wp_ajax_me_list_companies', 'me_ajax_list_companies' );
+function me_ajax_list_companies(): void {
+	_me_companies_root_only();
+
+	$companies = crm_get_all_companies_full();
+	wp_send_json_success( [ 'companies' => $companies ] );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 2. СОЗДАТЬ КОМПАНИЮ
+// ════════════════════════════════════════════════════════════════════════════
+add_action( 'wp_ajax_me_create_company', 'me_ajax_create_company' );
+function me_ajax_create_company(): void {
+	_me_companies_root_only();
+
+	if ( ! isset( $_POST['_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_nonce'] ) ), 'me_create_company' ) ) {
+		wp_send_json_error( [ 'message' => 'Нарушена безопасность запроса.' ] );
+	}
+
+	$name    = sanitize_text_field( wp_unslash( $_POST['name']    ?? '' ) );
+	$phone   = sanitize_text_field( wp_unslash( $_POST['phone']   ?? '' ) );
+	$address = sanitize_text_field( wp_unslash( $_POST['address'] ?? '' ) );
+
+	if ( $name === '' ) {
+		wp_send_json_error( [ 'message' => 'Название компании обязательно.' ] );
+	}
+
+	global $wpdb;
+
+	// Генерация уникального code из названия.
+	$base_code = substr( sanitize_key( str_replace( ' ', '_', strtolower( $name ) ) ), 0, 50 );
+	if ( $base_code === '' ) {
+		$base_code = 'company';
+	}
+	$code   = $base_code;
+	$suffix = 1;
+	while ( $wpdb->get_var( $wpdb->prepare( "SELECT id FROM crm_companies WHERE code = %s", $code ) ) ) {
+		$code = $base_code . '_' . $suffix;
+		$suffix++;
+	}
+
+	$wpdb->insert(
+		'crm_companies',
+		[
+			'code'               => $code,
+			'name'               => $name,
+			'phone'              => $phone !== '' ? $phone : null,
+			'address'            => $address !== '' ? $address : null,
+			'status'             => 'active',
+			'created_by_user_id' => get_current_user_id(),
+		],
+		[ '%s', '%s', '%s', '%s', '%s', '%d' ]
+	);
+
+	$company_id = (int) $wpdb->insert_id;
+	if ( ! $company_id ) {
+		wp_send_json_error( [ 'message' => 'Ошибка при создании компании.' ] );
+	}
+
+	crm_log( 'company.created', [
+		'category'    => 'users',
+		'level'       => 'info',
+		'action'      => 'create',
+		'message'     => "Создана компания «{$name}»",
+		'target_type' => 'company',
+		'target_id'   => $company_id,
+		'context'     => [ 'name' => $name, 'code' => $code ],
+	] );
+
+	wp_send_json_success( [
+		'message'    => "Компания «{$name}» создана.",
+		'company_id' => $company_id,
+		'company'    => [
+			'id'         => $company_id,
+			'code'       => $code,
+			'name'       => $name,
+			'status'     => 'active',
+			'user_count' => 0,
+			'phone'      => $phone,
+			'address'    => $address,
+			'note'       => '',
+		],
+	] );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 3. НАЗНАЧИТЬ ПОЛЬЗОВАТЕЛЯ В КОМПАНИЮ
+// ════════════════════════════════════════════════════════════════════════════
+add_action( 'wp_ajax_me_assign_user_company', 'me_ajax_assign_user_company' );
+function me_ajax_assign_user_company(): void {
+	_me_companies_root_only();
+
+	if ( ! isset( $_POST['_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_nonce'] ) ), 'me_assign_user_company' ) ) {
+		wp_send_json_error( [ 'message' => 'Нарушена безопасность запроса.' ] );
+	}
+
+	$user_id    = (int) ( $_POST['user_id']    ?? 0 );
+	$company_id = (int) ( $_POST['company_id'] ?? 0 );
+
+	if ( $user_id <= 0 ) {
+		wp_send_json_error( [ 'message' => 'Неверный ID пользователя.' ] );
+	}
+	if ( crm_is_root( $user_id ) ) {
+		wp_send_json_error( [ 'message' => 'Недопустимая операция.' ] );
+	}
+
+	$user = get_userdata( $user_id );
+	if ( ! $user ) {
+		wp_send_json_error( [ 'message' => 'Пользователь не найден.' ] );
+	}
+
+	$result = crm_assign_user_to_company( $user_id, $company_id, get_current_user_id() );
+	if ( ! $result && $company_id > 0 ) {
+		wp_send_json_error( [ 'message' => 'Компания не найдена или недоступна.' ] );
+	}
+
+	global $wpdb;
+	$company_name = $company_id > 0
+		? (string) $wpdb->get_var( $wpdb->prepare( "SELECT name FROM crm_companies WHERE id = %d", $company_id ) )
+		: '—';
+
+	crm_log( 'user.company_assigned', [
+		'category'    => 'users',
+		'level'       => 'info',
+		'action'      => 'update',
+		'message'     => "Пользователь «{$user->user_login}» назначен в компанию «{$company_name}»",
+		'target_type' => 'user',
+		'target_id'   => $user_id,
+		'context'     => [
+			'company_id'   => $company_id,
+			'company_name' => $company_name,
+			'assigned_by'  => get_current_user_id(),
+		],
+	] );
+
+	wp_send_json_success( [
+		'message'      => $company_id > 0
+			? "Назначено в «{$company_name}»."
+			: 'Компания снята.',
+		'company_id'   => $company_id,
+		'company_name' => $company_name,
+	] );
+}

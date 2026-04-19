@@ -88,6 +88,14 @@ $vendor_img_uri = $theme_uri . '/vendor/pages/assets/img';
                 </a>
                 <span class="icon-thumbnail"><i class="pg-icon">add</i></span>
             </li>
+            <?php if ( function_exists('crm_can_access') && crm_can_access('payouts.view') ) : ?>
+            <li class="">
+                <a href="<?php echo esc_url(home_url('/payouts/')); ?>">
+                    <span class="title">Выплаты ЭП</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">card</i></span>
+            </li>
+            <?php endif; ?>
             <li class="">
                 <a href="<?php echo esc_url(home_url('/users/')); ?>">
                     <span class="title">Пользователи</span>

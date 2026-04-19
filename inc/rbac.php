@@ -19,6 +19,254 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+// ─── Root guard ──────────────────────────────────────────────────────────────
+//
+// uid=1 — системный root. Он не является пользователем CRM-уровня.
+// Root невидим в любом UI, не может быть целью никакой операции.
+// Доступ к root — только через прямой сервер / WordPress admin.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Является ли пользователь системным root.
+ * Root (uid=1) существует вне CRM-модели: он над ней, а не внутри.
+ */
+function crm_is_root( int $user_id ): bool {
+	return $user_id === 1;
+}
+
+// ─── RBAC Constitution ────────────────────────────────────────────────────────
+//
+// Это ЕДИНСТВЕННЫЙ авторитетный источник для RBAC:
+//   • какие права (permissions) существуют в системе
+//   • какие роли получают какие права
+//
+// Как вносить изменения:
+//   1. Правь crm_rbac_permissions() или crm_rbac_role_grants()
+//   2. Создай новую миграцию, которая вызывает crm_rbac_sync()
+//   3. Задеплой и открой любую страницу — миграция применится автоматически
+//
+// Никогда не правь rbac.sql для добавления новых прав — он теперь документация.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Полный манифест всех прав доступа системы.
+ * Ключ = permission code. Используется как единственный источник для crm_rbac_sync().
+ */
+function crm_rbac_permissions(): array {
+	return [
+		// ── Dashboard ────────────────────────────────────────────────────────
+		'dashboard.view'     => [ 'module' => 'dashboard', 'action' => 'view',         'name' => 'Просмотр дашборда' ],
+
+		// ── Orders ───────────────────────────────────────────────────────────
+		'orders.view'        => [ 'module' => 'orders',    'action' => 'view',         'name' => 'Просмотр ордеров' ],
+		'orders.create'      => [ 'module' => 'orders',    'action' => 'create',       'name' => 'Создание ордеров' ],
+		'orders.edit'        => [ 'module' => 'orders',    'action' => 'edit',         'name' => 'Редактирование ордеров' ],
+		'orders.delete'      => [ 'module' => 'orders',    'action' => 'delete',       'name' => 'Удаление ордеров' ],
+
+		// ── Users ────────────────────────────────────────────────────────────
+		'users.view'         => [ 'module' => 'users',     'action' => 'view',         'name' => 'Просмотр пользователей' ],
+		'users.create'       => [ 'module' => 'users',     'action' => 'create',       'name' => 'Создание пользователей' ],
+		'users.edit'         => [ 'module' => 'users',     'action' => 'edit',         'name' => 'Редактирование пользователей' ],
+		'users.block'        => [ 'module' => 'users',     'action' => 'block',        'name' => 'Блокировка пользователей' ],
+		'users.delete'       => [ 'module' => 'users',     'action' => 'delete',       'name' => 'Удаление пользователей' ],
+		'users.assign_roles' => [ 'module' => 'users',     'action' => 'assign_roles', 'name' => 'Назначение ролей' ],
+
+		// ── Roles ────────────────────────────────────────────────────────────
+		'roles.view'         => [ 'module' => 'roles',     'action' => 'view',         'name' => 'Просмотр ролей' ],
+		'roles.edit'         => [ 'module' => 'roles',     'action' => 'edit',         'name' => 'Редактирование ролей' ],
+
+		// ── Payments ─────────────────────────────────────────────────────────
+		'payments.view'      => [ 'module' => 'payments',  'action' => 'view',         'name' => 'Просмотр платежей' ],
+		'payments.confirm'   => [ 'module' => 'payments',  'action' => 'confirm',      'name' => 'Подтверждение платежей' ],
+		'payments.reject'    => [ 'module' => 'payments',  'action' => 'reject',       'name' => 'Отклонение платежей' ],
+
+		// ── Acquirer Payouts (выплаты от эквайринг-партнёра) ─────────────────
+		'payouts.view'       => [ 'module' => 'payouts',   'action' => 'view',         'name' => 'Просмотр выплат ЭП' ],
+		'payouts.create'     => [ 'module' => 'payouts',   'action' => 'create',       'name' => 'Внесение выплат ЭП' ],
+
+		// ── Rates ────────────────────────────────────────────────────────────
+		'rates.view'         => [ 'module' => 'rates',     'action' => 'view',         'name' => 'Просмотр курсов' ],
+		'rates.edit'         => [ 'module' => 'rates',     'action' => 'edit',         'name' => 'Редактирование курсов' ],
+
+		// ── KYC / AML ────────────────────────────────────────────────────────
+		'kyc.view'           => [ 'module' => 'kyc',       'action' => 'view',         'name' => 'Просмотр KYC' ],
+		'kyc.review'         => [ 'module' => 'kyc',       'action' => 'review',       'name' => 'Проверка KYC' ],
+		'aml.view'           => [ 'module' => 'aml',       'action' => 'view',         'name' => 'Просмотр AML' ],
+		'aml.review'         => [ 'module' => 'aml',       'action' => 'review',       'name' => 'Проверка AML' ],
+
+		// ── Reports ──────────────────────────────────────────────────────────
+		'reports.view'       => [ 'module' => 'reports',   'action' => 'view',         'name' => 'Просмотр отчётов' ],
+		'reports.export'     => [ 'module' => 'reports',   'action' => 'export',       'name' => 'Экспорт отчётов' ],
+
+		// ── Settings ─────────────────────────────────────────────────────────
+		'settings.view'      => [ 'module' => 'settings',  'action' => 'view',         'name' => 'Просмотр настроек' ],
+		'settings.edit'      => [ 'module' => 'settings',  'action' => 'edit',         'name' => 'Редактирование настроек' ],
+
+		// ── Logs (операционный журнал событий) ───────────────────────────────
+		'logs.view'          => [ 'module' => 'logs',      'action' => 'view',         'name' => 'Просмотр журнала событий' ],
+
+		// ── Audit (системный аудит-лог — ядро, только owner/auditor) ─────────
+		'audit.view'         => [ 'module' => 'audit',     'action' => 'view',         'name' => 'Просмотр системного аудит-лога' ],
+	];
+}
+
+/**
+ * Декларативная матрица: роль → список прав.
+ *
+ * Специальные значения в списке:
+ *   '*'     — все права из crm_rbac_permissions()
+ *   '!code' — исключить конкретное право (работает только после '*')
+ *
+ * Конституция ядра:
+ *   owner  = полный доступ (включая системный audit)
+ *   admin  = всё, кроме audit.view (системный аудит — только ядро)
+ *   остальные роли = конкретный набор по должности
+ */
+function crm_rbac_role_grants(): array {
+	return [
+		'owner' => [
+			'*',            // Полный доступ — никаких исключений
+		],
+		'admin' => [
+			'*',
+			'!audit.view',  // Системный аудит-лог — только для owner
+		],
+		'senior_operator' => [
+			'dashboard.view',
+			'orders.view', 'orders.create', 'orders.edit',
+			'users.view',
+			'payments.view', 'payments.confirm',
+			'payouts.view',
+			'rates.view',
+			'kyc.view',
+			'aml.view',
+			'reports.view',
+		],
+		'operator' => [
+			'dashboard.view',
+			'orders.view', 'orders.create', 'orders.edit',
+			'payments.view',
+			'rates.view',
+		],
+		'cashier' => [
+			'dashboard.view',
+			'orders.view',
+			'payments.view', 'payments.confirm',
+			'payouts.view',
+			'rates.view',
+		],
+		'compliance' => [
+			'dashboard.view',
+			'orders.view',
+			'kyc.view', 'kyc.review',
+			'aml.view', 'aml.review',
+			'reports.view', 'reports.export',
+		],
+		'accountant' => [
+			'dashboard.view',
+			'orders.view',
+			'payments.view',
+			'payouts.view', 'payouts.create',
+			'reports.view', 'reports.export',
+		],
+		'support' => [
+			'dashboard.view',
+			'orders.view',
+			'users.view',
+		],
+		'auditor' => [
+			'dashboard.view',
+			'orders.view',
+			'audit.view',
+			'logs.view',
+			'reports.view',
+		],
+	];
+}
+
+/**
+ * Синхронизирует БД с конституцией RBAC.
+ *
+ * Логика аддитивная (INSERT IGNORE):
+ *   - добавляет отсутствующие permissions
+ *   - добавляет отсутствующие grants роль→право
+ *   - не удаляет то, что уже есть (не ломает ручные расширения через UI)
+ *
+ * Вызывается из миграций при любом изменении конституции.
+ * Безопасно запускать повторно — idempotent.
+ *
+ * @return array Отчёт о применённых изменениях.
+ */
+function crm_rbac_sync(): array {
+	global $wpdb;
+
+	$report          = [];
+	$all_permissions = crm_rbac_permissions();
+	$all_codes       = array_keys( $all_permissions );
+
+	// ── 1. Синхронизируем crm_permissions ────────────────────────────────────
+	$perm_inserted = 0;
+	foreach ( $all_permissions as $code => $meta ) {
+		$rows = $wpdb->query( $wpdb->prepare(
+			"INSERT IGNORE INTO `crm_permissions` (`code`, `module`, `action`, `name`) VALUES (%s, %s, %s, %s)",
+			$code, $meta['module'], $meta['action'], $meta['name']
+		) );
+		if ( $rows ) {
+			$perm_inserted++;
+		}
+	}
+	$report[] = "crm_permissions: $perm_inserted new rows inserted.";
+
+	// ── 2. Синхронизируем crm_role_permissions ───────────────────────────────
+	$grants_inserted = 0;
+
+	foreach ( crm_rbac_role_grants() as $role_code => $grant_spec ) {
+
+		$role_id = (int) $wpdb->get_var( $wpdb->prepare(
+			"SELECT id FROM `crm_roles` WHERE code = %s",
+			$role_code
+		) );
+
+		if ( ! $role_id ) {
+			$report[] = "WARNING: role '$role_code' not found — skipped.";
+			continue;
+		}
+
+		// Разворачиваем '*' и '!exclusion'
+		if ( in_array( '*', $grant_spec, true ) ) {
+			$resolved = $all_codes;
+			foreach ( $grant_spec as $entry ) {
+				if ( strpos( $entry, '!' ) === 0 ) {
+					$exclude  = substr( $entry, 1 );
+					$resolved = array_values( array_filter( $resolved, fn( $c ) => $c !== $exclude ) );
+				}
+			}
+		} else {
+			$resolved = array_values( array_filter( $grant_spec, fn( $g ) => strpos( $g, '!' ) !== 0 ) );
+		}
+
+		foreach ( $resolved as $perm_code ) {
+			$perm_id = (int) $wpdb->get_var( $wpdb->prepare(
+				"SELECT id FROM `crm_permissions` WHERE code = %s",
+				$perm_code
+			) );
+			if ( ! $perm_id ) {
+				continue;
+			}
+			$rows = $wpdb->query( $wpdb->prepare(
+				"INSERT IGNORE INTO `crm_role_permissions` (`role_id`, `permission_id`) VALUES (%d, %d)",
+				$role_id, $perm_id
+			) );
+			if ( $rows ) {
+				$grants_inserted++;
+			}
+		}
+	}
+	$report[] = "crm_role_permissions: $grants_inserted new grants inserted.";
+
+	return $report;
+}
+
 // ─── Константы статусов ──────────────────────────────────────────────────────
 
 define( 'CRM_STATUS_ACTIVE',   'active' );
@@ -137,6 +385,9 @@ function crm_get_user_status( int $user_id ): string {
  * Установить статус пользователя в crm_user_accounts.
  */
 function crm_set_user_status( int $user_id, string $status ): bool {
+	if ( crm_is_root( $user_id ) ) {
+		return false; // root не управляется через CRM
+	}
 	global $wpdb, $_crm_account_cache;
 
 	$valid = [ CRM_STATUS_ACTIVE, CRM_STATUS_BLOCKED, CRM_STATUS_ARCHIVED, CRM_STATUS_PENDING ];
@@ -163,6 +414,9 @@ function crm_set_user_status( int $user_id, string $status ): bool {
  * $data: ['phone', 'telegram_username', 'telegram_id', 'department', 'position_title', 'note', 'status']
  */
 function crm_update_user_account( int $user_id, array $data ): void {
+	if ( crm_is_root( $user_id ) ) {
+		return; // root не управляется через CRM
+	}
 	global $wpdb, $_crm_account_cache;
 
 	crm_ensure_user_account( $user_id );
@@ -252,6 +506,9 @@ function crm_user_has_role( int $user_id, string $role_code ): bool {
  * $role_ids — массив id из crm_roles.
  */
 function crm_assign_roles( int $user_id, array $role_ids, int $assigned_by = 0 ): void {
+	if ( crm_is_root( $user_id ) ) {
+		return; // root вне CRM-ролей
+	}
 	global $wpdb, $_crm_roles_cache;
 
 	$wpdb->delete( 'crm_user_roles', [ 'user_id' => $user_id ], [ '%d' ] );

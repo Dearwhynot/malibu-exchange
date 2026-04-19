@@ -14,12 +14,47 @@ add_action( 'wp_ajax_me_settings_save', 'me_ajax_settings_save' );
 function me_ajax_settings_save(): void {
 	check_ajax_referer( 'me_settings_save', 'nonce' );
 
-	if ( ! crm_user_has_permission( get_current_user_id(), 'settings.edit' ) ) {
+	$current_uid = get_current_user_id();
+
+	if ( ! crm_user_has_permission( $current_uid, 'settings.edit' ) ) {
 		wp_send_json_error( [ 'message' => 'Недостаточно прав' ], 403 );
 	}
 
-	$org_id  = CRM_DEFAULT_ORG_ID;
+	// Root (uid=1) → org_id = 0 (системный контекст, изолирован от всех компаний).
+	// Обычный пользователь без компании блокируется на уровне gate (template_redirect),
+	// но проверяем повторно на случай прямого AJAX-запроса.
+	if ( crm_is_root( $current_uid ) ) {
+		$org_id = 0;
+	} else {
+		$org_id = crm_get_current_user_company_id( $current_uid );
+		if ( $org_id === 0 ) {
+			wp_send_json_error( [ 'message' => 'Аккаунт не привязан к компании.' ], 403 );
+		}
+	}
+
 	$section = isset( $_POST['section'] ) ? sanitize_key( $_POST['section'] ) : 'telegram';
+
+	// Система — общие (таймзона и т.п.)
+	if ( $section === 'system' ) {
+		$timezone = sanitize_text_field( wp_unslash( $_POST['timezone'] ?? 'UTC' ) );
+
+		// Проверяем, что это допустимый идентификатор PHP-таймзоны
+		try {
+			new DateTimeZone( $timezone );
+		} catch ( \Exception $ex ) {
+			wp_send_json_error( [ 'message' => 'Неверный часовой пояс: ' . esc_html( $timezone ) . ' — ' . $ex->getMessage() ], 422 );
+		}
+
+		crm_set_setting( 'timezone', $timezone, $org_id );
+
+		crm_log_entity( 'settings.system_saved', 'settings', 'update',
+			'Обновлены системные настройки: timezone=' . $timezone,
+			'settings', 0, [ 'context' => [ 'section' => 'system', 'timezone' => $timezone ] ]
+		);
+
+		wp_send_json_success( [ 'message' => 'Системные настройки сохранены.' ] );
+		return;
+	}
 
 	if ( $section === 'rates_coefficient' ) {
 		$pair = rates_get_pair( RATES_PAIR_CODE, $org_id );

@@ -22,6 +22,10 @@ require_once get_template_directory() . '/inc/users.php';
 // AJAX-обработчики управления пользователями
 require_once get_template_directory() . '/inc/ajax/users.php';
 
+// Компании: хелперы и AJAX-обработчики
+require_once get_template_directory() . '/inc/companies.php';
+require_once get_template_directory() . '/inc/ajax/companies.php';
+
 // Настройки системы (crm_settings)
 require_once get_template_directory() . '/inc/settings.php';
 require_once get_template_directory() . '/inc/ajax/settings.php';
@@ -42,6 +46,9 @@ require_once get_template_directory() . '/inc/fintech-orders.php';
 
 // Ордера: AJAX-обработчики
 require_once get_template_directory() . '/inc/ajax/orders.php';
+
+// Выплаты ЭП: AJAX-обработчики
+require_once get_template_directory() . '/inc/ajax/payouts.php';
 
 // Fintech: cron-опрос открытых ордеров + Telegram-уведомления
 require_once get_template_directory() . '/inc/fintech-cron.php';

@@ -70,16 +70,48 @@ if ( $f_status === '' ) {
 	$query_args['include'] = ! empty( $incl ) ? array_map( 'intval', $incl ) : [ -1 ];
 }
 
+// Company scope: non-root admin sees only users from their own company.
+if ( ! crm_is_root( get_current_user_id() ) ) {
+	$_query_org_id  = crm_get_current_user_company_id( get_current_user_id() );
+	$_co_user_ids   = $_query_org_id > 0 ? crm_get_company_user_ids( $_query_org_id ) : [];
+
+	if ( isset( $query_args['include'] ) ) {
+		// Already filtered to a subset — keep only users also in this company.
+		$query_args['include'] = array_values( array_intersect( $query_args['include'], $_co_user_ids ) );
+		if ( empty( $query_args['include'] ) ) {
+			$query_args['include'] = [ -1 ];
+		}
+	} else {
+		// Convert: restrict to company, honouring any existing exclude list.
+		$_excl = $query_args['exclude'] ?? [];
+		unset( $query_args['exclude'] );
+		$_filtered             = array_values( array_diff( $_co_user_ids, $_excl ) );
+		$query_args['include'] = ! empty( $_filtered ) ? $_filtered : [ -1 ];
+	}
+}
+
+// Root (uid=1) невидим на уровне CRM — исключаем из любой выборки.
+if ( isset( $query_args['include'] ) ) {
+	$query_args['include'] = array_values( array_filter( $query_args['include'], fn( $id ) => $id !== 1 ) );
+	if ( empty( $query_args['include'] ) ) {
+		$query_args['include'] = [ -1 ];
+	}
+} else {
+	$query_args['exclude'] = array_unique( array_merge( $query_args['exclude'] ?? [], [ 1 ] ) );
+}
+
 $uq          = new WP_User_Query( $query_args );
 $users       = $uq->get_results();
 $total       = (int) $uq->get_total();
 $total_pages = (int) ceil( $total / $per_page );
 
 // ─── Batch-загрузка CRM-данных для всех пользователей в выборке ─────────────
-$user_ids        = array_map( function ( $u ) { return (int) $u->ID; }, $users );
-$crm_accounts    = crm_get_accounts_for_users( $user_ids );
-$crm_roles_map   = crm_get_roles_for_users( $user_ids );
-$all_crm_roles   = crm_get_all_roles();
+$user_ids          = array_map( function ( $u ) { return (int) $u->ID; }, $users );
+$crm_accounts      = crm_get_accounts_for_users( $user_ids );
+$crm_roles_map     = crm_get_roles_for_users( $user_ids );
+$all_crm_roles     = crm_get_all_roles();
+$crm_companies_map = crm_get_companies_for_users( $user_ids );
+$all_companies     = crm_get_all_companies_list();
 
 // ─── Вспомогательные данные ──────────────────────────────────────────────────
 $can_assign_roles = crm_user_has_permission( get_current_user_id(), 'users.assign_roles' );
@@ -89,10 +121,18 @@ $page_url         = get_permalink();
 $vendor_img_uri   = get_template_directory_uri() . '/vendor/pages/assets/img';
 
 // Nonces
-$nonce_save   = wp_create_nonce( 'me_users_save' );
-$nonce_status = wp_create_nonce( 'me_users_status' );
-$nonce_delete = wp_create_nonce( 'me_users_delete' );
-$nonce_roles  = wp_create_nonce( 'me_roles_save' );
+$nonce_save      = wp_create_nonce( 'me_users_save' );
+$nonce_status    = wp_create_nonce( 'me_users_status' );
+$nonce_delete    = wp_create_nonce( 'me_users_delete' );
+$nonce_roles     = wp_create_nonce( 'me_roles_save' );
+$nonce_company   = wp_create_nonce( 'me_assign_user_company' );
+$nonce_create_co = wp_create_nonce( 'me_create_company' );
+
+// Данные для вкладки "Компании" — только uid=1
+$all_companies_full = [];
+if ( crm_is_root( $current_uid ) ) {
+	$all_companies_full = crm_get_all_companies_full();
+}
 
 // ─── Данные для вкладки "Роли" ───────────────────────────────────────────────
 $can_edit_roles = crm_user_has_permission( get_current_user_id(), 'roles.edit' );
@@ -190,6 +230,13 @@ get_header();
 							Роли и права
 						</a>
 					</li>
+					<?php if ( crm_is_root( $current_uid ) ) : ?>
+					<li class="nav-item">
+						<a data-bs-toggle="tab" role="tab" data-bs-target="#tab-companies" data-target="#tab-companies" href="#tab-companies">
+							Компании
+						</a>
+					</li>
+					<?php endif; ?>
 				</ul>
 
 				<div class="tab-content" style="padding:0;overflow:visible">
@@ -284,6 +331,7 @@ get_header();
 											<th>Email</th>
 											<th>Display Name</th>
 											<th>Роли</th>
+											<th style="width:120px">Компания</th>
 											<th style="width:95px">Статус</th>
 											<th style="width:120px">Телефон</th>
 											<th style="width:130px">Telegram</th>
@@ -303,6 +351,8 @@ get_header();
 											$avatar_letter = me_users_avatar_letter( $user );
 
 											// JSON для модалки редактирования
+											$user_company = $crm_companies_map[ $user->ID ] ?? null;
+
 											$user_json = esc_attr( wp_json_encode( [
 												'id'               => $user->ID,
 												'user_login'       => $user->user_login,
@@ -318,6 +368,8 @@ get_header();
 												'position_title'   => $acc ? ( $acc->position_title ?? '' ) : '',
 												'note'             => $acc ? ( $acc->note ?? '' ) : '',
 												'role_ids'         => array_map( function ( $r ) { return (int) $r->id; }, $user_roles ),
+												'company_id'       => $user_company ? (int) $user_company->id : 0,
+												'company_name'     => $user_company ? $user_company->name    : '',
 											] ) );
 										?>
 										<tr id="urow-<?php echo (int) $user->ID; ?>">
@@ -359,6 +411,14 @@ get_header();
 															<?php echo esc_html( $role->name ); ?>
 														</span>
 													<?php endforeach; ?>
+												<?php endif; ?>
+											</td>
+
+											<td class="v-align-middle" id="company-cell-<?php echo (int) $user->ID; ?>">
+												<?php if ( $user_company ) : ?>
+													<span class="badge badge-info"><?php echo esc_html( $user_company->name ); ?></span>
+												<?php else : ?>
+													<span class="hint-text">—</span>
 												<?php endif; ?>
 											</td>
 
@@ -413,7 +473,7 @@ get_header();
 													<ul class="dropdown-menu dropdown-menu-end">
 
 														<!-- View — uid=1 only -->
-														<?php if ( $current_uid === 1 ) : ?>
+														<?php if ( crm_is_root( $current_uid ) ) : ?>
 														<li>
 															<a class="dropdown-item"
 															   href="<?php echo esc_url( get_edit_user_link( $user->ID ) ); ?>"
@@ -432,6 +492,20 @@ get_header();
 																<i class="pg-icon m-r-5">edit</i> Редактировать
 															</a>
 														</li>
+
+														<!-- Assign Company — uid=1 only -->
+														<?php if ( crm_is_root( $current_uid ) && ! $is_super ) : ?>
+														<li>
+															<a class="dropdown-item js-assign-company" href="#"
+															   data-user-id="<?php echo (int) $user->ID; ?>"
+															   data-user-login="<?php echo esc_attr( $user->user_login ); ?>"
+															   data-company-id="<?php echo (int) ( $user_company ? $user_company->id : 0 ); ?>"
+															   data-bs-toggle="modal"
+															   data-bs-target="#modal-assign-company">
+																<i class="pg-icon m-r-5">grid</i> Компания
+															</a>
+														</li>
+														<?php endif; ?>
 
 														<?php if ( ! $is_super && $user->ID !== $current_uid ) : ?>
 														<li><hr class="dropdown-divider"></li>
@@ -629,6 +703,76 @@ get_header();
 
 				</div><!-- /#tab-roles -->
 
+				<!-- ─── TAB: COMPANIES (uid=1 only) ─────────────────────── -->
+				<?php if ( crm_is_root( $current_uid ) ) : ?>
+				<div class="tab-pane" id="tab-companies">
+
+					<div class="d-flex align-items-center justify-content-between m-b-20 ms-2 mt-3">
+						<p class="hint-text m-b-0">Список компаний</p>
+						<button type="button" class="btn btn-primary btn-cons"
+						        data-bs-toggle="modal" data-bs-target="#modal-create-company">
+							<i class="pg-icon">add</i>&nbsp; Создать компанию
+						</button>
+					</div>
+
+					<div class="card card-default">
+						<div class="card-header">
+							<div class="card-title">Компании</div>
+						</div>
+						<div class="card-body no-padding" id="companies-list-body">
+							<?php if ( empty( $all_companies_full ) ) : ?>
+								<div class="p-30 text-center hint-text">
+									<p>Компании не найдены</p>
+								</div>
+							<?php else : ?>
+								<div class="table-responsive">
+									<table class="table table-hover m-b-0" id="companies-table">
+										<thead>
+											<tr>
+												<th style="width:50px">ID</th>
+												<th>Название</th>
+												<th style="width:80px">Статус</th>
+												<th style="width:120px">Пользователей</th>
+												<th>Телефон</th>
+												<th>Адрес / заметка</th>
+											</tr>
+										</thead>
+										<tbody id="companies-tbody">
+											<?php foreach ( $all_companies_full as $co ) : ?>
+											<tr id="corow-<?php echo (int) $co->id; ?>">
+												<td class="v-align-middle">
+													<span class="hint-text fs-12">#<?php echo (int) $co->id; ?></span>
+												</td>
+												<td class="v-align-middle">
+													<span class="semi-bold"><?php echo esc_html( $co->name ); ?></span>
+													<small class="hint-text m-l-5 fs-11"><?php echo esc_html( $co->code ); ?></small>
+												</td>
+												<td class="v-align-middle">
+													<span class="badge badge-<?php echo $co->status === 'active' ? 'success' : 'secondary'; ?>">
+														<?php echo esc_html( $co->status ); ?>
+													</span>
+												</td>
+												<td class="v-align-middle hint-text fs-12">
+													<?php echo (int) $co->user_count; ?>
+												</td>
+												<td class="v-align-middle hint-text fs-12">
+													<?php echo esc_html( $co->phone ?? '—' ); ?>
+												</td>
+												<td class="v-align-middle hint-text fs-12">
+													<?php echo esc_html( $co->address ?? ( $co->note ?: '—' ) ); ?>
+												</td>
+											</tr>
+											<?php endforeach; ?>
+										</tbody>
+									</table>
+								</div>
+							<?php endif; ?>
+						</div>
+					</div>
+
+				</div><!-- /#tab-companies -->
+				<?php endif; ?>
+
 				</div><!-- /.tab-content -->
 
 			</div><!-- /.container-fluid -->
@@ -804,6 +948,23 @@ get_header();
 							</div>
 						</div>
 
+						<!-- Company (только для uid=1, только при создании) -->
+						<?php if ( crm_is_root( $current_uid ) ) : ?>
+						<div class="col-md-6" id="uf-company-row">
+							<div class="form-group form-group-default">
+								<label>Компания</label>
+								<select class="full-width" name="company_id" id="uf-company-id">
+									<option value="0">— Без компании —</option>
+									<?php foreach ( $all_companies as $co ) : ?>
+									<option value="<?php echo (int) $co->id; ?>">
+										<?php echo esc_html( $co->name ); ?>
+									</option>
+									<?php endforeach; ?>
+								</select>
+							</div>
+						</div>
+						<?php endif; ?>
+
 						<!-- Separator -->
 						<div class="w-100"></div>
 						<div class="col-12 m-t-5 m-b-10"><div class="b-b b-grey"></div></div>
@@ -889,6 +1050,127 @@ get_header();
 </div>
 
 <!-- ════════════════════════════════════════════════════════════════════════
+     MODAL: ASSIGN COMPANY (uid=1 only)
+     ════════════════════════════════════════════════════════════════════ -->
+<?php if ( crm_is_root( $current_uid ) ) : ?>
+<div class="modal fade" id="modal-assign-company" tabindex="-1"
+     aria-labelledby="modal-assign-company-title" aria-hidden="true">
+	<div class="modal-dialog">
+		<div class="modal-content">
+			<div class="modal-header clearfix text-left">
+				<button aria-label="Закрыть" type="button" class="close" data-bs-dismiss="modal" aria-hidden="true">
+					<i class="pg-icon">close</i>
+				</button>
+				<h5 class="modal-title" id="modal-assign-company-title">Назначить компанию</h5>
+			</div>
+			<div class="modal-body">
+				<p class="m-b-15">Пользователь: <strong id="ac-user-login">—</strong></p>
+				<div class="form-group form-group-default">
+					<label>Компания</label>
+					<select class="full-width" id="ac-company-select">
+						<option value="0">— Без компании —</option>
+						<?php foreach ( $all_companies as $co ) : ?>
+						<option value="<?php echo (int) $co->id; ?>">
+							<?php echo esc_html( $co->name ); ?>
+						</option>
+						<?php endforeach; ?>
+					</select>
+				</div>
+				<input type="hidden" id="ac-user-id" value="0">
+				<div class="alert alert-danger d-none m-t-10" id="ac-error"></div>
+			</div>
+			<div class="modal-footer">
+				<button type="button" class="btn btn-default" data-bs-dismiss="modal">Отмена</button>
+				<button type="button" class="btn btn-primary" id="btn-assign-company">
+					<span class="btn-label">Назначить</span>
+					<i class="pg-icon spin d-none" id="btn-assign-company-spinner">refresh</i>
+				</button>
+			</div>
+		</div>
+	</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     MODAL: CREATE COMPANY (uid=1 only)
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modal-create-company" tabindex="-1"
+     aria-labelledby="modal-create-company-title" aria-hidden="true">
+	<div class="modal-dialog">
+		<div class="modal-content">
+			<div class="modal-header clearfix text-left">
+				<button aria-label="Закрыть" type="button" class="close" data-bs-dismiss="modal" aria-hidden="true">
+					<i class="pg-icon">close</i>
+				</button>
+				<h5 class="modal-title" id="modal-create-company-title">Создать компанию</h5>
+			</div>
+			<div class="modal-body">
+				<form id="form-company" novalidate>
+					<div class="row">
+						<div class="col-12">
+							<div class="form-group form-group-default required">
+								<label>Название <span class="text-danger">*</span></label>
+								<input type="text" class="form-control" id="cc-name" required placeholder="Название компании">
+							</div>
+						</div>
+						<div class="col-12">
+							<div class="form-group form-group-default">
+								<label>Телефон</label>
+								<input type="text" class="form-control" id="cc-phone" placeholder="+7 ...">
+							</div>
+						</div>
+						<div class="col-12">
+							<div class="form-group form-group-default">
+								<label>Адрес</label>
+								<input type="text" class="form-control" id="cc-address">
+							</div>
+						</div>
+					</div>
+					<div class="alert alert-danger d-none m-t-10" id="cc-error"></div>
+				</form>
+			</div>
+			<div class="modal-footer">
+				<button type="button" class="btn btn-default" data-bs-dismiss="modal">Отмена</button>
+				<button type="button" class="btn btn-primary" id="btn-create-company">
+					<span class="btn-label">Создать</span>
+					<i class="pg-icon spin d-none" id="btn-create-company-spinner">refresh</i>
+				</button>
+			</div>
+		</div>
+	</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     MODAL: CREDENTIALS (показывается после создания нового пользователя)
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modal-credentials" tabindex="-1"
+     aria-labelledby="modal-credentials-title" aria-hidden="true"
+     data-bs-backdrop="static" data-bs-keyboard="false">
+	<div class="modal-dialog">
+		<div class="modal-content">
+			<div class="modal-header clearfix text-left">
+				<h5 class="modal-title" id="modal-credentials-title">Данные нового пользователя</h5>
+			</div>
+			<div class="modal-body">
+				<p class="hint-text m-b-10">Передайте пользователю данные для входа:</p>
+				<div class="alert alert-success">
+					<p class="m-b-5"><strong>Логин:</strong> <span id="cred-login" class="semi-bold">—</span></p>
+					<p class="m-b-0"><strong>Пароль:</strong> <span id="cred-password" class="semi-bold">—</span></p>
+				</div>
+				<p id="cred-company-info" class="hint-text fs-12 d-none">
+					Компания: <strong id="cred-company-name">—</strong>
+				</p>
+			</div>
+			<div class="modal-footer">
+				<button type="button" class="btn btn-primary" id="btn-credentials-close">
+					Готово — обновить страницу
+				</button>
+			</div>
+		</div>
+	</div>
+</div>
+<?php endif; ?>
+
+<!-- ════════════════════════════════════════════════════════════════════════
      INLINE STYLES
      ════════════════════════════════════════════════════════════════════ -->
 <style>
@@ -925,7 +1207,7 @@ get_header();
 </style>
 
 <?php
-add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_delete, $nonce_roles, $f_status, $can_assign_roles, $can_edit_roles, $all_permissions_grouped, $role_permissions_map ) {
+add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_delete, $nonce_roles, $nonce_company, $nonce_create_co, $f_status, $can_assign_roles, $can_edit_roles, $all_permissions_grouped, $role_permissions_map, $current_uid ) {
 ?>
 <script>
 (function ($) {
@@ -934,7 +1216,7 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 	// ── Tab switching (fix Pages + Bootstrap 5 incompatibility) ─────────────────
 	var $usersTabNav   = $('#users-page-tabs');
 	var $usersTabLinks = $usersTabNav.find('a[data-bs-toggle="tab"]');
-	var $usersTabPanes = $('#tab-users, #tab-roles');
+	var $usersTabPanes = $('#tab-users, #tab-roles, #tab-companies');
 
 	function activateTab(targetId) {
 		if ( ! targetId || targetId === 'undefined' ) {
@@ -989,11 +1271,14 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 
 	var AJAX_URL = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
 	var NONCES   = {
-		save:   '<?php echo esc_js( $nonce_save ); ?>',
-		status: '<?php echo esc_js( $nonce_status ); ?>',
-		delete: '<?php echo esc_js( $nonce_delete ); ?>'
+		save:      '<?php echo esc_js( $nonce_save ); ?>',
+		status:    '<?php echo esc_js( $nonce_status ); ?>',
+		delete:    '<?php echo esc_js( $nonce_delete ); ?>',
+		company:   '<?php echo esc_js( $nonce_company ); ?>',
+		createCo:  '<?php echo esc_js( $nonce_create_co ); ?>'
 	};
 	var CAN_ASSIGN_ROLES = <?php echo $can_assign_roles ? 'true' : 'false'; ?>;
+	var IS_ROOT          = <?php echo crm_is_root( $current_uid ) ? 'true' : 'false'; ?>;
 
 	// ── Дропдауны Actions: strategy fixed (fix overflow in .table-responsive) ──
 	$('#users-table .dropdown-toggle').each(function () {
@@ -1061,6 +1346,11 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 			$('#uf-login-row').show();
 			$('#uf-pass-req').show();
 			$('#uf-pass-hint').hide();
+			// Показываем company row только при создании (uid=1)
+			if (IS_ROOT) {
+				$('#uf-company-row').show();
+				$('#uf-company-id').val(0);
+			}
 		}
 	});
 
@@ -1098,6 +1388,10 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 		$('#uf-pass-req').hide();
 		$('#uf-pass-hint').show();
 		$('#uf-error').addClass('d-none').text('');
+		// Скрываем company row при редактировании (назначение через отдельное действие)
+		if (IS_ROOT) {
+			$('#uf-company-row').hide();
+		}
 	});
 
 	function resetUserForm() {
@@ -1126,9 +1420,23 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 		$.post(AJAX_URL, data)
 			.done(function (res) {
 				if (res.success) {
-					showToast(res.data.message, 'success');
 					bootstrap.Modal.getInstance($('#modal-user-form')[0]).hide();
-					setTimeout(function () { window.location.reload(); }, 800);
+					// uid=1 и новый пользователь — показываем credentials modal
+					if (IS_ROOT && res.data.credentials) {
+						var cred = res.data.credentials;
+						$('#cred-login').text(cred.login);
+						$('#cred-password').text(cred.password);
+						if (cred.company_name) {
+							$('#cred-company-name').text(cred.company_name);
+							$('#cred-company-info').removeClass('d-none');
+						} else {
+							$('#cred-company-info').addClass('d-none');
+						}
+						new bootstrap.Modal($('#modal-credentials')[0]).show();
+					} else {
+						showToast(res.data.message, 'success');
+						setTimeout(function () { window.location.reload(); }, 800);
+					}
 				} else {
 					$err.removeClass('d-none').text(res.data.message || 'Ошибка.');
 					setLoading($btn, false);
@@ -1160,6 +1468,18 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 						.addClass('badge-' + d.badge_class)
 						.text(d.label);
 					showToast(d.message, 'success');
+
+					// Обновить пункт меню блокировки без перезагрузки
+					if (d.status === 'blocked') {
+						$el.data('status', 'active').attr('data-status', 'active')
+						   .removeClass('text-warning').addClass('text-success')
+						   .html('<i class="pg-icon m-r-5">tick_circle</i> Разблокировать');
+					} else if (d.status === 'active') {
+						$el.data('status', 'blocked').attr('data-status', 'blocked')
+						   .removeClass('text-success').addClass('text-warning')
+						   .html('<i class="pg-icon m-r-5">disable</i> Заблокировать');
+					}
+
 					var cur = '<?php echo esc_js( $f_status ); ?>';
 					if (!cur || cur === 'active' || cur === 'blocked' || cur === 'pending') {
 						if (d.status === 'archived') {
@@ -1284,6 +1604,168 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 				.end().find('#btn-role-perms-spinner').addClass('d-none');
 		});
 	});
+
+
+<?php if ( crm_is_root( $current_uid ) ) : ?>
+	// ── Assign Company ────────────────────────────────────────────────────────
+	var $assignCoModal = $('#modal-assign-company');
+
+	// Инициализация Select2 при открытии
+	$assignCoModal.on('shown.bs.modal', function () {
+		if (!$('#ac-company-select').hasClass('select2-hidden-accessible')) {
+			$('#ac-company-select').select2({ dropdownParent: $assignCoModal });
+		}
+	});
+	$assignCoModal.on('hidden.bs.modal', function () {
+		if ($('#ac-company-select').hasClass('select2-hidden-accessible')) {
+			$('#ac-company-select').select2('destroy');
+		}
+		$('#ac-error').addClass('d-none').text('');
+	});
+
+	// Заполняем данные при клике на "Компания" в дропдауне
+	$(document).on('click', '.js-assign-company', function () {
+		var uid       = $(this).data('user-id');
+		var login     = $(this).data('user-login');
+		var companyId = parseInt($(this).data('company-id'), 10) || 0;
+
+		$('#ac-user-id').val(uid);
+		$('#ac-user-login').text(login);
+		$('#ac-company-select').val(companyId);
+	});
+
+	$('#btn-assign-company').on('click', function () {
+		var $btn      = $(this);
+		var userId    = parseInt($('#ac-user-id').val(), 10);
+		var companyId = parseInt($('#ac-company-select').val(), 10) || 0;
+
+		$btn.prop('disabled', true)
+			.find('.btn-label').hide()
+			.end().find('#btn-assign-company-spinner').removeClass('d-none');
+		$('#ac-error').addClass('d-none').text('');
+
+		$.post(AJAX_URL, {
+			action:     'me_assign_user_company',
+			user_id:    userId,
+			company_id: companyId,
+			_nonce:     NONCES.company
+		})
+		.done(function (res) {
+			if (res.success) {
+				showToast(res.data.message, 'success');
+				bootstrap.Modal.getInstance($assignCoModal[0]).hide();
+
+				// Обновляем ячейку компании в строке таблицы
+				var $cell = $('#company-cell-' + userId);
+				if (res.data.company_id > 0) {
+					$cell.html('<span class="badge badge-info">' + $('<div>').text(res.data.company_name).html() + '</span>');
+				} else {
+					$cell.html('<span class="hint-text">—</span>');
+				}
+			} else {
+				$('#ac-error').removeClass('d-none').text(res.data.message || 'Ошибка.');
+				$btn.prop('disabled', false)
+					.find('.btn-label').show()
+					.end().find('#btn-assign-company-spinner').addClass('d-none');
+			}
+		})
+		.fail(function () {
+			$('#ac-error').removeClass('d-none').text('Ошибка сервера.');
+			$btn.prop('disabled', false)
+				.find('.btn-label').show()
+				.end().find('#btn-assign-company-spinner').addClass('d-none');
+		});
+	});
+
+	// ── Create Company ────────────────────────────────────────────────────────
+	var $createCoModal = $('#modal-create-company');
+
+	$createCoModal.on('hidden.bs.modal', function () {
+		$('#form-company')[0].reset();
+		$('#cc-error').addClass('d-none').text('');
+	});
+
+	$('#btn-create-company').on('click', function () {
+		var $btn  = $(this);
+		var name  = $.trim($('#cc-name').val());
+		var phone = $.trim($('#cc-phone').val());
+		var addr  = $.trim($('#cc-address').val());
+
+		$('#cc-error').addClass('d-none').text('');
+
+		if (!name) {
+			$('#cc-error').removeClass('d-none').text('Введите название компании.');
+			return;
+		}
+
+		$btn.prop('disabled', true)
+			.find('.btn-label').hide()
+			.end().find('#btn-create-company-spinner').removeClass('d-none');
+
+		$.post(AJAX_URL, {
+			action:   'me_create_company',
+			name:     name,
+			phone:    phone,
+			address:  addr,
+			_nonce:   NONCES.createCo
+		})
+		.done(function (res) {
+			if (res.success) {
+				showToast(res.data.message, 'success');
+				bootstrap.Modal.getInstance($createCoModal[0]).hide();
+
+				// Добавляем строку в таблицу компаний
+				var co = res.data.company;
+				var $tbody = $('#companies-tbody');
+				if ($tbody.length) {
+					var row = '<tr id="corow-' + co.id + '">' +
+						'<td class="v-align-middle"><span class="hint-text fs-12">#' + co.id + '</span></td>' +
+						'<td class="v-align-middle"><span class="semi-bold">' + $('<div>').text(co.name).html() + '</span> <small class="hint-text m-l-5 fs-11">' + $('<div>').text(co.code).html() + '</small></td>' +
+						'<td class="v-align-middle"><span class="badge badge-success">active</span></td>' +
+						'<td class="v-align-middle hint-text fs-12">0</td>' +
+						'<td class="v-align-middle hint-text fs-12">' + $('<div>').text(co.phone || '—').html() + '</td>' +
+						'<td class="v-align-middle hint-text fs-12">' + $('<div>').text(co.address || '—').html() + '</td>' +
+						'</tr>';
+					$tbody.append(row);
+				}
+
+				// Добавляем в select'ы компаний (форма пользователя и форма назначения)
+				var newOpt = $('<option>').val(co.id).text(co.name);
+				$('#uf-company-id').append(newOpt.clone());
+				$('#ac-company-select').append(newOpt.clone());
+			} else {
+				$('#cc-error').removeClass('d-none').text(res.data.message || 'Ошибка.');
+				$btn.prop('disabled', false)
+					.find('.btn-label').show()
+					.end().find('#btn-create-company-spinner').addClass('d-none');
+			}
+		})
+		.fail(function () {
+			$('#cc-error').removeClass('d-none').text('Ошибка сервера.');
+			$btn.prop('disabled', false)
+				.find('.btn-label').show()
+				.end().find('#btn-create-company-spinner').addClass('d-none');
+		});
+	});
+
+	// ── Credentials modal (после создания пользователя) ──────────────────────
+	$('#btn-credentials-close').on('click', function () {
+		window.location.reload();
+	});
+
+	// Select2 для company в форме нового пользователя
+	var $userModal = $('#modal-user-form');
+	$userModal.on('shown.bs.modal', function () {
+		if (!$('#uf-company-id').hasClass('select2-hidden-accessible')) {
+			$('#uf-company-id').select2({ dropdownParent: $userModal });
+		}
+	});
+	$userModal.on('hidden.bs.modal', function () {
+		if ($('#uf-company-id').hasClass('select2-hidden-accessible')) {
+			$('#uf-company-id').select2('destroy');
+		}
+	});
+<?php endif; ?>
 
 }(jQuery));
 </script>

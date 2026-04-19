@@ -51,9 +51,19 @@ function me_ajax_logs_list(): void {
 	$is_success  = $_POST['is_success'] ?? '';  // '', '0', '1'
 	$event_code  = sanitize_text_field( wp_unslash( $_POST['event_code'] ?? '' ) );
 
+	// ── Org scope ─────────────────────────────────────────────────────────────
+	$_logs_uid = get_current_user_id();
+	$_logs_org = crm_is_root( $_logs_uid ) ? 0 : crm_get_current_user_company_id( $_logs_uid );
+
 	// ── Построить WHERE ───────────────────────────────────────────────────────
 	$where  = 'WHERE 1=1';
 	$params = [];
+
+	// Non-root: ограничиваем видимость логами своей организации.
+	if ( $_logs_org > 0 ) {
+		$where   .= ' AND `organization_id` = %d';
+		$params[] = $_logs_org;
+	}
 
 	if ( $search !== '' ) {
 		$like     = '%' . $wpdb->esc_like( $search ) . '%';
@@ -88,13 +98,19 @@ function me_ajax_logs_list(): void {
 		$where   .= ' AND `event_code` LIKE %s';
 		$params[] = '%' . $wpdb->esc_like( $event_code ) . '%';
 	}
+	// Фильтр по дате: пользователь вводит дату в настроенной таймзоне — конвертируем в UTC для запроса
+	$tz = crm_get_timezone( $_logs_org ?: (int) CRM_DEFAULT_ORG_ID );
 	if ( $date_from !== '' && strtotime( $date_from ) ) {
+		$dt_from  = new DateTime( $date_from . ' 00:00:00', $tz );
+		$dt_from->setTimezone( new DateTimeZone( 'UTC' ) );
 		$where   .= ' AND `created_at` >= %s';
-		$params[] = $date_from . ' 00:00:00';
+		$params[] = $dt_from->format( 'Y-m-d H:i:s' );
 	}
 	if ( $date_to !== '' && strtotime( $date_to ) ) {
+		$dt_to    = new DateTime( $date_to . ' 23:59:59', $tz );
+		$dt_to->setTimezone( new DateTimeZone( 'UTC' ) );
 		$where   .= ' AND `created_at` <= %s';
-		$params[] = $date_to . ' 23:59:59';
+		$params[] = $dt_to->format( 'Y-m-d H:i:s' );
 	}
 	if ( $is_success === '1' ) {
 		$where .= ' AND `is_success` = 1';
@@ -187,7 +203,7 @@ function me_ajax_logs_meta(): void {
 function _me_logs_format_row( object $row, bool $full = false ): array {
 	$out = [
 		'id'          => (int) $row->id,
-		'created_at'  => $row->created_at,
+		'created_at'  => crm_format_dt( $row->created_at ),
 		'event_code'  => $row->event_code,
 		'category'    => $row->category,
 		'level'       => $row->level,

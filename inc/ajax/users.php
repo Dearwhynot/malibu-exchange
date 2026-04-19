@@ -28,6 +28,31 @@ function _me_ajax_check_manage(): void {
 	}
 }
 
+/**
+ * Жёсткий запрет любых операций над root (uid=1) через AJAX.
+ * Root не является CRM-пользователем и недоступен через интерфейс.
+ */
+function _me_ajax_deny_root( int $user_id ): void {
+	if ( crm_is_root( $user_id ) ) {
+		_me_ajax_error( 'Недопустимая операция.' );
+	}
+}
+
+/**
+ * Проверяет, что $current_uid может управлять $target_uid.
+ * Root может управлять любым. Остальные — только пользователями своей компании.
+ */
+function _me_ajax_require_same_company( int $current_uid, int $target_uid ): void {
+	if ( crm_is_root( $current_uid ) ) {
+		return;
+	}
+	$current_co = crm_get_current_user_company_id( $current_uid );
+	$target_co  = crm_get_current_user_company_id( $target_uid );
+	if ( $current_co === 0 || $current_co !== $target_co ) {
+		_me_ajax_error( 'Пользователь не принадлежит вашей организации.' );
+	}
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // 1. СОХРАНИТЬ ПОЛЬЗОВАТЕЛЯ (создать или обновить)
 // ════════════════════════════════════════════════════════════════════════════
@@ -88,6 +113,11 @@ function me_ajax_save_user(): void {
 			_me_ajax_error( 'Пароль обязателен и должен содержать не менее 6 символов.' );
 		}
 
+		// company_id: root использует значение из формы; non-root автоматически привязывает к своей компании.
+		$company_id = crm_is_root( $current_uid )
+			? (int) ( $_POST['company_id'] ?? 0 )
+			: crm_get_current_user_company_id( $current_uid );
+
 		$result = wp_insert_user( [
 			'user_login'   => $user_login,
 			'user_email'   => $user_email,
@@ -116,6 +146,17 @@ function me_ajax_save_user(): void {
 			'note'             => $note,
 		] );
 
+		// Назначить в компанию (только uid=1, только если company_id > 0)
+		$company_name = '';
+		if ( $company_id > 0 ) {
+			crm_assign_user_to_company( $user_id, $company_id, $current_uid );
+			global $wpdb;
+			$company_name = (string) $wpdb->get_var( $wpdb->prepare(
+				"SELECT name FROM crm_companies WHERE id = %d",
+				$company_id
+			) );
+		}
+
 		// CRM-роли (назначать может только пользователь с users.assign_roles)
 		if ( crm_user_has_permission( $current_uid, 'users.assign_roles' ) ) {
 			crm_assign_roles( $user_id, $crm_role_ids, $current_uid );
@@ -124,17 +165,36 @@ function me_ajax_save_user(): void {
 		crm_log_user( 'user.created', 'create',
 			"Создан пользователь «{$user_login}»",
 			$user_id,
-			[ 'context' => [ 'created_by' => $current_uid, 'status' => $crm_status ] ]
+			[ 'context' => [
+				'created_by'  => $current_uid,
+				'status'      => $crm_status,
+				'company_id'  => $company_id ?: null,
+				'company_name' => $company_name ?: null,
+			] ]
 		);
 
-		wp_send_json_success( [
+		$response = [
 			'message' => "Пользователь «{$user_login}» создан.",
 			'user_id' => $user_id,
-		] );
+		];
+
+		// root: включаем credentials для отображения в UI
+		if ( crm_is_root( $current_uid ) ) {
+			$response['credentials'] = [
+				'login'        => $user_login,
+				'password'     => $user_pass,
+				'company_name' => $company_name,
+			];
+		}
+
+		wp_send_json_success( $response );
 	}
 
 	// ── ОБНОВЛЕНИЕ существующего пользователя ─────────────────────────────────
-	if ( $user_id === $current_uid && $current_uid !== 1 ) {
+	_me_ajax_deny_root( $user_id );
+	_me_ajax_require_same_company( $current_uid, $user_id );
+
+	if ( $user_id === $current_uid ) {
 		_me_ajax_error( 'Редактируйте собственный профиль через настройки аккаунта.' );
 	}
 
@@ -227,11 +287,10 @@ function me_ajax_set_user_status(): void {
 	if ( $user_id <= 0 ) {
 		_me_ajax_error( 'Неверный ID пользователя.' );
 	}
+	_me_ajax_deny_root( $user_id );
+	_me_ajax_require_same_company( $current_uid, $user_id );
 	if ( $user_id === $current_uid ) {
 		_me_ajax_error( 'Нельзя изменить статус собственного аккаунта.' );
-	}
-	if ( $user_id === 1 && $current_uid !== 1 ) {
-		_me_ajax_error( 'Недостаточно прав для изменения этого аккаунта.' );
 	}
 
 	if ( ! crm_set_user_status( $user_id, $status ) ) {
@@ -281,9 +340,10 @@ function me_ajax_delete_user(): void {
 	$hard        = (bool) ( $_POST['hard']     ?? false );
 	$current_uid = get_current_user_id();
 
-	if ( $user_id <= 0 )          _me_ajax_error( 'Неверный ID.' );
+	if ( $user_id <= 0 )             _me_ajax_error( 'Неверный ID.' );
+	_me_ajax_deny_root( $user_id );
+	_me_ajax_require_same_company( $current_uid, $user_id );
 	if ( $user_id === $current_uid ) _me_ajax_error( 'Нельзя удалить собственный аккаунт.' );
-	if ( $user_id === 1 )          _me_ajax_error( 'Нельзя удалить главного администратора.' );
 
 	$target_user = get_userdata( $user_id );
 	if ( ! $target_user ) {
@@ -408,10 +468,13 @@ function me_ajax_get_user_data(): void {
 		_me_ajax_error( 'Нарушена безопасность запроса.' );
 	}
 
-	$user_id = (int) ( $_GET['user_id'] ?? 0 );
+	$user_id     = (int) ( $_GET['user_id'] ?? 0 );
+	$current_uid = get_current_user_id();
 	if ( $user_id <= 0 ) {
 		_me_ajax_error( 'Неверный ID.' );
 	}
+	_me_ajax_deny_root( $user_id );
+	_me_ajax_require_same_company( $current_uid, $user_id );
 
 	$user = get_userdata( $user_id );
 	if ( ! $user ) {

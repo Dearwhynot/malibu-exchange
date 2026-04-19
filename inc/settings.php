@@ -60,6 +60,64 @@ function crm_set_setting( string $key, string $value, int $org_id = CRM_DEFAULT_
 }
 
 /**
+ * Получить объект DateTimeZone для настроенной таймзоны организации.
+ * Таймзона хранится в crm_settings с ключом 'timezone'.
+ *
+ * @param int $org_id ID организации.
+ * @return DateTimeZone
+ */
+function crm_get_timezone( int $org_id = CRM_DEFAULT_ORG_ID ): DateTimeZone {
+	$tz_id = crm_get_setting( 'timezone', $org_id, 'UTC' );
+	try {
+		return new DateTimeZone( $tz_id ?: 'UTC' );
+	} catch ( \Exception $e ) {
+		return new DateTimeZone( 'UTC' );
+	}
+}
+
+/**
+ * Форматировать datetime-строку из БД с учётом настроенной таймзоны.
+ * Предполагается, что в БД даты хранятся в UTC (DEFAULT CURRENT_TIMESTAMP при UTC-сервере).
+ *
+ * @param string|null $dt     Строка "Y-m-d H:i:s" (UTC).
+ * @param int         $org_id ID организации.
+ * @return string|null        Строка в таймзоне организации, или null.
+ */
+function crm_format_dt( ?string $dt, int $org_id = CRM_DEFAULT_ORG_ID ): ?string {
+	if ( $dt === null || $dt === '' ) {
+		return null;
+	}
+	try {
+		$d = new DateTime( $dt, new DateTimeZone( 'UTC' ) );
+		$d->setTimezone( crm_get_timezone( $org_id ) );
+		return $d->format( 'Y-m-d H:i:s' );
+	} catch ( \Exception $e ) {
+		return $dt;
+	}
+}
+
+/**
+ * Получить метку таймзоны вида "UTC+07:00 (Asia/Bangkok)".
+ *
+ * @param int $org_id ID организации.
+ * @return string
+ */
+function crm_get_timezone_label( int $org_id = CRM_DEFAULT_ORG_ID ): string {
+	$tz_id = crm_get_setting( 'timezone', $org_id, 'UTC' );
+	try {
+		$dtz    = new DateTimeZone( $tz_id ?: 'UTC' );
+		$offset = $dtz->getOffset( new DateTime( 'now', $dtz ) );
+		$sign   = $offset >= 0 ? '+' : '-';
+		$abs    = abs( $offset );
+		$h      = (int) floor( $abs / 3600 );
+		$m      = (int) floor( ( $abs % 3600 ) / 60 );
+		return 'UTC' . $sign . str_pad( $h, 2, '0', STR_PAD_LEFT ) . ':' . str_pad( $m, 2, '0', STR_PAD_LEFT ) . ' (' . $tz_id . ')';
+	} catch ( \Exception $e ) {
+		return 'UTC';
+	}
+}
+
+/**
  * Получить все настройки организации в виде ассоциативного массива.
  *
  * @param int $org_id ID организации.

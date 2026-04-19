@@ -60,6 +60,28 @@
 - Backoffice pages should require authentication.
 - Role-based restrictions may be added later if needed.
 
+## Root user rule (CRITICAL — NEVER VIOLATE)
+
+> **Подробная спецификация:** [`docs/ROOT_ACCOUNT.md`](docs/ROOT_ACCOUNT.md)
+
+- WordPress user with `ID = 1` is the system **root** (master account). Root is NOT a CRM user.
+- Root exists above the CRM model, not inside it.
+- **Root has `company_id = 0`** — root does not belong to any company. This is by design.
+- Root is **completely invisible** at the application level:
+  - Root must NEVER appear in any user listing (WP_User_Query must always exclude uid=1).
+  - Root must NEVER be returned in any AJAX response that lists or describes users.
+  - Root must NEVER be editable, blockable, deletable, or role-assignable through any CRM UI or AJAX handler.
+- Root access is exclusively through direct server access or the WordPress admin panel.
+- There is no CRM permission that grants access to root. No role can manage root.
+
+### Implementation rules for agents:
+1. Every `WP_User_Query` that lists users for CRM UI must filter out uid=1 explicitly.
+2. Every AJAX handler that receives a `user_id` parameter must call `_me_ajax_deny_root($user_id)` before any processing.
+3. Every data-layer function that mutates user data (`crm_assign_roles`, `crm_set_user_status`, `crm_update_user_account`) must no-op silently if `$user_id === 1`.
+4. The helper `crm_is_root(int $uid): bool` in `inc/rbac.php` is the canonical check — always use it, never hardcode `=== 1` in new code.
+5. Do NOT add root to any new table, list, or UI element. If you are writing a feature that works with users, root exclusion is mandatory, not optional.
+6. `crm_get_current_user_company_id()` returns `0` for root. Any code checking `=== 0` to block "no company" **must** call `crm_is_root()` first to exempt root explicitly.
+
 ## Data / DB usage
 - WordPress may be used with:
   - standard WP pages and options
@@ -330,6 +352,7 @@ Rules:
 | `crm_fintech_payment_orders` | Платёжные ордера (fintech) | inc/migrations/0011   |
 | `crm_fintech_payment_order_status_history` | История статусов ордеров | inc/migrations/0012 |
 | `crm_fintech_payment_callbacks` | Transport-лог входящих callbacks | inc/migrations/0013 |
+| `crm_acquirer_payouts`          | Выплаты от эквайринг-партнёра    | inc/migrations/0020 |
 
 ## Fintech Payment Layer
 - Gateway helper: `inc/fintech-payment-gateway.php` — класс `Fintech_Payment_Gateway`, провайдеры: `kanyon`, `doverka`

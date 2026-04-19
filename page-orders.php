@@ -17,6 +17,8 @@ if ( ! crm_can_access( 'orders.view' ) ) {
 
 $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
 $nonce          = wp_create_nonce( 'me_orders_list' );
+$_orders_org = crm_is_root( get_current_user_id() ) ? (int) CRM_DEFAULT_ORG_ID : crm_get_current_user_company_id( get_current_user_id() );
+$tz_label    = crm_get_timezone_label( $_orders_org ?: (int) CRM_DEFAULT_ORG_ID );
 
 get_header();
 ?>
@@ -142,9 +144,15 @@ get_header();
 				<!-- ─── Счётчик ──────────────────────────────────────────────────── -->
 				<div class="d-flex justify-content-between align-items-center m-b-10">
 					<div id="orders-stats" class="text-muted small"></div>
-					<div id="orders-loading" class="text-muted small d-none">
-						<span class="pg-icon" style="animation:spin 1s linear infinite;display:inline-block;">refresh</span>
-						Загрузка…
+					<div class="d-flex align-items-center gap-2">
+						<span class="text-muted small" title="Часовой пояс отображения дат">
+							<i class="pg-icon" style="font-size:13px;vertical-align:middle">time</i>
+							<?php echo esc_html( $tz_label ); ?>
+						</span>
+						<div id="orders-loading" class="text-muted small d-none">
+							<span class="pg-icon" style="animation:spin 1s linear infinite;display:inline-block;">refresh</span>
+							Загрузка…
+						</div>
 					</div>
 				</div>
 

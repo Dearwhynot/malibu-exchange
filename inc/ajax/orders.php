@@ -43,9 +43,18 @@ function me_ajax_orders_list(): void {
 	$search     = sanitize_text_field( wp_unslash( $_POST['search']    ?? '' ) );
 	$status     = sanitize_key( $_POST['status']     ?? '' );
 	$provider   = sanitize_key( $_POST['provider']   ?? '' );
-	$company_id = (int) ( $_POST['company_id']        ?? 0 );
 	$date_from  = sanitize_text_field( wp_unslash( $_POST['date_from'] ?? '' ) );
 	$date_to    = sanitize_text_field( wp_unslash( $_POST['date_to']   ?? '' ) );
+
+	// Company scope: non-root видят только ордера своей компании.
+	$_orders_uid = get_current_user_id();
+	if ( crm_is_root( $_orders_uid ) ) {
+		// Root может фильтровать по любой компании через UI (0 = все)
+		$company_id = (int) ( $_POST['company_id'] ?? 0 );
+	} else {
+		$company_id = crm_get_current_user_company_id( $_orders_uid );
+	}
+	$_tz_org = ( $company_id > 0 ) ? $company_id : (int) CRM_DEFAULT_ORG_ID;
 
 	// ── WHERE ─────────────────────────────────────────────────────────────────
 	$where  = 'WHERE 1=1';
@@ -71,13 +80,19 @@ function me_ajax_orders_list(): void {
 		$where   .= ' AND `company_id` = %d';
 		$params[] = $company_id;
 	}
+	// Фильтр по дате: пользователь вводит дату в настроенной таймзоне — конвертируем в UTC для запроса
+	$tz = crm_get_timezone( $_tz_org );
 	if ( $date_from !== '' && strtotime( $date_from ) ) {
+		$dt_from  = new DateTime( $date_from . ' 00:00:00', $tz );
+		$dt_from->setTimezone( new DateTimeZone( 'UTC' ) );
 		$where   .= ' AND `created_at` >= %s';
-		$params[] = $date_from . ' 00:00:00';
+		$params[] = $dt_from->format( 'Y-m-d H:i:s' );
 	}
 	if ( $date_to !== '' && strtotime( $date_to ) ) {
+		$dt_to    = new DateTime( $date_to . ' 23:59:59', $tz );
+		$dt_to->setTimezone( new DateTimeZone( 'UTC' ) );
 		$where   .= ' AND `created_at` <= %s';
-		$params[] = $date_to . ' 23:59:59';
+		$params[] = $dt_to->format( 'Y-m-d H:i:s' );
 	}
 
 	// ── Подсчёт ───────────────────────────────────────────────────────────────
@@ -156,11 +171,16 @@ function me_ajax_orders_create(): void {
 		? sanitize_text_field( wp_unslash( $_POST['description'] ) )
 		: '';
 
+	$_create_uid        = get_current_user_id();
+	$_create_company_id = crm_is_root( $_create_uid )
+		? (int) CRM_DEFAULT_ORG_ID
+		: crm_get_current_user_company_id( $_create_uid );
+
 	$result = crm_fintech_create_order(
 		$amount_usdt,
-		0,                          // company_id — default
+		$_create_company_id,
 		'web',                      // source_channel
-		get_current_user_id(),
+		$_create_uid,
 		$description
 	);
 
@@ -232,7 +252,7 @@ function me_ajax_orders_get_qr(): void {
 		'provider_code'         => $row->provider_code,
 		'payment_amount_value'  => $row->payment_amount_value !== null ? (float) $row->payment_amount_value : null,
 		'payment_currency_code' => $row->payment_currency_code,
-		'created_at'            => $row->created_at,
+		'created_at'            => crm_format_dt( $row->created_at ),
 		'qr_url'                => $qr_url,
 	] );
 }
@@ -326,10 +346,10 @@ function _me_orders_format_row( object $row, bool $full = false ): array {
 		'amount_asset_value'    => (float) $row->amount_asset_value,
 		'payment_currency_code' => $row->payment_currency_code,
 		'payment_amount_value'  => $row->payment_amount_value !== null ? (float) $row->payment_amount_value : null,
-		'expires_at'            => $row->expires_at,
-		'paid_at'               => $row->paid_at,
-		'created_at'            => $row->created_at,
-		'updated_at'            => $row->updated_at,
+		'expires_at'            => crm_format_dt( $row->expires_at ),
+		'paid_at'               => crm_format_dt( $row->paid_at ),
+		'created_at'            => crm_format_dt( $row->created_at ),
+		'updated_at'            => crm_format_dt( $row->updated_at ),
 	];
 
 	if ( $full ) {
@@ -341,13 +361,13 @@ function _me_orders_format_row( object $row, bool $full = false ): array {
 		$out['local_order_ref']                = $row->local_order_ref;
 		$out['provider_external_order_id']     = $row->provider_external_order_id;
 		$out['callback_url']                   = $row->callback_url;
-		$out['first_callback_at']              = $row->first_callback_at;
-		$out['last_callback_at']               = $row->last_callback_at;
-		$out['last_checked_at']                = $row->last_checked_at;
-		$out['next_check_at']                  = $row->next_check_at;
-		$out['declined_at']                    = $row->declined_at;
-		$out['cancelled_at']                   = $row->cancelled_at;
-		$out['expired_at']                     = $row->expired_at;
+		$out['first_callback_at']              = crm_format_dt( $row->first_callback_at );
+		$out['last_callback_at']               = crm_format_dt( $row->last_callback_at );
+		$out['last_checked_at']                = crm_format_dt( $row->last_checked_at );
+		$out['next_check_at']                  = crm_format_dt( $row->next_check_at );
+		$out['declined_at']                    = crm_format_dt( $row->declined_at );
+		$out['cancelled_at']                   = crm_format_dt( $row->cancelled_at );
+		$out['expired_at']                     = crm_format_dt( $row->expired_at );
 		$out['notes']                          = $row->notes;
 		$out['created_by_user_id']             = $row->created_by_user_id ? (int) $row->created_by_user_id : null;
 		$out['meta_json']                      = $row->meta_json;
