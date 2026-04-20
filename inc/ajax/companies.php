@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * Guard: только uid=1 может управлять компаниями.
  */
 function _me_companies_root_only(): void {
-	if ( ! is_user_logged_in() || get_current_user_id() !== 1 ) {
+	if ( ! is_user_logged_in() || ! crm_is_root( get_current_user_id() ) ) {
 		wp_send_json_error( [ 'message' => 'Недостаточно прав.' ] );
 	}
 }
@@ -86,6 +86,12 @@ function me_ajax_create_company(): void {
 		wp_send_json_error( [ 'message' => 'Ошибка при создании компании.' ] );
 	}
 
+	crm_set_setting(
+		'fintech_allowed_providers',
+		crm_fintech_serialize_allowed_providers( crm_fintech_default_allowed_providers() ),
+		$company_id
+	);
+
 	crm_log( 'company.created', [
 		'category'    => 'users',
 		'level'       => 'info',
@@ -108,6 +114,7 @@ function me_ajax_create_company(): void {
 			'phone'      => $phone,
 			'address'    => $address,
 			'note'       => '',
+			'allowed_providers' => crm_fintech_default_allowed_providers(),
 		],
 	] );
 }
@@ -137,16 +144,17 @@ function me_ajax_assign_user_company(): void {
 	if ( ! $user ) {
 		wp_send_json_error( [ 'message' => 'Пользователь не найден.' ] );
 	}
+	if ( $company_id <= 0 ) {
+		wp_send_json_error( [ 'message' => 'Обычному пользователю обязательно должна быть назначена компания.' ] );
+	}
 
 	$result = crm_assign_user_to_company( $user_id, $company_id, get_current_user_id() );
-	if ( ! $result && $company_id > 0 ) {
+	if ( ! $result ) {
 		wp_send_json_error( [ 'message' => 'Компания не найдена или недоступна.' ] );
 	}
 
 	global $wpdb;
-	$company_name = $company_id > 0
-		? (string) $wpdb->get_var( $wpdb->prepare( "SELECT name FROM crm_companies WHERE id = %d", $company_id ) )
-		: '—';
+	$company_name = (string) $wpdb->get_var( $wpdb->prepare( "SELECT name FROM crm_companies WHERE id = %d", $company_id ) );
 
 	crm_log( 'user.company_assigned', [
 		'category'    => 'users',
@@ -163,9 +171,7 @@ function me_ajax_assign_user_company(): void {
 	] );
 
 	wp_send_json_success( [
-		'message'      => $company_id > 0
-			? "Назначено в «{$company_name}»."
-			: 'Компания снята.',
+		'message'      => "Назначено в «{$company_name}».",
 		'company_id'   => $company_id,
 		'company_name' => $company_name,
 	] );

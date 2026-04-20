@@ -101,7 +101,10 @@ if ( isset( $query_args['include'] ) ) {
 }
 
 $uq          = new WP_User_Query( $query_args );
-$users       = $uq->get_results();
+$users       = array_values( array_filter(
+	$uq->get_results(),
+	static fn( $user ) => $user instanceof WP_User && ! crm_is_root( (int) $user->ID )
+) );
 $total       = (int) $uq->get_total();
 $total_pages = (int) ceil( $total / $per_page );
 
@@ -126,12 +129,42 @@ $nonce_status    = wp_create_nonce( 'me_users_status' );
 $nonce_delete    = wp_create_nonce( 'me_users_delete' );
 $nonce_roles     = wp_create_nonce( 'me_roles_save' );
 $nonce_company   = wp_create_nonce( 'me_assign_user_company' );
-$nonce_create_co = wp_create_nonce( 'me_create_company' );
+$nonce_create_co     = wp_create_nonce( 'me_create_company' );
+$nonce_company_settings = wp_create_nonce( 'me_company_fintech_access_save' );
 
-// Данные для вкладки "Компании" — только uid=1
-$all_companies_full = [];
+if ( ! function_exists( 'me_users_render_company_provider_badges_html' ) ) {
+	function me_users_render_company_provider_badges_html( array $providers ): string {
+		$providers = crm_fintech_normalize_allowed_providers( $providers );
+
+		ob_start();
+		if ( empty( $providers ) ) :
+			?>
+			<span class="badge badge-secondary m-r-2">Контуры отключены</span>
+			<?php
+		else :
+			foreach ( $providers as $provider ) :
+				$badge_class = $provider === 'doverka' ? 'badge-info' : 'badge-primary';
+				?>
+				<span class="badge <?php echo esc_attr( $badge_class ); ?> m-r-2">
+					<?php echo esc_html( crm_fintech_provider_label( $provider ) ); ?>
+				</span>
+				<?php
+			endforeach;
+		endif;
+
+		return (string) ob_get_clean();
+	}
+}
+
+// Данные для вкладки "Компании" — только root
+$all_companies_full        = [];
+$company_fintech_access_map = [];
 if ( crm_is_root( $current_uid ) ) {
 	$all_companies_full = crm_get_all_companies_full();
+	foreach ( $all_companies_full as $co ) {
+		$co_id = (int) $co->id;
+		$company_fintech_access_map[ $co_id ] = crm_fintech_get_allowed_providers( $co_id );
+	}
 }
 
 // ─── Данные для вкладки "Роли" ───────────────────────────────────────────────
@@ -341,14 +374,14 @@ get_header();
 										</tr>
 									</thead>
 									<tbody>
-										<?php foreach ( $users as $user ) :
-											$acc           = $crm_accounts[ $user->ID ] ?? null;
-											$user_roles    = $crm_roles_map[ $user->ID ] ?? [];
-											$crm_status    = $acc ? $acc->status : CRM_STATUS_ACTIVE;
-											$status_class  = crm_status_badge_class( $crm_status );
-											$last_login    = me_users_get_last_login( $user->ID );
-											$is_super      = $user->ID === 1;
-											$avatar_letter = me_users_avatar_letter( $user );
+											<?php foreach ( $users as $user ) :
+												$acc           = $crm_accounts[ $user->ID ] ?? null;
+												$user_roles    = $crm_roles_map[ $user->ID ] ?? [];
+												$crm_status    = $acc ? $acc->status : CRM_STATUS_ACTIVE;
+												$status_class  = crm_status_badge_class( $crm_status );
+												$last_login    = me_users_get_last_login( $user->ID );
+												$is_super      = crm_is_root( (int) $user->ID );
+												$avatar_letter = me_users_avatar_letter( $user );
 
 											// JSON для модалки редактирования
 											$user_company = $crm_companies_map[ $user->ID ] ?? null;
@@ -735,17 +768,26 @@ get_header();
 												<th style="width:120px">Пользователей</th>
 												<th>Телефон</th>
 												<th>Адрес / заметка</th>
+												<th style="width:60px"></th>
 											</tr>
 										</thead>
 										<tbody id="companies-tbody">
-											<?php foreach ( $all_companies_full as $co ) : ?>
-											<tr id="corow-<?php echo (int) $co->id; ?>">
+											<?php foreach ( $all_companies_full as $co ) :
+												$co_id             = (int) $co->id;
+												$allowed_providers = $company_fintech_access_map[ $co_id ] ?? crm_fintech_default_allowed_providers();
+											?>
+											<tr id="corow-<?php echo $co_id; ?>">
 												<td class="v-align-middle">
-													<span class="hint-text fs-12">#<?php echo (int) $co->id; ?></span>
+													<span class="hint-text fs-12">#<?php echo $co_id; ?></span>
 												</td>
 												<td class="v-align-middle">
-													<span class="semi-bold"><?php echo esc_html( $co->name ); ?></span>
-													<small class="hint-text m-l-5 fs-11"><?php echo esc_html( $co->code ); ?></small>
+													<div>
+														<span class="semi-bold"><?php echo esc_html( $co->name ); ?></span>
+														<small class="hint-text m-l-5 fs-11"><?php echo esc_html( $co->code ); ?></small>
+													</div>
+													<div class="m-t-5" id="company-providers-<?php echo $co_id; ?>">
+														<?php echo me_users_render_company_provider_badges_html( $allowed_providers ); ?>
+													</div>
 												</td>
 												<td class="v-align-middle">
 													<span class="badge badge-<?php echo $co->status === 'active' ? 'success' : 'secondary'; ?>">
@@ -760,6 +802,30 @@ get_header();
 												</td>
 												<td class="v-align-middle hint-text fs-12">
 													<?php echo esc_html( $co->address ?? ( $co->note ?: '—' ) ); ?>
+												</td>
+												<td class="v-align-middle text-right">
+													<div class="dropdown">
+														<button type="button"
+														        class="btn btn-default btn-xs dropdown-toggle"
+														        data-bs-toggle="dropdown"
+														        aria-expanded="false"
+														        aria-label="Действия компании">
+															<i class="pg-icon">more_vertical</i>
+														</button>
+														<ul class="dropdown-menu dropdown-menu-end">
+															<li>
+																<a class="dropdown-item js-company-settings" href="#"
+																   data-company-id="<?php echo $co_id; ?>"
+																   data-company-name="<?php echo esc_attr( $co->name ); ?>"
+																   data-company-code="<?php echo esc_attr( $co->code ); ?>"
+																   data-allowed-providers="<?php echo esc_attr( implode( ',', $allowed_providers ) ); ?>"
+																   data-bs-toggle="modal"
+																   data-bs-target="#modal-company-settings">
+																	<i class="pg-icon m-r-5">settings</i> Настройки
+																</a>
+															</li>
+														</ul>
+													</div>
 												</td>
 											</tr>
 											<?php endforeach; ?>
@@ -954,7 +1020,6 @@ get_header();
 							<div class="form-group form-group-default">
 								<label>Компания</label>
 								<select class="full-width" name="company_id" id="uf-company-id">
-									<option value="0">— Без компании —</option>
 									<?php foreach ( $all_companies as $co ) : ?>
 									<option value="<?php echo (int) $co->id; ?>">
 										<?php echo esc_html( $co->name ); ?>
@@ -1066,12 +1131,11 @@ get_header();
 			<div class="modal-body">
 				<p class="m-b-15">Пользователь: <strong id="ac-user-login">—</strong></p>
 				<div class="form-group form-group-default">
-					<label>Компания</label>
-					<select class="full-width" id="ac-company-select">
-						<option value="0">— Без компании —</option>
-						<?php foreach ( $all_companies as $co ) : ?>
-						<option value="<?php echo (int) $co->id; ?>">
-							<?php echo esc_html( $co->name ); ?>
+						<label>Компания</label>
+						<select class="full-width" id="ac-company-select">
+							<?php foreach ( $all_companies as $co ) : ?>
+							<option value="<?php echo (int) $co->id; ?>">
+								<?php echo esc_html( $co->name ); ?>
 						</option>
 						<?php endforeach; ?>
 					</select>
@@ -1133,6 +1197,95 @@ get_header();
 				<button type="button" class="btn btn-primary" id="btn-create-company">
 					<span class="btn-label">Создать</span>
 					<i class="pg-icon spin d-none" id="btn-create-company-spinner">refresh</i>
+				</button>
+			</div>
+		</div>
+	</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     MODAL: COMPANY SETTINGS (root only)
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modal-company-settings" tabindex="-1"
+     aria-labelledby="modal-company-settings-title" aria-hidden="true">
+	<div class="modal-dialog modal-lg">
+		<div class="modal-content">
+			<div class="modal-header clearfix text-left">
+				<button aria-label="Закрыть" type="button" class="close" data-bs-dismiss="modal" aria-hidden="true">
+					<i class="pg-icon">close</i>
+				</button>
+				<h5 class="modal-title" id="modal-company-settings-title">Настройки компании</h5>
+				<p class="p-b-10 m-b-0">
+					Root определяет, какие платёжные контуры компания видит в настройках и через какие ей разрешено создавать новые ордера.
+				</p>
+			</div>
+			<div class="modal-body">
+				<form id="form-company-settings" novalidate>
+					<input type="hidden" id="cfs-company-id" value="0">
+
+					<div class="form-group-attached">
+						<div class="row">
+							<div class="col-md-8">
+								<div class="form-group form-group-default">
+									<label>Компания</label>
+									<input type="text" class="form-control" id="cfs-company-name" value="" readonly>
+								</div>
+							</div>
+							<div class="col-md-4">
+								<div class="form-group form-group-default">
+									<label>ID / код</label>
+									<input type="text" class="form-control" id="cfs-company-code" value="" readonly>
+								</div>
+							</div>
+						</div>
+
+						<div class="row">
+							<div class="col-12">
+								<div class="form-group form-group-default">
+									<label>Доступные платёжные контуры</label>
+									<p class="hint-text small m-b-0">
+										Секция сделана расширяемой: позже сюда можно будет добавить и другие настройки компании.
+									</p>
+								</div>
+							</div>
+						</div>
+
+						<div class="row">
+							<div class="col-md-6">
+								<div class="form-group form-group-default">
+									<label>Kanyon (Pay2Day)</label>
+									<div class="form-check complete m-t-5">
+										<input type="checkbox" id="cfs-provider-kanyon" class="js-company-provider" value="kanyon">
+										<label for="cfs-provider-kanyon">Разрешить компании</label>
+									</div>
+									<p class="hint-text small m-b-0">
+										Логин, пароль и создание новых ордеров через Kanyon / Pay2Day.
+									</p>
+								</div>
+							</div>
+							<div class="col-md-6">
+								<div class="form-group form-group-default">
+									<label>Doverka</label>
+									<div class="form-check complete m-t-5">
+										<input type="checkbox" id="cfs-provider-doverka" class="js-company-provider" value="doverka">
+										<label for="cfs-provider-doverka">Разрешить компании</label>
+									</div>
+									<p class="hint-text small m-b-0">
+										API-ключ Doverka, выбор Doverka как активного провайдера и создание новых ордеров.
+									</p>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<div class="alert alert-danger d-none m-t-10" id="cfs-error"></div>
+				</form>
+			</div>
+			<div class="modal-footer">
+				<button type="button" class="btn btn-default" data-bs-dismiss="modal">Отмена</button>
+				<button type="button" class="btn btn-primary" id="btn-save-company-settings">
+					<span class="btn-label">Сохранить</span>
+					<i class="pg-icon spin d-none" id="btn-company-settings-spinner">refresh</i>
 				</button>
 			</div>
 		</div>
@@ -1207,7 +1360,7 @@ get_header();
 </style>
 
 <?php
-add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_delete, $nonce_roles, $nonce_company, $nonce_create_co, $f_status, $can_assign_roles, $can_edit_roles, $all_permissions_grouped, $role_permissions_map, $current_uid ) {
+add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_delete, $nonce_roles, $nonce_company, $nonce_create_co, $nonce_company_settings, $f_status, $can_assign_roles, $can_edit_roles, $all_permissions_grouped, $role_permissions_map, $current_uid ) {
 ?>
 <script>
 (function ($) {
@@ -1271,19 +1424,30 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 
 	var AJAX_URL = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
 	var NONCES   = {
-		save:      '<?php echo esc_js( $nonce_save ); ?>',
-		status:    '<?php echo esc_js( $nonce_status ); ?>',
-		delete:    '<?php echo esc_js( $nonce_delete ); ?>',
-		company:   '<?php echo esc_js( $nonce_company ); ?>',
-		createCo:  '<?php echo esc_js( $nonce_create_co ); ?>'
+		save:          '<?php echo esc_js( $nonce_save ); ?>',
+		status:        '<?php echo esc_js( $nonce_status ); ?>',
+		delete:        '<?php echo esc_js( $nonce_delete ); ?>',
+		company:       '<?php echo esc_js( $nonce_company ); ?>',
+		createCo:      '<?php echo esc_js( $nonce_create_co ); ?>',
+		companySettings: '<?php echo esc_js( $nonce_company_settings ); ?>'
 	};
 	var CAN_ASSIGN_ROLES = <?php echo $can_assign_roles ? 'true' : 'false'; ?>;
 	var IS_ROOT          = <?php echo crm_is_root( $current_uid ) ? 'true' : 'false'; ?>;
+	var FINTECH_PROVIDER_LABELS = <?php echo wp_json_encode( crm_fintech_provider_labels() ); ?>;
 
 	// ── Дропдауны Actions: strategy fixed (fix overflow in .table-responsive) ──
-	$('#users-table .dropdown-toggle').each(function () {
-		new bootstrap.Dropdown(this, { popperConfig: { strategy: 'fixed' } });
-	});
+	function initActionDropdowns($scope) {
+		($scope || $(document)).find('.dropdown-toggle[data-bs-toggle="dropdown"]').each(function () {
+			if (this.dataset.dropdownFixedReady === '1') {
+				return;
+			}
+
+			new bootstrap.Dropdown(this, { popperConfig: { strategy: 'fixed' } });
+			this.dataset.dropdownFixedReady = '1';
+		});
+	}
+
+	initActionDropdowns($(document));
 
 	// ── Select2 в модалке ─────────────────────────────────────────────────────
 	var $modal = $('#modal-user-form');
@@ -1308,6 +1472,60 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 		$el.removeClass('toast-success toast-error').addClass(type === 'error' ? 'toast-error' : 'toast-success');
 		$('#me-toast-body').text(message);
 		new bootstrap.Toast($el[0], { delay: 4000 }).show();
+	}
+
+	function escapeHtml(value) {
+		return $('<div>').text(value == null ? '' : String(value)).html();
+	}
+
+	function normalizeProviderCodes(providers) {
+		var seen = {};
+		var normalized = [];
+		$.each(providers || [], function (_, provider) {
+			var code = $.trim(String(provider || '')).toLowerCase();
+			if (!code || seen[code] || !FINTECH_PROVIDER_LABELS[code]) {
+				return;
+			}
+			seen[code] = true;
+			normalized.push(code);
+		});
+		return normalized;
+	}
+
+	function renderCompanyProviderBadges(providers) {
+		var normalized = normalizeProviderCodes(providers);
+		var html = '';
+
+		if (!normalized.length) {
+			return '<span class="badge badge-secondary m-r-2">Контуры отключены</span>';
+		}
+
+		$.each(normalized, function (_, provider) {
+			var badgeClass = provider === 'doverka' ? 'badge-info' : 'badge-primary';
+			html += '<span class="badge ' + badgeClass + ' m-r-2">' + escapeHtml(FINTECH_PROVIDER_LABELS[provider] || provider) + '</span>';
+		});
+
+		return html;
+	}
+
+	function buildCompanyActionsDropdown(company) {
+		return ''
+			+ '<div class="dropdown">'
+			+   '<button type="button" class="btn btn-default btn-xs dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Действия компании">'
+			+     '<i class="pg-icon">more_vertical</i>'
+			+   '</button>'
+			+   '<ul class="dropdown-menu dropdown-menu-end">'
+			+     '<li><a class="dropdown-item js-company-settings" href="#"'
+			+       ' data-company-id="' + escapeHtml(company.id) + '"'
+			+       ' data-company-name="' + escapeHtml(company.name) + '"'
+			+       ' data-company-code="' + escapeHtml(company.code) + '"'
+			+       ' data-allowed-providers="' + escapeHtml((company.allowed_providers || []).join(',')) + '"'
+			+       ' data-bs-toggle="modal"'
+			+       ' data-bs-target="#modal-company-settings">'
+			+       '<i class="pg-icon m-r-5">settings</i> Настройки'
+			+     '</a></li>'
+			+   '</ul>'
+			+ '</div>';
 	}
 
 	// ── Confirm modal ─────────────────────────────────────────────────────────
@@ -1349,7 +1567,7 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 			// Показываем company row только при создании (uid=1)
 			if (IS_ROOT) {
 				$('#uf-company-row').show();
-				$('#uf-company-id').val(0);
+				$('#uf-company-id').val($('#uf-company-id option:first').val() || '');
 			}
 		}
 	});
@@ -1412,6 +1630,13 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 		if ($form[0].checkValidity && !$form[0].checkValidity()) {
 			$form[0].reportValidity();
 			return;
+		}
+		if (IS_ROOT && $('#uf-user-id').val() === '0') {
+			var companyId = parseInt($('#uf-company-id').val(), 10) || 0;
+			if (companyId <= 0) {
+				$err.removeClass('d-none').text('Для пользователя обязательно выберите компанию.');
+				return;
+			}
 		}
 
 		var data = $form.serialize() + '&action=me_save_user&_nonce=' + NONCES.save;
@@ -1606,9 +1831,10 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 	});
 
 
-<?php if ( crm_is_root( $current_uid ) ) : ?>
-	// ── Assign Company ────────────────────────────────────────────────────────
-	var $assignCoModal = $('#modal-assign-company');
+	<?php if ( crm_is_root( $current_uid ) ) : ?>
+		// ── Assign Company ────────────────────────────────────────────────────────
+		var $assignCoModal = $('#modal-assign-company');
+		var $companySettingsModal = $('#modal-company-settings');
 
 	// Инициализация Select2 при открытии
 	$assignCoModal.on('shown.bs.modal', function () {
@@ -1631,13 +1857,18 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 
 		$('#ac-user-id').val(uid);
 		$('#ac-user-login').text(login);
-		$('#ac-company-select').val(companyId);
+		$('#ac-company-select').val(companyId > 0 ? companyId : ($('#ac-company-select option:first').val() || ''));
 	});
 
-	$('#btn-assign-company').on('click', function () {
-		var $btn      = $(this);
-		var userId    = parseInt($('#ac-user-id').val(), 10);
-		var companyId = parseInt($('#ac-company-select').val(), 10) || 0;
+		$('#btn-assign-company').on('click', function () {
+			var $btn      = $(this);
+			var userId    = parseInt($('#ac-user-id').val(), 10);
+			var companyId = parseInt($('#ac-company-select').val(), 10) || 0;
+
+		if (companyId <= 0) {
+			$('#ac-error').removeClass('d-none').text('Пользователю обязательно должна быть назначена компания.');
+			return;
+		}
 
 		$btn.prop('disabled', true)
 			.find('.btn-label').hide()
@@ -1657,11 +1888,7 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 
 				// Обновляем ячейку компании в строке таблицы
 				var $cell = $('#company-cell-' + userId);
-				if (res.data.company_id > 0) {
-					$cell.html('<span class="badge badge-info">' + $('<div>').text(res.data.company_name).html() + '</span>');
-				} else {
-					$cell.html('<span class="hint-text">—</span>');
-				}
+				$cell.html('<span class="badge badge-info">' + $('<div>').text(res.data.company_name).html() + '</span>');
 			} else {
 				$('#ac-error').removeClass('d-none').text(res.data.message || 'Ошибка.');
 				$btn.prop('disabled', false)
@@ -1674,11 +1901,95 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 			$btn.prop('disabled', false)
 				.find('.btn-label').show()
 				.end().find('#btn-assign-company-spinner').addClass('d-none');
+			});
 		});
-	});
 
-	// ── Create Company ────────────────────────────────────────────────────────
-	var $createCoModal = $('#modal-create-company');
+		function parseCompanyProvidersAttr(rawValue) {
+			if (!rawValue) {
+				return [];
+			}
+			return normalizeProviderCodes(String(rawValue).split(','));
+		}
+
+		$companySettingsModal.on('hidden.bs.modal', function () {
+			$('#cfs-company-id').val(0);
+			$('#modal-company-settings-title').text('Настройки компании');
+			$('#cfs-company-name').val('');
+			$('#cfs-company-code').val('');
+			$('#cfs-error').addClass('d-none').text('');
+			$('.js-company-provider').prop('checked', false);
+			$('#btn-save-company-settings').prop('disabled', false)
+				.find('.btn-label').show()
+				.end().find('#btn-company-settings-spinner').addClass('d-none');
+		});
+
+		$(document).on('click', '.js-company-settings', function () {
+			var $trigger = $(this);
+			var companyId = parseInt($trigger.attr('data-company-id'), 10) || 0;
+			var companyName = $trigger.attr('data-company-name') || '—';
+			var companyCode = $trigger.attr('data-company-code') || '—';
+			var providers = parseCompanyProvidersAttr($trigger.attr('data-allowed-providers'));
+
+			$('#cfs-company-id').val(companyId);
+			$('#modal-company-settings-title').text('Настройки: ' + companyName);
+			$('#cfs-company-name').val(companyName);
+			$('#cfs-company-code').val('#' + companyId + ' · ' + companyCode);
+			$('.js-company-provider').each(function () {
+				$(this).prop('checked', providers.indexOf($(this).val()) !== -1);
+			});
+			$('#cfs-error').addClass('d-none').text('');
+		});
+
+		$('#btn-save-company-settings').on('click', function () {
+			var $btn = $(this);
+			var companyId = parseInt($('#cfs-company-id').val(), 10) || 0;
+			var providers = [];
+
+			$('.js-company-provider:checked').each(function () {
+				providers.push($(this).val());
+			});
+
+			$('#cfs-error').addClass('d-none').text('');
+			$btn.prop('disabled', true)
+				.find('.btn-label').hide()
+				.end().find('#btn-company-settings-spinner').removeClass('d-none');
+
+			$.post(AJAX_URL, {
+				action: 'me_company_fintech_access_save',
+				nonce: NONCES.companySettings,
+				company_id: companyId,
+				providers: providers
+			})
+			.done(function (res) {
+				if (!res.success) {
+					$('#cfs-error').removeClass('d-none').text(res.data && res.data.message ? res.data.message : 'Ошибка сохранения.');
+					$btn.prop('disabled', false)
+						.find('.btn-label').show()
+						.end().find('#btn-company-settings-spinner').addClass('d-none');
+					return;
+				}
+
+				var providerList = normalizeProviderCodes(res.data.allowed_providers || []);
+				var providerAttr = providerList.join(',');
+				var $row = $('#corow-' + companyId);
+				$row.find('.js-company-settings').attr('data-allowed-providers', providerAttr);
+				$('#company-providers-' + companyId).html(renderCompanyProviderBadges(providerList));
+				showToast(res.data.message || 'Настройки компании сохранены.', 'success');
+				bootstrap.Modal.getInstance($companySettingsModal[0]).hide();
+			})
+			.fail(function (xhr) {
+				var msg = (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message)
+					? xhr.responseJSON.data.message
+					: 'Ошибка сервера.';
+				$('#cfs-error').removeClass('d-none').text(msg);
+				$btn.prop('disabled', false)
+					.find('.btn-label').show()
+					.end().find('#btn-company-settings-spinner').addClass('d-none');
+			});
+		});
+
+		// ── Create Company ────────────────────────────────────────────────────────
+		var $createCoModal = $('#modal-create-company');
 
 	$createCoModal.on('hidden.bs.modal', function () {
 		$('#form-company')[0].reset();
@@ -1710,27 +2021,31 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 			_nonce:   NONCES.createCo
 		})
 		.done(function (res) {
-			if (res.success) {
-				showToast(res.data.message, 'success');
-				bootstrap.Modal.getInstance($createCoModal[0]).hide();
+				if (res.success) {
+					showToast(res.data.message, 'success');
+					bootstrap.Modal.getInstance($createCoModal[0]).hide();
 
-				// Добавляем строку в таблицу компаний
-				var co = res.data.company;
-				var $tbody = $('#companies-tbody');
-				if ($tbody.length) {
-					var row = '<tr id="corow-' + co.id + '">' +
-						'<td class="v-align-middle"><span class="hint-text fs-12">#' + co.id + '</span></td>' +
-						'<td class="v-align-middle"><span class="semi-bold">' + $('<div>').text(co.name).html() + '</span> <small class="hint-text m-l-5 fs-11">' + $('<div>').text(co.code).html() + '</small></td>' +
-						'<td class="v-align-middle"><span class="badge badge-success">active</span></td>' +
-						'<td class="v-align-middle hint-text fs-12">0</td>' +
-						'<td class="v-align-middle hint-text fs-12">' + $('<div>').text(co.phone || '—').html() + '</td>' +
-						'<td class="v-align-middle hint-text fs-12">' + $('<div>').text(co.address || '—').html() + '</td>' +
-						'</tr>';
-					$tbody.append(row);
-				}
+					// Добавляем строку в таблицу компаний
+					var co = res.data.company;
+					var $tbody = $('#companies-tbody');
+					if ($tbody.length) {
+						var providerBadges = renderCompanyProviderBadges(co.allowed_providers || []);
+						var row = '<tr id="corow-' + co.id + '">' +
+							'<td class="v-align-middle"><span class="hint-text fs-12">#' + co.id + '</span></td>' +
+							'<td class="v-align-middle"><div><span class="semi-bold">' + escapeHtml(co.name) + '</span> <small class="hint-text m-l-5 fs-11">' + escapeHtml(co.code) + '</small></div><div class="m-t-5" id="company-providers-' + co.id + '">' + providerBadges + '</div></td>' +
+							'<td class="v-align-middle"><span class="badge badge-success">active</span></td>' +
+							'<td class="v-align-middle hint-text fs-12">0</td>' +
+							'<td class="v-align-middle hint-text fs-12">' + escapeHtml(co.phone || '—') + '</td>' +
+							'<td class="v-align-middle hint-text fs-12">' + escapeHtml(co.address || '—') + '</td>' +
+							'<td class="v-align-middle text-right">' + buildCompanyActionsDropdown(co) + '</td>' +
+							'</tr>';
+						var $row = $(row);
+						$tbody.append($row);
+						initActionDropdowns($row);
+					}
 
-				// Добавляем в select'ы компаний (форма пользователя и форма назначения)
-				var newOpt = $('<option>').val(co.id).text(co.name);
+					// Добавляем в select'ы компаний (форма пользователя и форма назначения)
+					var newOpt = $('<option>').val(co.id).text(co.name);
 				$('#uf-company-id').append(newOpt.clone());
 				$('#ac-company-select').append(newOpt.clone());
 			} else {
@@ -1765,9 +2080,9 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 			$('#uf-company-id').select2('destroy');
 		}
 	});
-<?php endif; ?>
+	<?php endif; ?>
 
-}(jQuery));
+	}(jQuery));
 </script>
 <?php
 }, 99 );

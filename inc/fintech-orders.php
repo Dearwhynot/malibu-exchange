@@ -18,18 +18,28 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 /**
  * Маппинг provider-статуса в наш внутренний status_code.
- * Kanyon: CREATED, PROCESSING, IPS_ACCEPTED, DECLINED, EXPIRED, CANCELLED
+ * Kanyon: CREATED, PROCESSING, QRCDATA_CREATED, QRCDATA_IN_PROGRESS, IPS_ACCEPTED, DECLINED, EXPIRED, CANCELLED
  * Doverka: нормализованы в callback-handler → IPS_ACCEPTED, DECLINED, EXPIRED
  */
 function _crm_fintech_map_status( string $provider_status ): string {
 	static $map = [
-		'CREATED'      => 'created',
-		'PROCESSING'   => 'pending',
-		'IPS_ACCEPTED' => 'paid',
-		'DECLINED'     => 'declined',
-		'EXPIRED'      => 'expired',
-		'CANCELLED'    => 'cancelled',
-		'CANCELED'     => 'cancelled',
+		'CREATED'             => 'created',
+		'QRCDATA_CREATED'     => 'created',
+		'PROCESSING'          => 'pending',
+		'IN_PROCESS'          => 'pending',
+		'PAYOUT_IN_PROGRESS'  => 'pending',
+		'QRCDATA_IN_PROGRESS' => 'pending',
+		'CHARGE_IN_PROGRESS'  => 'pending',
+		'AUTHORIZATION'       => 'pending',
+		'PRE_AUTHORIZED_3DS'  => 'pending',
+		'IPS_ACCEPTED'        => 'paid',
+		'PAID'                => 'paid',
+		'CHARGED'             => 'paid',
+		'DECLINED'            => 'declined',
+		'CHARGE_DECLINED'     => 'declined',
+		'EXPIRED'             => 'expired',
+		'CANCELLED'           => 'cancelled',
+		'CANCELED'            => 'cancelled',
 	];
 
 	$upper = strtoupper( trim( $provider_status ) );
@@ -52,6 +62,7 @@ function crm_fintech_qr_url( string $payload, string $qrc_id, string $order_id )
 	}
 
 	if ( ! class_exists( 'QRcode' ) ) {
+		error_log( '[FINTECH] QR generation skipped: phpqrcode library not available' );
 		return null;
 	}
 
@@ -69,6 +80,14 @@ function crm_fintech_qr_url( string $payload, string $qrc_id, string $order_id )
 
 	if ( ! file_exists( $abs_path ) ) {
 		QRcode::png( $payload, $abs_path );
+	}
+
+	if ( ! file_exists( $abs_path ) ) {
+		error_log( '[FINTECH] QR PNG generation failed ' . wp_json_encode( [
+			'order_id' => $order_id,
+			'qrc_id'   => $qrc_id,
+			'base_dir' => $base_dir,
+		], JSON_UNESCAPED_UNICODE ) );
 	}
 
 	return file_exists( $abs_path ) ? ( $base_url . $file_name ) : null;
@@ -92,8 +111,8 @@ function crm_fintech_save_order(
 		return null;
 	}
 
-	if ( $company_id <= 0 ) {
-		$company_id = defined( 'CRM_DEFAULT_ORG_ID' ) ? (int) CRM_DEFAULT_ORG_ID : 1;
+	if ( $company_id < 0 ) {
+		return null;
 	}
 
 	$provider_status = (string) ( $invoice['providerStatus'] ?? '' );
@@ -157,7 +176,7 @@ function crm_fintech_save_order(
  *
  * Возвращает массив:
  *   success (bool), order_db_id (?int), merchant_order_id, provider_order_id,
- *   payment_link, qrc_id, payload, qr_url, provider, payment_amount_rub, error (?string)
+ *   payment_link, qrc_id, payload, qr_url, provider, payment_amount_rub, warning (?string), error (?string)
  */
 function crm_fintech_create_order(
 	float $amount_usdt,
@@ -166,8 +185,74 @@ function crm_fintech_create_order(
 	?int $created_by_user_id = null,
 	string $description = ''
 ): array {
-	if ( $company_id <= 0 ) {
-		$company_id = defined( 'CRM_DEFAULT_ORG_ID' ) ? (int) CRM_DEFAULT_ORG_ID : 1;
+	if ( $company_id < 0 ) {
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => 'Операция требует валидную компанию пользователя.',
+		];
+	}
+
+	$active_provider = crm_fintech_normalize_provider_code(
+		(string) crm_get_setting( 'fintech_active_provider', $company_id, '' )
+	);
+
+	if ( $active_provider !== '' && ! crm_fintech_is_provider_allowed( $company_id, $active_provider ) ) {
+		$error_message = sprintf(
+			'Создание ордеров через %s отключено для этой компании. Обратитесь к root-администратору.',
+			crm_fintech_provider_label( $active_provider )
+		);
+
+		crm_log( 'payment.order.provider_disabled', [
+			'category'    => 'payments',
+			'level'       => 'warning',
+			'action'      => 'create',
+			'message'     => $error_message,
+			'target_type' => 'payment_order',
+			'is_success'  => false,
+			'context'     => [
+				'company_id'     => $company_id,
+				'provider'       => $active_provider,
+				'amount_usdt'    => $amount_usdt,
+				'source_channel' => $source_channel,
+			],
+		] );
+
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => $error_message,
+		];
+	}
+
+	// Проверяем наличие настроек СТРОГО для этой компании.
+	// Запрещено использовать настройки другой компании — это финансовая операция.
+	if ( ! crm_fintech_is_configured( $company_id ) ) {
+		$config_status   = crm_fintech_get_configuration_status( $company_id );
+		$missing_labels  = array_map(
+			static fn( $item ) => (string) ( $item['label'] ?? '' ),
+			$config_status['missing_fields'] ?? []
+		);
+		$missing_labels = array_values( array_filter( $missing_labels ) );
+
+		crm_log( 'payment.order.create_failed', [
+			'category'   => 'payments',
+			'level'      => 'error',
+			'action'     => 'create',
+			'message'    => sprintf( 'Попытка создать ордер: платёжный шлюз не настроен для компании %d', $company_id ),
+			'is_success' => false,
+			'context'    => [ 'company_id' => $company_id, 'amount_usdt' => $amount_usdt ],
+		] );
+
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => sprintf(
+				'Платёжный шлюз не настроен для вашей компании (ID: %d).%s',
+				$company_id,
+				! empty( $missing_labels ) ? ' Не хватает: ' . implode( ', ', $missing_labels ) . '.' : ' Обратитесь к администратору системы.'
+			),
+		];
 	}
 
 	Fintech_Payment_Gateway::set_company_id( $company_id );
@@ -235,6 +320,7 @@ function crm_fintech_create_order(
 		'qr_url'             => $qr_url,
 		'provider'           => (string) ( $invoice['provider']          ?? '' ),
 		'payment_amount_rub' => isset( $invoice['paymentAmountRub'] ) ? round( $invoice['paymentAmountRub'] / 100, 2 ) : null,
+		'warning'            => isset( $invoice['warning'] ) ? (string) $invoice['warning'] : null,
 		'error'              => null,
 	];
 }
@@ -260,12 +346,18 @@ function crm_fintech_poll_order_status( object $order ): array {
 	}
 
 	$company_id = (int) ( $order->company_id ?? 0 );
-	if ( $company_id <= 0 ) {
-		$company_id = defined( 'CRM_DEFAULT_ORG_ID' ) ? (int) CRM_DEFAULT_ORG_ID : 1;
+	if ( $company_id < 0 ) {
+		return [
+			'changed'         => false,
+			'old_status'      => $old_status,
+			'new_status'      => $old_status,
+			'provider_status' => '',
+			'error'           => 'Order has invalid company scope',
+		];
 	}
 
 	Fintech_Payment_Gateway::set_company_id( $company_id );
-	$status_result = Fintech_Payment_Gateway::get_order_status( $provider_order_id );
+	$status_result = Fintech_Payment_Gateway::get_order_status_for_provider( (string) ( $order->provider_code ?? '' ), $provider_order_id );
 
 	if ( empty( $status_result['success'] ) ) {
 		$wpdb->update( 'crm_fintech_payment_orders', [ 'last_checked_at' => $now ], [ 'id' => $order_db_id ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
@@ -288,6 +380,44 @@ function crm_fintech_poll_order_status( object $order ): array {
 	$new_status      = _crm_fintech_map_status( $provider_status );
 
 	$update = [ 'last_checked_at' => $now, 'updated_at' => $now ];
+
+	if (
+		( empty( $order->payment_link ) || empty( $order->qrc_id ) )
+		&& ! empty( $order->provider_code )
+		&& $provider_order_id !== ''
+	) {
+		$order_qr_result = Fintech_Payment_Gateway::get_order_qr_data_for_provider( (string) ( $order->provider_code ?? '' ), $provider_order_id );
+		if ( ! empty( $order_qr_result['success'] ) ) {
+			if ( ! empty( $order_qr_result['payload'] ) ) {
+				$update['payment_link'] = (string) $order_qr_result['payload'];
+			}
+			if ( ! empty( $order_qr_result['qrcId'] ) ) {
+				$update['qrc_id'] = (string) $order_qr_result['qrcId'];
+			}
+			if ( ! empty( $order_qr_result['externalOrderId'] ) ) {
+				$update['provider_external_order_id'] = (string) $order_qr_result['externalOrderId'];
+			}
+		}
+
+		$order_data_result = Fintech_Payment_Gateway::get_order_data_for_provider( (string) ( $order->provider_code ?? '' ), $provider_order_id );
+		if ( ! empty( $order_data_result['success'] ) ) {
+			if ( ! empty( $order_data_result['payload'] ) ) {
+				$update['payment_link'] = (string) $order_data_result['payload'];
+			}
+			if ( ! empty( $order_data_result['qrcId'] ) ) {
+				$update['qrc_id'] = (string) $order_data_result['qrcId'];
+			}
+			if ( ! empty( $order_data_result['externalOrderId'] ) ) {
+				$update['provider_external_order_id'] = (string) $order_data_result['externalOrderId'];
+			}
+			if ( isset( $order_data_result['paymentAmountRub'] ) && $order_data_result['paymentAmountRub'] !== null ) {
+				$update['payment_amount_value'] = round( ( (int) $order_data_result['paymentAmountRub'] ) / 100, 2 );
+			}
+			if ( empty( $update['provider_status_code'] ) && ! empty( $order_data_result['providerStatus'] ) ) {
+				$update['provider_status_code'] = (string) $order_data_result['providerStatus'];
+			}
+		}
+	}
 
 	if ( $new_status !== $old_status ) {
 		$update['status_code']          = $new_status;
@@ -459,6 +589,15 @@ function crm_fintech_process_callback( array $event, array $payload, array $head
 	// Сумма оплаты из callback, если есть
 	if ( isset( $event['paymentAmount'] ) && $event['paymentAmount'] !== null ) {
 		$update['payment_amount_value'] = round( $event['paymentAmount'] / 100, 2 );
+	}
+	if ( ! empty( $event['qrcId'] ) ) {
+		$update['qrc_id'] = (string) $event['qrcId'];
+	}
+	if ( ! empty( $event['payload'] ) ) {
+		$update['payment_link'] = (string) $event['payload'];
+	}
+	if ( ! empty( $event['externalOrderId'] ) ) {
+		$update['provider_external_order_id'] = (string) $event['externalOrderId'];
 	}
 
 	$wpdb->update( 'crm_fintech_payment_orders', $update, [ 'id' => $order_db_id ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery

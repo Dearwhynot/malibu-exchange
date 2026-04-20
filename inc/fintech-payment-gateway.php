@@ -25,34 +25,289 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // ─── Adapter настроек ────────────────────────────────────────────────────────
 
+if ( ! function_exists( 'crm_fintech_provider_labels' ) ) {
+	function crm_fintech_provider_labels(): array {
+		return [
+			'kanyon'  => 'Kanyon (Pay2Day)',
+			'doverka' => 'Doverka',
+		];
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_provider_label' ) ) {
+	function crm_fintech_provider_label( string $provider ): string {
+		$labels   = crm_fintech_provider_labels();
+		$provider = crm_fintech_normalize_provider_code( $provider );
+
+		return $labels[ $provider ] ?? $provider;
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_normalize_provider_code' ) ) {
+	function crm_fintech_normalize_provider_code( string $provider ): string {
+		$provider = strtolower( trim( $provider ) );
+
+		return array_key_exists( $provider, crm_fintech_provider_labels() ) ? $provider : '';
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_default_allowed_providers' ) ) {
+	function crm_fintech_default_allowed_providers(): array {
+		return array_keys( crm_fintech_provider_labels() );
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_normalize_allowed_providers' ) ) {
+	function crm_fintech_normalize_allowed_providers( array $providers ): array {
+		$normalized = [];
+
+		foreach ( $providers as $provider ) {
+			$code = crm_fintech_normalize_provider_code( (string) $provider );
+			if ( $code !== '' ) {
+				$normalized[ $code ] = $code;
+			}
+		}
+
+		$ordered = [];
+		foreach ( crm_fintech_default_allowed_providers() as $provider ) {
+			if ( isset( $normalized[ $provider ] ) ) {
+				$ordered[] = $provider;
+			}
+		}
+
+		return $ordered;
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_parse_allowed_providers' ) ) {
+	function crm_fintech_parse_allowed_providers( $raw_value ): array {
+		if ( is_array( $raw_value ) ) {
+			return crm_fintech_normalize_allowed_providers( $raw_value );
+		}
+
+		$raw_value = trim( (string) $raw_value );
+		if ( $raw_value === '' ) {
+			return crm_fintech_default_allowed_providers();
+		}
+
+		$decoded = json_decode( $raw_value, true );
+		if ( is_array( $decoded ) ) {
+			return crm_fintech_normalize_allowed_providers( $decoded );
+		}
+
+		return crm_fintech_normalize_allowed_providers(
+			preg_split( '/\s*,\s*/', $raw_value, -1, PREG_SPLIT_NO_EMPTY ) ?: []
+		);
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_serialize_allowed_providers' ) ) {
+	function crm_fintech_serialize_allowed_providers( array $providers ): string {
+		return (string) wp_json_encode(
+			crm_fintech_normalize_allowed_providers( $providers ),
+			JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+		);
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_get_allowed_providers' ) ) {
+	function crm_fintech_get_allowed_providers( int $company_id ): array {
+		$raw_value = crm_get_setting( 'fintech_allowed_providers', $company_id, '' );
+
+		return crm_fintech_parse_allowed_providers( $raw_value );
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_is_provider_allowed' ) ) {
+	function crm_fintech_is_provider_allowed( int $company_id, string $provider ): bool {
+		$provider = crm_fintech_normalize_provider_code( $provider );
+
+		return $provider !== '' && in_array( $provider, crm_fintech_get_allowed_providers( $company_id ), true );
+	}
+}
+
+/**
+ * Нормализованный набор fintech-настроек для конкретной компании.
+ */
+function crm_fintech_collect_settings( int $company_id ): array {
+	return [
+		'company_name'             => trim( (string) crm_get_setting( 'fintech_company_name', $company_id, '' ) ),
+		'merchant_order_prefix'    => trim( (string) crm_get_setting( 'fintech_merchant_order_prefix', $company_id, '' ) ),
+		'active_provider'          => strtolower( trim( (string) crm_get_setting( 'fintech_active_provider', $company_id, '' ) ) ),
+		'debug'                    => crm_get_setting( 'fintech_debug', $company_id, '0' ) === '1',
+		'pay2day_login'            => trim( (string) crm_get_setting( 'fintech_pay2day_login', $company_id, '' ) ),
+		'pay2day_password'         => trim( (string) crm_get_setting( 'fintech_pay2day_password', $company_id, '' ) ),
+		'pay2day_tsp_id'           => (int) crm_get_setting( 'fintech_pay2day_tsp_id', $company_id, '0' ),
+		'pay2day_order_currency'   => trim( (string) crm_get_setting( 'fintech_pay2day_order_currency', $company_id, '' ) ),
+		'doverka_api_key'          => trim( (string) crm_get_setting( 'fintech_doverka_api_key', $company_id, '' ) ),
+		'doverka_currency_id'      => (int) crm_get_setting( 'fintech_doverka_currency_id', $company_id, '0' ),
+		'doverka_approve_url'      => trim( (string) crm_get_setting( 'fintech_doverka_approve_url', $company_id, '' ) ),
+		'doverka_kyc_redirect_url' => trim( (string) crm_get_setting( 'fintech_doverka_kyc_redirect_url', $company_id, '' ) ),
+		'kanyon_verify_signature'  => crm_get_setting( 'fintech_kanyon_verify_signature', $company_id, '0' ) === '1',
+		'kanyon_public_key_pem'    => trim( (string) crm_get_setting( 'fintech_kanyon_public_key_pem', $company_id, '' ) ),
+		'allowed_providers'        => crm_fintech_get_allowed_providers( $company_id ),
+	];
+}
+
+/**
+ * Полный статус конфигурации fintech для текущей компании.
+ * Возвращает точный список недостающих полей, чтобы UI мог объяснить проблему по-человечески.
+ */
+function crm_fintech_get_configuration_status( int $company_id ): array {
+	$settings = crm_fintech_collect_settings( $company_id );
+
+	$provider_labels         = crm_fintech_provider_labels();
+	$allowed_providers       = $settings['allowed_providers'];
+	$allowed_provider_labels = array_map(
+		static fn( string $provider ) => $provider_labels[ $provider ] ?? $provider,
+		$allowed_providers
+	);
+	$configured_provider     = crm_fintech_normalize_provider_code( $settings['active_provider'] );
+	$provider_unavailable    = $configured_provider !== '' && ! in_array( $configured_provider, $allowed_providers, true );
+	$blocked_reason          = '';
+	$push_missing            = static function ( array &$bucket, string $id, string $label ): void {
+		foreach ( $bucket as $item ) {
+			if ( (string) ( $item['id'] ?? '' ) === $id ) {
+				return;
+			}
+		}
+
+		$bucket[] = [
+			'id'    => $id,
+			'label' => $label,
+		];
+	};
+
+	$missing_general = [];
+	if ( $settings['company_name'] === '' ) {
+		$missing_general[] = [ 'id' => 'fintech_company_name', 'label' => 'Название компании' ];
+	}
+	if ( $settings['merchant_order_prefix'] === '' ) {
+		$missing_general[] = [ 'id' => 'fintech_merchant_order_prefix', 'label' => 'Префикс ордера' ];
+	}
+
+	if ( empty( $allowed_providers ) ) {
+		$push_missing( $missing_general, 'fintech_active_provider', 'Активный провайдер' );
+		$blocked_reason = 'Для этой компании сейчас отключены все платёжные контуры.';
+	}
+
+	if ( $provider_unavailable ) {
+		$push_missing( $missing_general, 'fintech_active_provider', 'Активный провайдер' );
+		$blocked_reason = sprintf(
+			'Контур %s отключён в настройках компании. Выберите другой доступный контур.',
+			crm_fintech_provider_label( $configured_provider )
+		);
+	}
+
+	if ( ! isset( $provider_labels[ $settings['active_provider'] ] ) || $provider_unavailable ) {
+		$push_missing( $missing_general, 'fintech_active_provider', 'Активный провайдер' );
+	}
+
+	$missing_provider      = [];
+	$provider_section_name = '';
+	$provider              = isset( $provider_labels[ $configured_provider ] ) && ! $provider_unavailable
+		? $configured_provider
+		: '';
+
+	if ( $provider === 'kanyon' ) {
+		$provider_section_name = 'Kanyon / Pay2Day — Учётные данные';
+		if ( $settings['pay2day_login'] === '' ) {
+			$missing_provider[] = [ 'id' => 'fintech_pay2day_login', 'label' => 'Логин (Login)' ];
+		}
+		if ( $settings['pay2day_password'] === '' ) {
+			$missing_provider[] = [ 'id' => 'fintech_pay2day_password', 'label' => 'Пароль (Password)' ];
+		}
+		if ( $settings['pay2day_tsp_id'] <= 0 ) {
+			$missing_provider[] = [ 'id' => 'fintech_pay2day_tsp_id', 'label' => 'TSP ID' ];
+		}
+		if ( $settings['pay2day_order_currency'] === '' ) {
+			$missing_provider[] = [ 'id' => 'fintech_pay2day_order_currency', 'label' => 'Код валюты' ];
+		}
+		if ( $settings['kanyon_verify_signature'] && $settings['kanyon_public_key_pem'] === '' ) {
+			$missing_provider[] = [ 'id' => 'fintech_kanyon_public_key_pem', 'label' => 'Публичный ключ провайдера (PEM)' ];
+		}
+	} elseif ( $provider === 'doverka' ) {
+		$provider_section_name = 'Doverka — Учётные данные';
+		if ( $settings['doverka_api_key'] === '' ) {
+			$missing_provider[] = [ 'id' => 'fintech_doverka_api_key', 'label' => 'API Key' ];
+		}
+		if ( $settings['doverka_currency_id'] <= 0 ) {
+			$missing_provider[] = [ 'id' => 'fintech_doverka_currency_id', 'label' => 'Currency ID' ];
+		}
+		if ( $settings['doverka_approve_url'] === '' ) {
+			$missing_provider[] = [ 'id' => 'fintech_doverka_approve_url', 'label' => 'Approve URL' ];
+		}
+		if ( $settings['doverka_kyc_redirect_url'] === '' ) {
+			$missing_provider[] = [ 'id' => 'fintech_doverka_kyc_redirect_url', 'label' => 'KYC Redirect URL' ];
+		}
+	}
+
+		$missing_fields = array_merge( $missing_general, $missing_provider );
+
+	return [
+		'company_id'            => $company_id,
+		'provider'              => $provider,
+		'provider_label'        => $provider !== '' ? $provider_labels[ $provider ] : 'Не выбран',
+		'general_section_label' => 'Платёжный шлюз — Общие настройки',
+		'provider_section_label'=> $provider_section_name,
+		'missing_general'       => $missing_general,
+		'missing_provider'      => $missing_provider,
+		'missing_fields'        => $missing_fields,
+		'allowed_providers'     => $allowed_providers,
+		'allowed_provider_labels' => $allowed_provider_labels,
+		'provider_unavailable'  => $provider_unavailable,
+		'blocked_reason'        => $blocked_reason,
+		'is_configured'         => $provider !== '' && empty( $missing_fields ),
+		'settings'              => $settings,
+	];
+}
+
 /**
  * Читает fintech-настройки из crm_settings для конкретной компании.
  * Возвращает вложенный массив — тот же формат, который ожидает класс.
  */
+/**
+ * Проверяет, настроен ли платёжный шлюз для данной компании.
+ * НИКОГДА не делает fallback на настройки другой компании.
+ *
+ * @param int $company_id  org_id компании (0 = глобальные настройки root)
+ */
+function crm_fintech_is_configured( int $company_id ): bool {
+	$status = crm_fintech_get_configuration_status( $company_id );
+	return ! empty( $status['is_configured'] );
+}
+
+/**
+ * Возвращает настройки платёжного шлюза строго для указанной компании.
+ * Если настройки не заданы — возвращает массив с флагом '_configured' = false.
+ * НИКОГДА не подставляет настройки другой компании.
+ */
 function crm_fintech_settings( int $company_id = 0 ): array {
-	if ( $company_id <= 0 ) {
-		$company_id = defined( 'CRM_DEFAULT_ORG_ID' ) ? (int) CRM_DEFAULT_ORG_ID : 1;
-	}
+	$status   = crm_fintech_get_configuration_status( $company_id );
+	$settings = $status['settings'];
 
 	return [
-		'company_name'          => crm_get_setting( 'fintech_company_name',           $company_id, '' ),
-		'merchant_order_prefix' => crm_get_setting( 'fintech_merchant_order_prefix',  $company_id, 'MALIBU' ),
-		'active_provider'       => crm_get_setting( 'fintech_active_provider',        $company_id, 'kanyon' ),
-		'debug'                 => crm_get_setting( 'fintech_debug',                  $company_id, '0' ) === '1',
-		// callback_path: не редактируется оператором — фиксируем в коде
+		'_configured'           => ! empty( $status['is_configured'] ),
+		'_config_status'        => $status,
+		'_missing_fields'       => $status['missing_fields'],
+		'allowed_providers'     => $settings['allowed_providers'],
+		'company_name'          => $settings['company_name'],
+		'merchant_order_prefix' => $settings['merchant_order_prefix'],
+		'active_provider'       => $settings['active_provider'],
+		'debug'                 => $settings['debug'],
 		'callback_path'         => '/fintech-payment-callback',
 		'pay2day'               => [
-			'login'          => crm_get_setting( 'fintech_pay2day_login',          $company_id, '' ),
-			'password'       => crm_get_setting( 'fintech_pay2day_password',       $company_id, '' ),
-			'tsp_id'         => (int) crm_get_setting( 'fintech_pay2day_tsp_id',   $company_id, '0' ),
-			'order_currency' => crm_get_setting( 'fintech_pay2day_order_currency', $company_id, 'USDT' ),
+			'login'          => $settings['pay2day_login'],
+			'password'       => $settings['pay2day_password'],
+			'tsp_id'         => $settings['pay2day_tsp_id'],
+			'order_currency' => $settings['pay2day_order_currency'],
 		],
 		'doverka'               => [
-			'api_key'         => crm_get_setting( 'fintech_doverka_api_key',          $company_id, '' ),
-			'currency_id'     => (int) crm_get_setting( 'fintech_doverka_currency_id', $company_id, '0' ),
-			'approve_url'     => crm_get_setting( 'fintech_doverka_approve_url',       $company_id, '' ),
-			'kyc_redirect_url'=> crm_get_setting( 'fintech_doverka_kyc_redirect_url', $company_id, '' ),
-			'callback_url'    => '', // всегда используем общий callback URL
+			'api_key'         => $settings['doverka_api_key'],
+			'currency_id'     => $settings['doverka_currency_id'],
+			'approve_url'     => $settings['doverka_approve_url'],
+			'kyc_redirect_url'=> $settings['doverka_kyc_redirect_url'],
+			'callback_url'    => '',
 		],
 	];
 }
@@ -69,15 +324,15 @@ class Fintech_Payment_Gateway {
 	private const PAY2DAY_BASE_URL          = 'https://kanyonpay.pay2day.kz/api/v1';
 	private const DOVERKA_BASE_URL          = 'https://api.doverkapay.com';
 
-	private const DEFAULT_CALLBACK_PATH     = '/fintech-payment-callback';
-	private const PAY2DAY_TOKEN_TRANSIENT   = 'fintech_pay2day_access_token';
+	private const DEFAULT_CALLBACK_PATH            = '/fintech-payment-callback';
+	private const PAY2DAY_TOKEN_TRANSIENT_PREFIX  = 'fintech_pay2day_access_token_';
 
 	/** company_id для текущего запроса */
 	private static int $company_id = 0;
 
 	/**
 	 * Установить company_id до вызова методов.
-	 * Если не задан — используется CRM_DEFAULT_ORG_ID (= 1).
+	 * Значение должно быть валидным company_id >= 0.
 	 */
 	public static function set_company_id( int $id ): void {
 		self::$company_id = $id;
@@ -87,6 +342,13 @@ class Fintech_Payment_Gateway {
 
 	public static function create_invoice( float $amount_usdt, ?string $merchant_order_id = null, string $description = '' ): array {
 		$provider = self::get_active_provider();
+		if ( $provider === '' ) {
+			return [
+				'success'  => false,
+				'provider' => '',
+				'error'    => 'Активный платёжный контур недоступен для этой компании.',
+			];
+		}
 
 		if ( $provider === self::PROVIDER_DOVERKA ) {
 			return self::doverka_create_invoice( $amount_usdt, $merchant_order_id, $description );
@@ -97,22 +359,53 @@ class Fintech_Payment_Gateway {
 
 	public static function get_order_status( string $order_id ): array {
 		$provider = self::get_active_provider();
+		if ( $provider === '' ) {
+			return [ 'success' => false, 'provider' => '', 'status' => null, 'providerStatus' => null, 'error' => 'Активный платёжный контур недоступен для этой компании.' ];
+		}
 
-		if ( $provider === self::PROVIDER_DOVERKA ) {
+		return self::get_order_status_for_provider( $provider, $order_id );
+	}
+
+	public static function get_order_data( string $order_id ): array {
+		$provider = self::get_active_provider();
+		if ( $provider === '' ) {
+			return [ 'success' => false, 'provider' => '', 'data' => null, 'error' => 'Активный платёжный контур недоступен для этой компании.' ];
+		}
+
+		return self::get_order_data_for_provider( $provider, $order_id );
+	}
+
+	public static function get_order_qr_data( string $order_id ): array {
+		$provider = self::get_active_provider();
+		if ( $provider === '' ) {
+			return [ 'success' => false, 'provider' => '', 'payload' => null, 'error' => 'Активный платёжный контур недоступен для этой компании.' ];
+		}
+
+		return self::get_order_qr_data_for_provider( $provider, $order_id );
+	}
+
+	public static function get_order_status_for_provider( string $provider, string $order_id ): array {
+		if ( strtolower( trim( $provider ) ) === self::PROVIDER_DOVERKA ) {
 			return self::doverka_get_order_status( $order_id );
 		}
 
 		return self::pay2day_get_order_status( $order_id );
 	}
 
-	public static function get_order_data( string $order_id ): array {
-		$provider = self::get_active_provider();
-
-		if ( $provider === self::PROVIDER_DOVERKA ) {
+	public static function get_order_data_for_provider( string $provider, string $order_id ): array {
+		if ( strtolower( trim( $provider ) ) === self::PROVIDER_DOVERKA ) {
 			return self::doverka_get_order_data( $order_id );
 		}
 
 		return self::pay2day_get_order_data( $order_id );
+	}
+
+	public static function get_order_qr_data_for_provider( string $provider, string $order_id ): array {
+		if ( strtolower( trim( $provider ) ) === self::PROVIDER_DOVERKA ) {
+			return self::doverka_get_order_qr_data( $order_id );
+		}
+
+		return self::pay2day_get_qrc_data( $order_id );
 	}
 
 	// ── Настройки ────────────────────────────────────────────────────────────
@@ -123,13 +416,13 @@ class Fintech_Payment_Gateway {
 
 	public static function get_active_provider(): string {
 		$settings = self::get_settings();
-		$provider = strtolower( trim( (string) ( $settings['active_provider'] ?? '' ) ) );
+		$provider = crm_fintech_normalize_provider_code( (string) ( $settings['active_provider'] ?? '' ) );
 
-		if ( in_array( $provider, [ self::PROVIDER_KANYON, self::PROVIDER_DOVERKA ], true ) ) {
+		if ( $provider !== '' && crm_fintech_is_provider_allowed( self::$company_id, $provider ) ) {
 			return $provider;
 		}
 
-		return self::PROVIDER_KANYON;
+		return '';
 	}
 
 	public static function get_company_name(): string {
@@ -296,7 +589,8 @@ class Fintech_Payment_Gateway {
 			return [ 'success' => false, 'token' => null, 'error' => 'Pay2Day login/password not configured', 'raw' => null ];
 		}
 
-		$cached = get_transient( self::PAY2DAY_TOKEN_TRANSIENT );
+		$cache_key = self::get_pay2day_token_transient_key( $login );
+		$cached    = get_transient( $cache_key );
 		if ( is_array( $cached ) && ! empty( $cached['token'] ) && ! empty( $cached['expires'] ) && (int) $cached['expires'] > ( time() + 60 ) ) {
 			return [ 'success' => true, 'token' => (string) $cached['token'], 'error' => null, 'raw' => null ];
 		}
@@ -311,7 +605,7 @@ class Fintech_Payment_Gateway {
 		}
 
 		if ( $expires > 0 ) {
-			set_transient( self::PAY2DAY_TOKEN_TRANSIENT, [ 'token' => $access_token, 'expires' => $expires ], max( 60, $expires - time() - 60 ) );
+			set_transient( $cache_key, [ 'token' => $access_token, 'expires' => $expires ], max( 60, $expires - time() - 60 ) );
 		}
 
 		return [ 'success' => true, 'token' => (string) $access_token, 'error' => null, 'raw' => $data ];
@@ -375,7 +669,69 @@ class Fintech_Payment_Gateway {
 		$qrc_order = $qrc_response['data']['order'] ?? null;
 
 		if ( empty( $qrc_response['success'] ) || ! is_array( $qrc_order ) ) {
-			return self::build_error_response( 'Pay2Day qrcData request failed', self::PROVIDER_KANYON, [ 'raw' => $qrc_response, 'orderId' => $order_id, 'merchantOrderId' => $merchant_order_id ] );
+			$order_data_response = self::pay2day_get_order_data( $order_id );
+			$fallback_status     = (string) ( $order_data_response['providerStatus'] ?? ( $order['status'] ?? '' ) );
+			$fallback_qrc_id     = $order_data_response['qrcId'] ?? null;
+			$fallback_payload    = $order_data_response['payload'] ?? null;
+			$fallback_external   = $order_data_response['externalOrderId'] ?? null;
+			$raw_payload         = [
+				'createOrder' => $create_response,
+				'qrcData'     => $qrc_response,
+				'orderData'   => $order_data_response,
+			];
+
+			if ( ! empty( $fallback_qrc_id ) && ! empty( $fallback_payload ) ) {
+				self::debug_log( 'Pay2Day qrcData fallback recovered QR from order data', [
+					'orderId'         => $order_id,
+					'merchantOrderId' => $merchant_order_id,
+					'providerStatus'  => $fallback_status,
+				] );
+
+				return [
+					'success'           => true,
+					'provider'          => self::PROVIDER_KANYON,
+					'error'             => null,
+					'warning'           => 'QR получен через резервный запрос данных заказа после ошибки qrcData.',
+					'orderId'           => $order_id,
+					'merchantOrderId'   => (string) ( $order['merchantOrderId'] ?? $merchant_order_id ),
+					'amountUsdt'        => $amount_usdt,
+					'orderAmountCents'  => (int) ( $order['orderAmount'] ?? $order_amount_cents ),
+					'paymentAmountRub'  => isset( $order_data_response['paymentAmountRub'] ) && $order_data_response['paymentAmountRub'] !== null
+						? (int) $order_data_response['paymentAmountRub']
+						: ( isset( $order['paymentAmount'] ) ? (int) $order['paymentAmount'] : null ),
+					'qrcId'             => (string) $fallback_qrc_id,
+					'payload'           => (string) $fallback_payload,
+					'externalOrderId'   => $fallback_external,
+					'providerStatus'    => $fallback_status !== '' ? $fallback_status : null,
+					'raw'               => $raw_payload,
+				];
+			}
+
+			self::debug_log( 'Pay2Day qrcData failed, saving provider order without QR', [
+				'orderId'         => $order_id,
+				'merchantOrderId' => $merchant_order_id,
+				'providerStatus'  => $fallback_status,
+				'qrcHttpCode'     => (int) ( $qrc_response['httpCode'] ?? 0 ),
+			] );
+
+			return [
+				'success'           => true,
+				'provider'          => self::PROVIDER_KANYON,
+				'error'             => null,
+				'warning'           => 'Ордер создан у провайдера, но QR ещё не готов. Проверьте ордер повторно через несколько секунд.',
+				'orderId'           => $order_id,
+				'merchantOrderId'   => (string) ( $order['merchantOrderId'] ?? $merchant_order_id ),
+				'amountUsdt'        => $amount_usdt,
+				'orderAmountCents'  => (int) ( $order['orderAmount'] ?? $order_amount_cents ),
+				'paymentAmountRub'  => isset( $order_data_response['paymentAmountRub'] ) && $order_data_response['paymentAmountRub'] !== null
+					? (int) $order_data_response['paymentAmountRub']
+					: ( isset( $order['paymentAmount'] ) ? (int) $order['paymentAmount'] : null ),
+				'qrcId'             => $fallback_qrc_id,
+				'payload'           => $fallback_payload,
+				'externalOrderId'   => $fallback_external,
+				'providerStatus'    => $fallback_status !== '' ? $fallback_status : null,
+				'raw'               => $raw_payload,
+			];
 		}
 
 		return [
@@ -411,6 +767,35 @@ class Fintech_Payment_Gateway {
 		return [ 'success' => true, 'provider' => self::PROVIDER_KANYON, 'status' => $status, 'providerStatus' => $status, 'error' => null, 'raw' => $response ];
 	}
 
+	private static function pay2day_get_qrc_data( string $order_id ): array {
+		$token_response = self::pay2day_get_access_token();
+		if ( empty( $token_response['success'] ) || empty( $token_response['token'] ) ) {
+			return self::build_error_response( 'Unable to get Pay2Day token', self::PROVIDER_KANYON, [ 'raw' => $token_response, 'orderId' => $order_id ] );
+		}
+
+		$response = self::http_request(
+			'POST',
+			rtrim( self::PAY2DAY_BASE_URL, '/' ) . '/order/qrcData/' . rawurlencode( $order_id ),
+			[ 'Authorization-Token' => (string) $token_response['token'] ],
+			(object) []
+		);
+		$order = $response['data']['order'] ?? null;
+
+		if ( empty( $response['success'] ) || ! is_array( $order ) ) {
+			return self::build_error_response( 'Pay2Day qrcData request failed', self::PROVIDER_KANYON, [ 'raw' => $response, 'orderId' => $order_id ] );
+		}
+
+		return [
+			'success'         => true,
+			'provider'        => self::PROVIDER_KANYON,
+			'qrcId'           => isset( $order['qrcId'] ) ? (string) $order['qrcId'] : null,
+			'payload'         => isset( $order['payload'] ) ? (string) $order['payload'] : null,
+			'externalOrderId' => isset( $order['externalOrderId'] ) ? (string) $order['externalOrderId'] : null,
+			'error'           => null,
+			'raw'             => $response,
+		];
+	}
+
 	private static function pay2day_get_order_data( string $order_id ): array {
 		$token_response = self::pay2day_get_access_token();
 		if ( empty( $token_response['success'] ) || empty( $token_response['token'] ) ) {
@@ -425,7 +810,24 @@ class Fintech_Payment_Gateway {
 			return self::build_error_response( 'Pay2Day order data request failed', self::PROVIDER_KANYON, [ 'raw' => $response, 'order' => null, 'status' => $status ] );
 		}
 
-		return [ 'success' => true, 'provider' => self::PROVIDER_KANYON, 'status' => $status, 'providerStatus' => $status, 'order' => $order, 'error' => null, 'raw' => $response ];
+		$qrc             = isset( $order['paymentInfo']['qrc'] ) && is_array( $order['paymentInfo']['qrc'] ) ? $order['paymentInfo']['qrc'] : [];
+		$payment_details = isset( $order['paymentInfo']['paymentDetails'] ) && is_array( $order['paymentInfo']['paymentDetails'] ) ? $order['paymentInfo']['paymentDetails'] : [];
+
+		return [
+			'success'          => true,
+			'provider'         => self::PROVIDER_KANYON,
+			'status'           => $status,
+			'providerStatus'   => $status,
+			'order'            => $order,
+			'qrcId'            => isset( $qrc['qrcId'] ) ? (string) $qrc['qrcId'] : null,
+			'payload'          => isset( $qrc['payload'] ) ? (string) $qrc['payload'] : null,
+			'externalOrderId'  => isset( $order['externalOrderId'] )
+				? (string) $order['externalOrderId']
+				: ( isset( $payment_details['externalId'] ) ? (string) $payment_details['externalId'] : null ),
+			'paymentAmountRub' => isset( $order['paymentAmount'] ) ? (int) $order['paymentAmount'] : null,
+			'error'            => null,
+			'raw'              => $response,
+		];
 	}
 
 	// ── Doverka ──────────────────────────────────────────────────────────────
@@ -600,7 +1002,37 @@ class Fintech_Payment_Gateway {
 			'payerName'            => $payment['payer_name'] ?? null,
 		];
 
-		return [ 'success' => true, 'provider' => self::PROVIDER_DOVERKA, 'status' => $status, 'providerStatus' => $provider_status, 'order' => $order, 'notFound' => false, 'error' => null, 'raw' => $payment_response['raw'] ];
+		return [
+			'success'          => true,
+			'provider'         => self::PROVIDER_DOVERKA,
+			'status'           => $status,
+			'providerStatus'   => $provider_status,
+			'order'            => $order,
+			'qrcId'            => $qrc_id,
+			'payload'          => $payment_link,
+			'externalOrderId'  => isset( $payment['id'] ) ? (string) $payment['id'] : $order_id,
+			'paymentAmountRub' => self::amount_to_minor_units( $payment['amount_from'] ?? null ),
+			'notFound'         => false,
+			'error'            => null,
+			'raw'              => $payment_response['raw'],
+		];
+	}
+
+	private static function doverka_get_order_qr_data( string $order_id ): array {
+		$order_data = self::doverka_get_order_data( $order_id );
+		if ( empty( $order_data['success'] ) ) {
+			return $order_data;
+		}
+
+		return [
+			'success'         => true,
+			'provider'        => self::PROVIDER_DOVERKA,
+			'qrcId'           => $order_data['qrcId'] ?? null,
+			'payload'         => $order_data['payload'] ?? null,
+			'externalOrderId' => $order_data['externalOrderId'] ?? null,
+			'error'           => null,
+			'raw'             => $order_data['raw'] ?? null,
+		];
 	}
 
 	// ── Утилиты ──────────────────────────────────────────────────────────────
@@ -614,6 +1046,13 @@ class Fintech_Payment_Gateway {
 		$prefix = (string) preg_replace( '/[^A-Z0-9]/', '', $prefix );
 
 		return $prefix !== '' ? $prefix : 'MALIBU';
+	}
+
+	private static function get_pay2day_token_transient_key( string $login ): string {
+		$company_id = max( 0, self::$company_id );
+		$login_hash = substr( md5( strtolower( trim( $login ) ) ), 0, 12 );
+
+		return self::PAY2DAY_TOKEN_TRANSIENT_PREFIX . $company_id . '_' . $login_hash;
 	}
 }
 
