@@ -398,13 +398,17 @@ function me_ajax_orders_get_qr(): void {
 		}
 	}
 
+	$_org_id_for_dt = max( 0, (int) ( $row->company_id ?? 0 ) );
+
 	wp_send_json_success( [
 		'id'                    => (int) $row->id,
 		'merchant_order_id'     => $row->merchant_order_id,
 		'provider_code'         => $row->provider_code,
+		'status_code'           => (string) $row->status_code,
 		'payment_amount_value'  => $row->payment_amount_value !== null ? (float) $row->payment_amount_value : null,
 		'payment_currency_code' => $row->payment_currency_code,
-		'created_at'            => crm_format_dt( $row->created_at, max( 0, (int) ( $row->company_id ?? 0 ) ) ),
+		'created_at'            => crm_format_dt( $row->created_at, $_org_id_for_dt ),
+		'paid_at'               => crm_format_dt( $row->paid_at, $_org_id_for_dt ),
 		'qr_url'                => $qr_url,
 	] );
 }

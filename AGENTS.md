@@ -1,5 +1,15 @@
 # AGENTS.md — Malibu Exchange
 
+## Company Isolation Constitution (CRITICAL — FIRST PRIORITY)
+- Multi-company isolation is absolute. No data, settings, orders, payouts, logs, rates snapshots, credentials, tokens, or secrets may leak between companies.
+- `company_id = 0` is reserved ONLY for the special root company of WordPress user `ID = 1`.
+- Every non-root CRM user must belong to exactly one active company with `company_id > 0`.
+- For non-root users, `company_id = 0` is invalid state, not a business mode.
+- There must be no runtime fallback from one company to another, no fallback to default org, and no implicit substitution of company context.
+- If company context is missing or invalid, the code must hard-fail and block access instead of showing or saving any data.
+- Any read/write of company-scoped data must use explicit company filtering in SQL and in AJAX handlers.
+- Root cross-company visibility must be implemented only in dedicated root-only pages/handlers, never by weakening company filters for regular users.
+
 ## Project overview
 - WordPress theme for "Malibu Exchange".
 - The entire working project lives inside this theme root, including `project-kit-rich/`.
@@ -66,7 +76,7 @@
 
 - WordPress user with `ID = 1` is the system **root** (master account). Root is NOT a CRM user.
 - Root exists above the CRM model, not inside it.
-- **Root has `company_id = 0`** — root does not belong to any company. This is by design.
+- **Root has `company_id = 0`** — this is the special system company of root. It is not a normal business company and cannot be assigned to regular users.
 - Root is **completely invisible** at the application level:
   - Root must NEVER appear in any user listing (WP_User_Query must always exclude uid=1).
   - Root must NEVER be returned in any AJAX response that lists or describes users.
@@ -81,6 +91,9 @@
 4. The helper `crm_is_root(int $uid): bool` in `inc/rbac.php` is the canonical check — always use it, never hardcode `=== 1` in new code.
 5. Do NOT add root to any new table, list, or UI element. If you are writing a feature that works with users, root exclusion is mandatory, not optional.
 6. `crm_get_current_user_company_id()` returns `0` for root. Any code checking `=== 0` to block "no company" **must** call `crm_is_root()` first to exempt root explicitly.
+7. Ordinary CRM users must NEVER be created, stored, or treated as `company_id = 0`.
+8. For company-scoped data, fallback to `CRM_DEFAULT_ORG_ID` is forbidden for non-root flows. Missing company context must block access/write.
+9. Root-only aggregate views across all companies must live in separate root-only pages/handlers, not inside regular company pages.
 
 ## Data / DB usage
 - WordPress may be used with:
@@ -110,6 +123,11 @@
 - Forms, status badges, tables and compact dashboards are the priority.
 - Avoid visual clutter.
 - Avoid giant enterprise-dashboard complexity.
+
+## Notifications / Toasts (IMPORTANT)
+- Для toast-уведомлений использовать нативный механизм темы Revox Pages через `template-parts/toast-host.php`.
+- Не придумывать отдельные toast/snackbar-решения для новых страниц, если задача решается штатным `pgNotification`.
+- Подробное правило, точки интеграции и официальная ссылка: [`docs/NOTIFICATIONS.md`](docs/NOTIFICATIONS.md)
 
 ## JavaScript rules
 - Prefer jQuery for:

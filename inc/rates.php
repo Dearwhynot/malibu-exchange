@@ -498,16 +498,17 @@ function rates_save_market_snapshot(
  * @param string $source  'rapira' | 'bitkub' | 'binance_th'
  * @return array|null
  */
-function rates_get_last_market_snapshot( string $source ): ?array {
+function rates_get_last_market_snapshot( string $source, int $org_id = CRM_DEFAULT_ORG_ID ): ?array {
 	global $wpdb;
 
 	$row = $wpdb->get_row( $wpdb->prepare(
 		'SELECT id, source, symbol, bid, ask, mid, created_at
 		 FROM crm_market_snapshots_usdt
-		 WHERE source = %s
+		 WHERE source = %s AND organization_id = %d
 		 ORDER BY created_at DESC
 		 LIMIT 1',
-		$source
+		$source,
+		$org_id
 	), ARRAY_A );
 
 	return is_array( $row ) ? $row : null;
@@ -519,14 +520,16 @@ function rates_get_last_market_snapshot( string $source ): ?array {
  * @param int $limit
  * @return array
  */
-function rates_get_all_market_history( int $limit = 100 ): array {
+function rates_get_all_market_history( int $limit = 100, int $org_id = CRM_DEFAULT_ORG_ID ): array {
 	global $wpdb;
 
 	return $wpdb->get_results( $wpdb->prepare(
 		'SELECT id, source, symbol, bid, ask, mid, created_at
 		 FROM crm_market_snapshots_usdt
+		 WHERE organization_id = %d
 		 ORDER BY created_at DESC
 		 LIMIT %d',
+		$org_id,
 		$limit
 	), ARRAY_A ) ?: [];
 }
@@ -538,16 +541,17 @@ function rates_get_all_market_history( int $limit = 100 ): array {
  * @param int    $limit
  * @return array
  */
-function rates_get_market_history( string $source, int $limit = 50 ): array {
+function rates_get_market_history( string $source, int $limit = 50, int $org_id = CRM_DEFAULT_ORG_ID ): array {
 	global $wpdb;
 
 	return $wpdb->get_results( $wpdb->prepare(
 		'SELECT id, symbol, bid, ask, mid, created_at
 		 FROM crm_market_snapshots_usdt
-		 WHERE source = %s
+		 WHERE source = %s AND organization_id = %d
 		 ORDER BY created_at DESC
 		 LIMIT %d',
 		$source,
+		$org_id,
 		$limit
 	), ARRAY_A ) ?: [];
 }

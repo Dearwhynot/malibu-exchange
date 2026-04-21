@@ -12,14 +12,39 @@ if ( ! defined( 'ABSPATH' ) ) {
 add_action( 'wp_ajax_me_rates_save',              'me_ajax_rates_save' );
 add_action( 'wp_ajax_me_market_snapshot_save',    'me_ajax_market_snapshot_save' );
 
+function _me_rates_require_current_company(): int {
+	$current_uid = get_current_user_id();
+	$is_root     = crm_is_root( $current_uid );
+
+	$org_id = crm_get_current_user_company_id( $current_uid );
+	if ( ! $is_root && $org_id <= 0 ) {
+		crm_log_company_scope_violation(
+			'rates.scope.user_without_company',
+			'Попытка сохранить курс без привязки к компании',
+			[
+				'user_id'            => $current_uid,
+				'current_company_id' => $org_id,
+			]
+		);
+
+		wp_send_json_error( [ 'message' => 'Аккаунт не привязан к компании.' ], 403 );
+	}
+
+	return $org_id;
+}
+
 function me_ajax_rates_save(): void {
 	check_ajax_referer( 'me_rates_save', 'nonce' );
 
-	if ( ! crm_user_has_permission( get_current_user_id(), 'rates.edit' ) ) {
+	$current_uid = get_current_user_id();
+
+	if ( ! crm_user_has_permission( $current_uid, 'rates.edit' ) ) {
 		wp_send_json_error( [ 'message' => 'Недостаточно прав.' ], 403 );
 	}
 
-	$pair = rates_get_pair( RATES_PAIR_CODE, CRM_DEFAULT_ORG_ID );
+	$org_id = _me_rates_require_current_company();
+
+	$pair = rates_get_pair( RATES_PAIR_CODE, $org_id );
 	if ( ! $pair ) {
 		wp_send_json_error( [ 'message' => 'Активная пара не найдена.' ], 500 );
 	}
@@ -46,7 +71,7 @@ function me_ajax_rates_save(): void {
 		$coeff,
 		RATES_PROVIDER_EX24,
 		RATES_PROVIDER_SOURCE,
-		CRM_DEFAULT_ORG_ID
+		$org_id
 	);
 
 	if ( $row_id === false ) {
@@ -59,6 +84,7 @@ function me_ajax_rates_save(): void {
 		(int) $row_id,
 		[
 			'context' => [
+				'org_id'              => $org_id,
 				'pair'                => RATES_PAIR_CODE,
 				'provider'            => RATES_PROVIDER_EX24,
 				'coefficient'         => $coeff,
@@ -99,9 +125,13 @@ define( 'MARKET_SNAPSHOT_SOURCES', [ 'rapira', 'bitkub', 'binance_th' ] );
 function me_ajax_market_snapshot_save(): void {
 	check_ajax_referer( 'me_market_snapshot_save', 'nonce' );
 
-	if ( ! crm_user_has_permission( get_current_user_id(), 'rates.edit' ) ) {
+	$current_uid = get_current_user_id();
+
+	if ( ! crm_user_has_permission( $current_uid, 'rates.edit' ) ) {
 		wp_send_json_error( [ 'message' => 'Недостаточно прав.' ], 403 );
 	}
+
+	$org_id = _me_rates_require_current_company();
 
 	$source = sanitize_key( $_POST['source'] ?? '' );
 
@@ -144,7 +174,7 @@ function me_ajax_market_snapshot_save(): void {
 		wp_send_json_error( [ 'message' => 'Ошибка получения курса: ' . ( $data['error'] ?? 'неизвестно' ) ], 502 );
 	}
 
-	$row_id = rates_save_market_snapshot( $source, $symbol, $bid, $ask, $mid, CRM_DEFAULT_ORG_ID );
+	$row_id = rates_save_market_snapshot( $source, $symbol, $bid, $ask, $mid, $org_id );
 
 	if ( $row_id === false ) {
 		wp_send_json_error( [ 'message' => 'Ошибка сохранения в базу данных.' ], 500 );
@@ -154,7 +184,7 @@ function me_ajax_market_snapshot_save(): void {
 		"Сохранён рыночный снимок {$source} ({$symbol})",
 		'market_snapshot',
 		(int) $row_id,
-		[ 'context' => [ 'source' => $source, 'symbol' => $symbol, 'bid' => $bid, 'ask' => $ask, 'mid' => $mid ] ]
+		[ 'context' => [ 'org_id' => $org_id, 'source' => $source, 'symbol' => $symbol, 'bid' => $bid, 'ask' => $ask, 'mid' => $mid ] ]
 	);
 
 	// Читаем created_at прямо из БД — чтобы JS получил точное время из MySQL,

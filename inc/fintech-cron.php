@@ -144,8 +144,8 @@ function crm_fintech_cron_notify_telegram( object $order ): bool {
 	}
 
 	$company_id = (int) ( $order->company_id ?? 0 );
-	if ( $company_id <= 0 ) {
-		$company_id = defined( 'CRM_DEFAULT_ORG_ID' ) ? (int) CRM_DEFAULT_ORG_ID : 1;
+	if ( $company_id < 0 ) {
+		return false;
 	}
 
 	$token = crm_get_setting( 'telegram_bot_token', $company_id, '' );

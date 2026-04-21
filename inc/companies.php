@@ -12,13 +12,60 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
+ * Диагностическая запись в PHP error log по company scope.
+ */
+function crm_company_scope_error_log( string $label, array $context = [] ): void {
+	$payload = '';
+	if ( ! empty( $context ) ) {
+		$encoded = wp_json_encode( $context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
+		if ( is_string( $encoded ) && $encoded !== '' ) {
+			$payload = ' ' . $encoded;
+		}
+	}
+
+	error_log( '[CRM_SCOPE] ' . $label . $payload );
+}
+
+/**
+ * Логирует нарушение company scope в error_log и crm_audit_log.
+ */
+function crm_log_company_scope_violation( string $event_code, string $message, array $context = [] ): void {
+	$user_id = isset( $context['user_id'] ) ? (int) $context['user_id'] : get_current_user_id();
+	$org_id  = isset( $context['org_id'] ) ? (int) $context['org_id'] : 0;
+
+	if ( $org_id <= 0 ) {
+		$org_id = isset( $context['record_company_id'] ) ? (int) $context['record_company_id'] : 0;
+	}
+	if ( $org_id <= 0 ) {
+		$org_id = isset( $context['current_company_id'] ) ? (int) $context['current_company_id'] : 0;
+	}
+
+	crm_company_scope_error_log( $event_code, array_merge( [ 'message' => $message ], $context ) );
+
+	crm_log( $event_code, [
+		'category'   => 'security',
+		'level'      => 'warning',
+		'action'     => 'scope',
+		'message'    => $message,
+		'user_id'    => $user_id,
+		'org_id'     => $org_id,
+		'is_success' => false,
+		'context'    => $context,
+	] );
+}
+
+/**
  * All active companies, suitable for dropdowns.
  * Returns array of { id, code, name }.
  */
 function crm_get_all_companies_list(): array {
 	global $wpdb;
 	return $wpdb->get_results(
-		"SELECT id, code, name FROM crm_companies WHERE status = 'active' ORDER BY id ASC"
+		"SELECT id, code, name
+		 FROM crm_companies
+		 WHERE status = 'active'
+		   AND id > 0
+		 ORDER BY id ASC"
 	) ?: [];
 }
 
@@ -64,13 +111,12 @@ function crm_get_companies_for_users( array $user_ids ): array {
 
 /**
  * Assign user to a company (sets as primary, clears previous primary).
- * Also updates crm_user_accounts.default_company_id.
- * Pass $company_id = 0 to remove any company assignment.
+ * Ordinary CRM user must always belong to exactly one active company (> 0).
  *
  * @param  int $user_id
- * @param  int $company_id  Target company; 0 = remove assignment.
+ * @param  int $company_id  Target company; must be > 0 for non-root users.
  * @param  int $assigned_by uid of operator performing the action.
- * @return bool False only when $company_id > 0 and company not found/inactive.
+ * @return bool False when company is invalid/not found/inactive.
  */
 function crm_assign_user_to_company( int $user_id, int $company_id, int $assigned_by = 0 ): bool {
 	if ( crm_is_root( $user_id ) ) {
@@ -78,7 +124,22 @@ function crm_assign_user_to_company( int $user_id, int $company_id, int $assigne
 	}
 	global $wpdb;
 
-	// Clear any current primary for this user.
+	crm_ensure_user_account( $user_id );
+
+	if ( $company_id <= 0 ) {
+		return false;
+	}
+
+	// Verify the company exists and is active.
+	$exists = $wpdb->get_var( $wpdb->prepare(
+		"SELECT id FROM crm_companies WHERE id = %d AND status = 'active'",
+		$company_id
+	) );
+	if ( ! $exists ) {
+		return false;
+	}
+
+	// Clear any current primary for this user only after validation succeeded.
 	$wpdb->update(
 		'crm_user_companies',
 		[ 'is_primary' => 0 ],
@@ -87,65 +148,36 @@ function crm_assign_user_to_company( int $user_id, int $company_id, int $assigne
 		[ '%d', '%d' ]
 	);
 
-	if ( $company_id > 0 ) {
-		// Verify the company exists and is active.
-		$exists = $wpdb->get_var( $wpdb->prepare(
-			"SELECT id FROM crm_companies WHERE id = %d AND status = 'active'",
-			$company_id
-		) );
-		if ( ! $exists ) {
-			return false;
-		}
+	// Upsert row in crm_user_companies.
+	$existing_id = $wpdb->get_var( $wpdb->prepare(
+		"SELECT id FROM crm_user_companies WHERE user_id = %d AND company_id = %d",
+		$user_id, $company_id
+	) );
 
-		// Upsert row in crm_user_companies.
-		$existing_id = $wpdb->get_var( $wpdb->prepare(
-			"SELECT id FROM crm_user_companies WHERE user_id = %d AND company_id = %d",
-			$user_id, $company_id
-		) );
-
-		if ( $existing_id ) {
-			$wpdb->update(
-				'crm_user_companies',
-				[
-					'is_primary'          => 1,
-					'status'              => 'active',
-					'assigned_by_user_id' => $assigned_by ?: null,
-				],
-				[ 'id' => (int) $existing_id ],
-				[ '%d', '%s', '%d' ],
-				[ '%d' ]
-			);
-		} else {
-			$wpdb->insert(
-				'crm_user_companies',
-				[
-					'user_id'             => $user_id,
-					'company_id'          => $company_id,
-					'is_primary'          => 1,
-					'is_company_admin'    => 0,
-					'status'              => 'active',
-					'assigned_by_user_id' => $assigned_by ?: null,
-				],
-				[ '%d', '%d', '%d', '%d', '%s', '%d' ]
-			);
-		}
-
-		// Update the shortcut column in crm_user_accounts.
+	if ( $existing_id ) {
 		$wpdb->update(
-			'crm_user_accounts',
-			[ 'default_company_id' => $company_id ],
-			[ 'user_id' => $user_id ],
-			[ '%d' ],
+			'crm_user_companies',
+			[
+				'is_primary'          => 1,
+				'status'              => 'active',
+				'assigned_by_user_id' => $assigned_by ?: null,
+			],
+			[ 'id' => (int) $existing_id ],
+			[ '%d', '%s', '%d' ],
 			[ '%d' ]
 		);
 	} else {
-		// Remove assignment — reset default_company_id to 1 (seed company).
-		$wpdb->update(
-			'crm_user_accounts',
-			[ 'default_company_id' => 1 ],
-			[ 'user_id' => $user_id ],
-			[ '%d' ],
-			[ '%d' ]
+		$wpdb->insert(
+			'crm_user_companies',
+			[
+				'user_id'             => $user_id,
+				'company_id'          => $company_id,
+				'is_primary'          => 1,
+				'is_company_admin'    => 0,
+				'status'              => 'active',
+				'assigned_by_user_id' => $assigned_by ?: null,
+			],
+			[ '%d', '%d', '%d', '%d', '%s', '%d' ]
 		);
 	}
 
@@ -157,9 +189,10 @@ function crm_assign_user_to_company( int $user_id, int $company_id, int $assigne
 /**
  * Возвращает company_id (= org_id) активного пользователя.
  *
- * uid=1 (root) — возвращает CRM_DEFAULT_ORG_ID (1): root управляет дефолтной компанией.
- * Обычный пользователь — возвращает primary company из crm_user_companies.
- * Нет привязки — возвращает 0 (признак "не назначен", операции должны блокироваться).
+ * uid=1 (root) — возвращает 0: это специальная системная компания root.
+ * Обычный пользователь — возвращает только primary company из crm_user_companies.
+ * Никаких fallback-ов на default_company_id здесь нет и быть не должно.
+ * Нет primary-привязки — возвращает 0 (неконсистентное состояние, доступ должен блокироваться).
  *
  * @param int $user_id  0 = текущий пользователь
  */
@@ -167,8 +200,8 @@ function crm_get_current_user_company_id( int $user_id = 0 ): int {
 	if ( $user_id === 0 ) {
 		$user_id = get_current_user_id();
 	}
-	// Root (uid=1) — мастер-аккаунт, не является участником ни одной компании.
-	// company_id = 0 означает «системный уровень, выше компаний».
+	// Root (uid=1) — мастер-аккаунт со специальной системной компанией 0.
+	// company_id = 0 здесь не означает «без компании», а означает отдельный root-контур.
 	// Код, использующий это значение как org_id, должен явно обрабатывать root через crm_is_root().
 	if ( crm_is_root( $user_id ) ) {
 		return 0;
@@ -177,14 +210,55 @@ function crm_get_current_user_company_id( int $user_id = 0 ): int {
 	if ( $company ) {
 		return (int) $company->id;
 	}
-	// Fallback: crm_user_companies строка могла отсутствовать (пользователь создан до внедрения
-	// company-flow или default_company_id выставлен напрямую). Читаем shortcut-колонку.
-	global $wpdb;
-	$default = (int) $wpdb->get_var( $wpdb->prepare(
-		'SELECT default_company_id FROM crm_user_accounts WHERE user_id = %d',
-		$user_id
-	) );
-	return $default;
+
+	return 0;
+}
+
+/**
+ * Требует валидный company-context для company-scoped страницы.
+ * Root работает в стандартном company-scoped контуре с company_id = 0.
+ */
+function crm_require_company_page_context(): int {
+	$uid = get_current_user_id();
+	$company_id = crm_get_current_user_company_id( $uid );
+
+	if ( crm_is_root( $uid ) ) {
+		return 0;
+	}
+
+	if ( $company_id > 0 ) {
+		return $company_id;
+	}
+
+	crm_log_company_scope_violation(
+		'company.scope.user_without_company',
+		'Попытка открыть company-scoped страницу без привязки к компании',
+		[
+			'user_id'            => $uid,
+			'current_company_id' => 0,
+			'request_uri'        => isset( $_SERVER['REQUEST_URI'] ) ? (string) $_SERVER['REQUEST_URI'] : '',
+		]
+	);
+
+	wp_die(
+		'<p style="font-size:16px">Ваш аккаунт ещё не привязан к компании.</p>'
+		. '<p>Обратитесь к администратору для получения доступа.</p>',
+		'Доступ ограничен — нет компании',
+		[ 'response' => 403 ]
+	);
+}
+
+/**
+ * Может ли пользователь видеть данные компании.
+ */
+function crm_user_can_access_company( int $viewer_user_id, int $company_id ): bool {
+	if ( crm_is_root( $viewer_user_id ) ) {
+		return $company_id === 0;
+	}
+
+	$current_company_id = crm_get_current_user_company_id( $viewer_user_id );
+
+	return $current_company_id > 0 && $company_id > 0 && $current_company_id === $company_id;
 }
 
 /**
@@ -227,6 +301,16 @@ function crm_companies_require_assignment(): void {
 	}
 
 	if ( ! crm_user_has_company_or_root( $uid ) ) {
+		crm_log_company_scope_violation(
+			'company.scope.user_without_company',
+			'Попытка доступа без привязки к компании',
+			[
+				'user_id'            => $uid,
+				'current_company_id' => 0,
+				'request_uri'        => isset( $_SERVER['REQUEST_URI'] ) ? (string) $_SERVER['REQUEST_URI'] : '',
+			]
+		);
+
 		wp_die(
 			'<p style="font-size:16px">Ваш аккаунт ещё не привязан к компании.</p>'
 			. '<p>Обратитесь к администратору для получения доступа.</p>',
@@ -264,6 +348,7 @@ function crm_get_all_companies_full(): array {
 		 FROM crm_companies c
 		 LEFT JOIN crm_user_companies uc
 		        ON uc.company_id = c.id AND uc.is_primary = 1 AND uc.status = 'active'
+		 WHERE c.id > 0
 		 GROUP BY c.id
 		 ORDER BY c.id ASC"
 	) ?: [];

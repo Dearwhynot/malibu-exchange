@@ -17,14 +17,21 @@ if ( ! crm_can_access( 'logs.view' ) ) {
 
 $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
 $nonce          = wp_create_nonce( 'me_logs_list' );
-$_logs_org = crm_is_root( get_current_user_id() ) ? (int) CRM_DEFAULT_ORG_ID : crm_get_current_user_company_id( get_current_user_id() );
-$tz_label  = crm_get_timezone_label( $_logs_org ?: (int) CRM_DEFAULT_ORG_ID );
+$_logs_org      = crm_require_company_page_context();
+$tz_label       = crm_get_timezone_label( $_logs_org );
 
-$filter_users = get_users( [
+$filter_users_args = [
 	'orderby' => 'user_login',
 	'order'   => 'ASC',
 	'fields'  => [ 'ID', 'user_login', 'display_name' ],
-] );
+	'include' => [ -1 ],
+];
+
+$_log_user_ids = crm_get_company_user_ids( $_logs_org );
+$_log_user_ids = array_values( array_filter( array_map( 'intval', $_log_user_ids ), fn( $id ) => $id !== 1 ) );
+$filter_users_args['include'] = ! empty( $_log_user_ids ) ? $_log_user_ids : [ -1 ];
+
+$filter_users = get_users( $filter_users_args );
 
 get_header();
 ?>

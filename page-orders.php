@@ -17,8 +17,10 @@ if ( ! crm_can_access( 'orders.view' ) ) {
 
 $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
 $nonce          = wp_create_nonce( 'me_orders_list' );
-$_orders_org = crm_is_root( get_current_user_id() ) ? (int) CRM_DEFAULT_ORG_ID : crm_get_current_user_company_id( get_current_user_id() );
-$tz_label    = crm_get_timezone_label( $_orders_org ?: (int) CRM_DEFAULT_ORG_ID );
+$create_nonce   = wp_create_nonce( 'me_orders_create' );
+$can_create     = crm_can_access( 'orders.create' );
+$_orders_org    = crm_require_company_page_context();
+$tz_label       = crm_get_timezone_label( $_orders_org );
 
 get_header();
 ?>
@@ -80,6 +82,15 @@ get_header();
 			</div>
 
 			<div class="container-fluid container-fixed-lg mt-4">
+
+				<!-- ─── Действия над таблицей ────────────────────────────────────── -->
+				<div class="d-flex justify-content-end align-items-center m-b-10">
+					<?php if ( $can_create ) : ?>
+					<button type="button" id="btn-open-create-receipt" class="btn btn-primary">
+						<i class="pg-icon m-r-5">add</i>Создать чек
+					</button>
+					<?php endif; ?>
+				</div>
 
 				<!-- ─── Фильтры ─────────────────────────────────────────────────── -->
 				<div class="card card-default m-b-20">
@@ -206,20 +217,39 @@ get_header();
 	</div>
 </div>
 
-<!-- ─── Модальное окно QR-чека ───────────────────────────────────────────────── -->
-<div class="modal fade" id="order-receipt-modal" tabindex="-1" role="dialog"
-     aria-labelledby="order-receipt-title" aria-hidden="true">
-	<div class="modal-dialog" style="max-width:380px;margin:1.75rem auto">
-		<div class="modal-content" style="border-radius:14px;overflow:hidden;border:none;box-shadow:0 8px 40px rgba(0,0,0,.22)">
-			<div id="order-receipt-body">
-				<div class="text-center p-t-30 p-b-30 text-muted">Загрузка…</div>
+<!-- ─── Общий host тостов ───────────────────────────────────────────────────── -->
+<?php get_template_part( 'template-parts/toast-host' ); ?>
+
+<!-- ─── Общая модалка QR-чека ───────────────────────────────────────────────── -->
+<?php get_template_part( 'template-parts/order-receipt' ); ?>
+
+<?php if ( $can_create ) : ?>
+<!-- ─── Модалка «Создать чек» ──────────────────────────────────────────────── -->
+<div class="modal fade" id="create-receipt-modal" tabindex="-1" role="dialog"
+     aria-labelledby="create-receipt-title" aria-hidden="true">
+	<div class="modal-dialog" role="document">
+		<div class="modal-content">
+			<div class="modal-header">
+				<h4 class="modal-title" id="create-receipt-title">Создать чек</h4>
+				<button type="button" class="close" data-bs-dismiss="modal" aria-label="Закрыть">
+					<span aria-hidden="true">&times;</span>
+				</button>
 			</div>
-			<div class="border-0 p-b-20 p-t-5 d-flex justify-content-center">
-				<button type="button" class="btn btn-default btn-sm" data-bs-dismiss="modal">Закрыть</button>
+			<div class="modal-body">
+				<form id="create-receipt-form">
+					<?php get_template_part( 'template-parts/order-create-form' ); ?>
+				</form>
+			</div>
+			<div class="modal-footer">
+				<button type="button" class="btn btn-default" data-bs-dismiss="modal">Отмена</button>
+				<button type="button" id="btn-create-receipt" class="btn btn-primary">
+					<i class="pg-icon m-r-5">add</i>Создать чек
+				</button>
 			</div>
 		</div>
 	</div>
 </div>
+<?php endif; ?>
 
 <!-- ─── Модальное окно деталей ──────────────────────────────────────────────── -->
 <div class="modal fade" id="order-detail-modal" tabindex="-1" role="dialog"
@@ -251,7 +281,7 @@ get_header();
 <?php get_template_part( 'template-parts/overlay' ); ?>
 
 <?php
-add_action( 'wp_footer', function () use ( $nonce ) {
+add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 ?>
 <style>
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -272,29 +302,25 @@ add_action( 'wp_footer', function () use ( $nonce ) {
 .order-detail-value { word-break: break-word; }
 .order-json-pre { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; padding: 10px 14px; font-size: 12px; font-family: monospace; max-height: 200px; overflow-y: auto; white-space: pre; }
 .btn-order-details { padding: 2px 8px; font-size: 11px; }
-/* ── Receipt ──────────────────────────────────────────────────────────────── */
-.receipt-wrap { background:#fff; font-family:'Helvetica Neue',Arial,sans-serif; }
-.receipt-head { background:#0f1b35; color:#fff; text-align:center; padding:30px 24px 22px; }
-.receipt-logo { font-size:20px; font-weight:800; letter-spacing:.14em; line-height:1.2; }
-.receipt-sub  { font-size:10px; opacity:.55; letter-spacing:.18em; text-transform:uppercase; margin-top:5px; }
-.receipt-amount-block { text-align:center; padding:28px 20px 22px; background:#f7f8fa; border-bottom:2px dashed #e0e4ec; }
-.receipt-amount-label { font-size:10px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:#aaa; margin-bottom:8px; }
-.receipt-amount-value { font-size:44px; font-weight:900; color:#0f1b35; line-height:1; letter-spacing:-.01em; }
-.receipt-qr-block { text-align:center; padding:26px 20px 10px; }
-.receipt-qr-block img { width:210px; height:210px; display:block; margin:0 auto; image-rendering:pixelated; border:1px solid #eee; border-radius:4px; padding:6px; background:#fff; }
-.receipt-qr-no { text-align:center; padding:20px; color:#aaa; font-size:12px; }
-.receipt-hint { text-align:center; font-size:12px; color:#777; padding:12px 30px 22px; line-height:1.65; }
-.receipt-divider { border:none; border-top:2px dashed #e0e4ec; margin:0 20px; }
-.receipt-meta { padding:16px 24px 6px; }
-.receipt-meta-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
-.receipt-meta-row .rm-label { font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#aaa; }
-.receipt-meta-row .rm-value { font-size:12px; font-family:monospace; color:#333; text-align:right; word-break:break-all; max-width:220px; }
-.receipt-bottom { text-align:center; padding:10px 20px 22px; }
-.receipt-tagline { display:inline-block; font-size:10px; color:#bbb; letter-spacing:.08em; }
 /* ── Action dropdown (matches users page) ─────────────────────────────────── */
 .orders-act .dropdown-menu { min-width:160px; font-size:13px; }
 .orders-act .btn-xs { line-height:1.4; }
 .orders-act .pg-icon { font-size:16px; vertical-align:middle; }
+/* ── Строка в состоянии проверки ──────────────────────────────────────────── */
+#orders-table tr.row-checking { position:relative; }
+#orders-table tr.row-checking > td { opacity:.55; transition:opacity .2s ease; }
+#orders-table tr.row-checking > td:first-child::after {
+	content:''; position:absolute; left:0; top:0; bottom:0; width:3px;
+	background: linear-gradient(180deg, #1565c0 0%, #42a5f5 50%, #1565c0 100%);
+	background-size:100% 200%; animation: row-checking-bar 1.1s ease-in-out infinite;
+}
+@keyframes row-checking-bar { 0%{background-position:0 0} 100%{background-position:0 -200%} }
+#orders-table tr.row-flash > td { animation: row-flash 1.4s ease-out 1; }
+@keyframes row-flash {
+	0%   { background-color: #fff8c4; }
+	60%  { background-color: #fff8c4; }
+	100% { background-color: transparent; }
+}
 </style>
 
 <script>
@@ -303,6 +329,11 @@ add_action( 'wp_footer', function () use ( $nonce ) {
 
 	var AJAX_URL = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
 	var NONCE    = '<?php echo esc_js( $nonce ); ?>';
+
+	// Конфигурируем общий чек — задаём контекст проверки статуса
+	if (window.MalibuOrderReceipt && MalibuOrderReceipt.configure) {
+		MalibuOrderReceipt.configure({ ajaxUrl: AJAX_URL, nonce: NONCE });
+	}
 
 	var currentPage = 1;
 	var totalPages  = 1;
@@ -365,6 +396,10 @@ add_action( 'wp_footer', function () use ( $nonce ) {
 				renderTable(res.data.rows);
 				renderStats(res.data.total, res.data.page, res.data.per_page);
 				renderPagination(res.data.total_pages, res.data.page);
+				if (_flashMerchantId) {
+					flashRowByMerchantId(_flashMerchantId);
+					_flashMerchantId = null;
+				}
 			} else {
 				$('#orders-tbody').html('<tr><td colspan="10" class="text-center text-danger p-t-20 p-b-20">' + escHtml(res.data ? res.data.message : 'Ошибка') + '</td></tr>');
 			}
@@ -394,6 +429,9 @@ add_action( 'wp_footer', function () use ( $nonce ) {
 			var paidAt = r.paid_at ? formatDate(r.paid_at) : '<span class="text-muted">—</span>';
 			var source = r.source_channel ? '<span class="badge badge-light">' + escHtml(r.source_channel) + '</span>' : '<span class="text-muted">—</span>';
 
+			var qrBlocked    = ['declined', 'cancelled', 'expired', 'error'].indexOf(r.status_code) !== -1;
+			var checkAllowed = ['created', 'pending'].indexOf(r.status_code) !== -1;
+
 			html += '<tr>'
 				+ '<td class="text-muted" style="font-size:11px">#' + escHtml(r.id) + '</td>'
 				+ '<td>' + formatDate(r.created_at) + '</td>'
@@ -411,7 +449,8 @@ add_action( 'wp_footer', function () use ( $nonce ) {
 			+ '</button>'
 			+ '<ul class="dropdown-menu dropdown-menu-end">'
 			+ '<li><a class="dropdown-item btn-order-details" href="#" data-id="' + escHtml(r.id) + '"><i class="pg-icon m-r-5">see</i> Детали</a></li>'
-			+ '<li><a class="dropdown-item btn-order-qr" href="#" data-id="' + escHtml(r.id) + '"><i class="pg-icon m-r-5">picture</i> QR-чек</a></li>'
+			+ (!qrBlocked ? '<li><a class="dropdown-item btn-order-qr" href="#" data-id="' + escHtml(r.id) + '"><i class="pg-icon m-r-5">picture</i> QR-чек</a></li>' : '')
+			+ (checkAllowed ? '<li><a class="dropdown-item btn-order-check" href="#" data-id="' + escHtml(r.id) + '"><i class="pg-icon m-r-5">tick_circle</i> Проверить</a></li>' : '')
 			+ '</ul>'
 			+ '</div>'
 			+ '</td>'
@@ -419,6 +458,16 @@ add_action( 'wp_footer', function () use ( $nonce ) {
 		});
 
 		$('#orders-tbody').html(html);
+
+		// Инициализируем дропдауны с fixed-стратегией Popper, чтобы меню не обрезалось
+		// overflow:auto от .table-responsive (Bootstrap 5 clips positioned descendants)
+		$('#orders-tbody [data-bs-toggle="dropdown"]').each(function () {
+			bootstrap.Dropdown.getOrCreateInstance(this, {
+				popperConfig: function (config) {
+					return $.extend(true, config, { strategy: 'fixed' });
+				},
+			});
+		});
 	}
 
 	function renderStats(total, page, perPage) {
@@ -559,89 +608,82 @@ add_action( 'wp_footer', function () use ( $nonce ) {
 		.always(function () { $btn.removeClass('disabled'); });
 	});
 
-	// ── QR-чек ───────────────────────────────────────────────────────────────
+	// ── QR-чек существующего ордера ──────────────────────────────────────────
 
-	var _receiptModal = null;
-	function getReceiptModal() {
-		if (!_receiptModal) { _receiptModal = new bootstrap.Modal(document.getElementById('order-receipt-modal')); }
-		return _receiptModal;
+	function receiptStatusChangeHandler(info) {
+		// Вызывается когда внутри чека статус изменился
+		_flashMerchantId = (CTX_merchant_id_lookup[info.id] || null);
+		fetchOrders(currentPage);
 	}
 
-	function formatRub(val) {
-		if (val === null || val === undefined) return '—';
-		var n = parseFloat(val);
-		// format with space thousands separator and comma decimal (Russian locale)
-		var parts = n.toFixed(2).split('.');
-		parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
-		return parts[0] + ',' + parts[1] + '\u00a0₽';
-	}
-
-	function formatDateRu(dt) {
-		if (!dt) return '—';
-		var d = dt.split(' ')[0]; // "2026-04-14"
-		var p = d.split('-');
-		return p[2] + '.' + p[1] + '.' + p[0];
-	}
+	// Маппинг id → merchant_order_id, чтобы после смены статуса подсветить строку
+	var CTX_merchant_id_lookup = {};
 
 	function showQR(id) {
-		$('#order-receipt-body').html('<div class="text-center p-t-30 p-b-30 text-muted">Загрузка…</div>');
-		getReceiptModal().show();
+		MalibuOrderReceipt.showModalLoading();
 
 		$.get(AJAX_URL, { action: 'me_orders_get_qr', _nonce: NONCE, id: id })
 		.done(function (res) {
-			if (res.success) { renderReceipt(res.data); }
-			else { $('#order-receipt-body').html('<div class="text-center text-danger p-t-20 p-b-20">' + escHtml(res.data ? res.data.message : 'Ошибка') + '</div>'); }
+			if (res.success) {
+				CTX_merchant_id_lookup[res.data.id] = res.data.merchant_order_id;
+				MalibuOrderReceipt.showModal(res.data, {
+					onStatusChange: receiptStatusChangeHandler,
+				});
+			}
+			else { MalibuOrderReceipt.showModalError(res.data ? res.data.message : 'Ошибка'); }
 		})
-		.fail(function () { $('#order-receipt-body').html('<div class="text-center text-danger p-t-20 p-b-20">Сетевая ошибка.</div>'); });
+		.fail(function () { MalibuOrderReceipt.showModalError('Сетевая ошибка.'); });
 	}
 
-	function renderReceipt(d) {
-		var amountStr = d.payment_amount_value !== null ? formatRub(d.payment_amount_value) : '—';
-		var dateStr   = formatDateRu(d.created_at);
+	// ── Создать чек через модалку ─────────────────────────────────────────────
 
-		var qrBlock = d.qr_url
-			? '<img src="' + escHtml(d.qr_url) + '" alt="QR-код для оплаты">'
-			: '<div class="receipt-qr-no">QR-код недоступен</div>';
-
-		var html = '<div class="receipt-wrap">'
-
-			// Header
-			+ '<div class="receipt-head">'
-			+ '<div class="receipt-logo">MALIBU EXCHANGE</div>'
-			+ '<div class="receipt-sub">Платёжный счёт</div>'
-			+ '</div>'
-
-			// Amount
-			+ '<div class="receipt-amount-block">'
-			+ '<div class="receipt-amount-label">К оплате</div>'
-			+ '<div class="receipt-amount-value">' + escHtml(amountStr) + '</div>'
-			+ '</div>'
-
-			// QR
-			+ '<div class="receipt-qr-block">' + qrBlock + '</div>'
-
-			// Hint
-			+ '<div class="receipt-hint">'
-			+ 'Отсканируйте QR-код камерой телефона<br>'
-			+ 'и переведите <strong>точную сумму</strong> по реквизитам'
-			+ '</div>'
-
-			// Meta
-			+ '<hr class="receipt-divider">'
-			+ '<div class="receipt-meta">'
-			+ '<div class="receipt-meta-row"><span class="rm-label">Заказ</span><span class="rm-value">' + escHtml(d.merchant_order_id) + '</span></div>'
-			+ '<div class="receipt-meta-row"><span class="rm-label">Дата</span><span class="rm-value">' + escHtml(dateStr) + '</span></div>'
-			+ '</div>'
-
-			// Bottom
-			+ '<div class="receipt-bottom">'
-			+ '<span class="receipt-tagline">malibu.exchange</span>'
-			+ '</div>'
-
-			+ '</div>';
-
-		$('#order-receipt-body').html(html);
+	var CREATE_NONCE = '<?php echo esc_js( $create_nonce ); ?>';
+	var _createModal = null;
+	function getCreateModal() {
+		if (!_createModal) { _createModal = new bootstrap.Modal(document.getElementById('create-receipt-modal')); }
+		return _createModal;
 	}
+
+	$(document).on('click', '#btn-open-create-receipt', function () {
+		MalibuOrderCreate.reset();
+		getCreateModal().show();
+		setTimeout(function () { $('#moc-amount-usdt').trigger('focus'); }, 250);
+	});
+
+	$(document).on('click', '#btn-create-receipt', function () {
+		var $btn = $(this);
+		$btn.prop('disabled', true).html('<i class="pg-icon m-r-5">refresh</i>Создаём…');
+
+		MalibuOrderCreate.submitFromForm({
+			ajaxUrl: AJAX_URL,
+			nonce:   CREATE_NONCE,
+			onSuccess: function (d) {
+				getCreateModal().hide();
+				CTX_merchant_id_lookup[d.order_db_id] = d.merchant_order_id;
+				MalibuOrderReceipt.showModal({
+					id:                   d.order_db_id,
+					status_code:          'created',
+					merchant_order_id:    d.merchant_order_id,
+					payment_amount_value: d.payment_amount_rub,
+					qr_url:               d.qr_url,
+					created_at:           d.created_at || new Date().toISOString().slice(0, 19).replace('T', ' '),
+				}, {
+					onStatusChange: receiptStatusChangeHandler,
+				});
+				fetchOrders(1);
+			},
+			onEnd: function () {
+				$btn.prop('disabled', false).html('<i class="pg-icon m-r-5">add</i>Создать чек');
+			},
+		});
+	});
+
+	$(document).on('keypress', '#moc-amount-usdt, #moc-description', function (e) {
+		if (e.which === 13 && $('#create-receipt-modal').hasClass('show')) {
+			e.preventDefault();
+			$('#btn-create-receipt').trigger('click');
+		}
+	});
 
 	// ── Обработчики ───────────────────────────────────────────────────────────
 
@@ -665,6 +707,66 @@ add_action( 'wp_footer', function () use ( $nonce ) {
 
 	$(document).on('click', '.btn-order-details', function (e) { e.preventDefault(); showDetails($(this).data('id')); });
 	$(document).on('click', '.btn-order-qr',      function (e) { e.preventDefault(); showQR($(this).data('id')); });
+
+	// ── Быстрая проверка оплаты из меню ───────────────────────────────────────
+
+	function toast(msg, type) { if (window.MalibuToast) window.MalibuToast.show(msg, type); }
+
+	// Подсветка строки после обновления — привязываемся по merchant_order_id,
+	// т.к. DOM-элемент после fetchOrders пересоздаётся.
+	var _flashMerchantId = null;
+
+	function flashRowByMerchantId(mid) {
+		if (!mid) return;
+		$('#orders-tbody tr').each(function () {
+			var $tr = $(this);
+			if ($tr.find('td').eq(3).text().trim() === mid) {
+				$tr.addClass('row-flash');
+				setTimeout(function () { $tr.removeClass('row-flash'); }, 1500);
+			}
+		});
+	}
+
+	$(document).on('click', '.btn-order-check', function (e) {
+		e.preventDefault();
+		var $a = $(this);
+		var id = $a.data('id');
+		if (!id || $a.hasClass('disabled')) return;
+
+		$a.addClass('disabled');
+
+		// Закрываем открытый дропдаун строки программно (чтобы UI был чистый)
+		var $toggle = $a.closest('.dropdown').find('[data-bs-toggle="dropdown"]');
+		try { bootstrap.Dropdown.getInstance($toggle.get(0)).hide(); } catch (_) {}
+
+		// Визуальный индикатор на строке
+		var $row = $a.closest('tr');
+		var mid  = $row.find('td').eq(3).text().trim();
+		$row.addClass('row-checking');
+
+		$.post(AJAX_URL, { action: 'me_orders_check_status', _nonce: NONCE, id: id, intent: 'check' })
+		.done(function (res) {
+			if (!res || !res.success) {
+				toast((res && res.data && res.data.message) ? res.data.message : 'Ошибка проверки.', 'danger');
+				return;
+			}
+			var ns   = res.data.new_status;
+			var type = ns === 'paid' ? 'success'
+				: (['declined','cancelled','expired','error'].indexOf(ns) !== -1) ? 'warning'
+				: 'info';
+			toast(res.data.message || 'Статус обновлён.', type);
+
+			if (res.data.changed) {
+				_flashMerchantId = mid;
+				fetchOrders(currentPage);
+			}
+		})
+		.fail(function () { toast('Сетевая ошибка при проверке статуса.', 'danger'); })
+		.always(function () {
+			$row.removeClass('row-checking');
+			$a.removeClass('disabled');
+		});
+	});
 
 	fetchOrders(1);
 

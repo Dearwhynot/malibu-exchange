@@ -79,10 +79,26 @@ function crm_fintech_callback_handler( WP_REST_Request $request ): WP_REST_Respo
 		return new WP_REST_Response( 'Unknown provider', 400 );
 	}
 
+	$callback_company_id = _crm_fintech_detect_callback_company_id( $provider, $payload );
+	if ( $callback_company_id === null ) {
+		_crm_fintech_save_callback_record( $provider, $raw_body, $headers, null, 'company_not_resolved', 400, 'Company scope was not resolved for callback' );
+		crm_log( 'payment.callback.company_not_resolved', [
+			'category'    => 'callbacks',
+			'level'       => 'warning',
+			'action'      => 'callback',
+			'message'     => 'Callback отклонён: не удалось определить компанию ордера',
+			'target_type' => 'payment_order',
+			'is_success'  => false,
+			'context'     => [ 'provider' => $provider ],
+		] );
+
+		return new WP_REST_Response( 'Company scope not resolved', 400 );
+	}
+
 	// ── Проверка подписи (Kanyon) ────────────────────────────────────────────
 	$signature_valid = null;
 	if ( $provider === 'kanyon' ) {
-		$signature_valid = _crm_fintech_verify_kanyon_signature( $headers, $raw_body );
+		$signature_valid = _crm_fintech_verify_kanyon_signature( $headers, $raw_body, $callback_company_id );
 		if ( $signature_valid === false ) {
 			_crm_fintech_save_callback_record( $provider, $raw_body, $headers, null, 'invalid_signature', 400, 'Invalid signature', false );
 			crm_log( 'payment.callback.invalid_signature', [
@@ -91,6 +107,7 @@ function crm_fintech_callback_handler( WP_REST_Request $request ): WP_REST_Respo
 				'action'      => 'callback',
 				'message'     => 'Невалидная подпись Kanyon callback',
 				'target_type' => 'payment_order',
+				'org_id'      => $callback_company_id,
 				'is_success'  => false,
 				'context'     => [ 'provider' => $provider ],
 			] );
@@ -121,6 +138,7 @@ function crm_fintech_callback_handler( WP_REST_Request $request ): WP_REST_Respo
 		'action'      => 'callback',
 		'message'     => 'Получен callback от платёжного провайдера',
 		'target_type' => 'payment_order',
+		'org_id'      => $callback_company_id,
 		'context'     => [
 			'provider'          => $provider,
 			'merchant_order_id' => $event['merchantOrderId'] ?? '',
@@ -144,9 +162,13 @@ function crm_fintech_callback_handler( WP_REST_Request $request ): WP_REST_Respo
 
 // ─── Вспомогательные функции ─────────────────────────────────────────────────
 
-function _crm_fintech_callback_log( string $label, $payload = null ): void {
+function _crm_fintech_callback_log( string $label, $payload = null, int $company_id = 0 ): void {
 	// debug-логирование — включается только если fintech_debug = '1' в crm_settings
-	$debug = crm_get_setting( 'fintech_debug', defined( 'CRM_DEFAULT_ORG_ID' ) ? CRM_DEFAULT_ORG_ID : 1, '0' );
+	if ( $company_id < 0 ) {
+		return;
+	}
+
+	$debug = crm_get_setting( 'fintech_debug', $company_id, '0' );
 	if ( $debug !== '1' ) {
 		return;
 	}
@@ -200,27 +222,61 @@ function _crm_fintech_detect_provider( array $payload ): string {
 	return 'unknown';
 }
 
+function _crm_fintech_detect_callback_company_id( string $provider, array $payload ): ?int {
+	global $wpdb;
+
+	$event             = _crm_fintech_normalize_event( $provider, $payload );
+	$merchant_order_id = trim( (string) ( $event['merchantOrderId'] ?? '' ) );
+	$provider_order_id = trim( (string) ( $event['orderId'] ?? '' ) );
+
+	if ( $merchant_order_id !== '' ) {
+		$company_id = $wpdb->get_var( $wpdb->prepare(
+			'SELECT company_id FROM crm_fintech_payment_orders WHERE merchant_order_id = %s LIMIT 1',
+			$merchant_order_id
+		) );
+		if ( $company_id !== null ) {
+			return (int) $company_id;
+		}
+	}
+
+	if ( $provider_order_id !== '' ) {
+		$company_id = $wpdb->get_var( $wpdb->prepare(
+			'SELECT company_id FROM crm_fintech_payment_orders WHERE provider_order_id = %s LIMIT 1',
+			$provider_order_id
+		) );
+		if ( $company_id !== null ) {
+			return (int) $company_id;
+		}
+	}
+
+	return null;
+}
+
 /**
  * Проверка подписи Kanyon.
  * Возвращает true/false или null если проверка отключена.
  */
-function _crm_fintech_verify_kanyon_signature( array $headers, string $raw_body ): ?bool {
+function _crm_fintech_verify_kanyon_signature( array $headers, string $raw_body, int $company_id ): ?bool {
+	if ( $company_id < 0 ) {
+		return false;
+	}
+
 	// Проверка включается через crm_settings: fintech_kanyon_verify_signature = '1'
-	$verify = crm_get_setting( 'fintech_kanyon_verify_signature', defined( 'CRM_DEFAULT_ORG_ID' ) ? CRM_DEFAULT_ORG_ID : 1, '0' );
+	$verify = crm_get_setting( 'fintech_kanyon_verify_signature', $company_id, '0' );
 	if ( $verify !== '1' ) {
 		return null; // проверка отключена
 	}
 
 	$payment_sign = _crm_fintech_header( $headers, 'payment-sign' );
 	if ( $payment_sign === null || trim( $payment_sign ) === '' ) {
-		_crm_fintech_callback_log( 'Missing payment-sign header' );
+		_crm_fintech_callback_log( 'Missing payment-sign header', null, $company_id );
 
 		return false;
 	}
 
-	$public_key_pem = crm_get_setting( 'fintech_kanyon_public_key_pem', defined( 'CRM_DEFAULT_ORG_ID' ) ? CRM_DEFAULT_ORG_ID : 1, '' );
+	$public_key_pem = crm_get_setting( 'fintech_kanyon_public_key_pem', $company_id, '' );
 	if ( trim( $public_key_pem ) === '' ) {
-		_crm_fintech_callback_log( 'Kanyon public key is empty' );
+		_crm_fintech_callback_log( 'Kanyon public key is empty', null, $company_id );
 
 		return false;
 	}
@@ -248,11 +304,14 @@ function _crm_fintech_normalize_event( string $provider, array $payload ): array
 		return _crm_fintech_normalize_doverka( $payload );
 	}
 
-	return [ 'provider' => 'unknown', 'orderId' => '', 'merchantOrderId' => '', 'status' => null, 'providerStatus' => null, 'paymentAmount' => null, 'orderAmount' => null, 'orderCurrency' => null, 'paymentCurrency' => null, 'qrcId' => null, 'payload' => null, 'raw' => $payload ];
+	return [ 'provider' => 'unknown', 'orderId' => '', 'merchantOrderId' => '', 'status' => null, 'providerStatus' => null, 'paymentAmount' => null, 'orderAmount' => null, 'orderCurrency' => null, 'paymentCurrency' => null, 'qrcId' => null, 'payload' => null, 'externalOrderId' => null, 'raw' => $payload ];
 }
 
 function _crm_fintech_normalize_kanyon( array $payload ): array {
 	$order = $payload['order'] ?? [];
+	$payment_details = isset( $order['paymentInfo']['paymentDetails'] ) && is_array( $order['paymentInfo']['paymentDetails'] )
+		? $order['paymentInfo']['paymentDetails']
+		: [];
 
 	return [
 		'provider'       => 'kanyon',
@@ -266,6 +325,7 @@ function _crm_fintech_normalize_kanyon( array $payload ): array {
 		'paymentCurrency'=> $order['paymentCurrency'] ?? null,
 		'qrcId'          => $order['paymentInfo']['qrc']['qrcId'] ?? null,
 		'payload'        => $order['paymentInfo']['qrc']['payload'] ?? null,
+		'externalOrderId'=> $order['externalOrderId'] ?? ( $payment_details['externalId'] ?? null ),
 		'raw'            => $payload,
 	];
 }
@@ -291,6 +351,7 @@ function _crm_fintech_normalize_doverka( array $payload ): array {
 		'paymentCurrency'=> 'RUB',
 		'qrcId'          => null,
 		'payload'        => $payment['link'] ?? null,
+		'externalOrderId'=> $payment['id'] ?? null,
 		'raw'            => $payload,
 	];
 }

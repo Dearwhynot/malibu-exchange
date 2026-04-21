@@ -118,6 +118,21 @@ function me_ajax_save_user(): void {
 			? (int) ( $_POST['company_id'] ?? 0 )
 			: crm_get_current_user_company_id( $current_uid );
 
+		if ( $company_id <= 0 ) {
+			_me_ajax_error( 'У пользователя должна быть назначена компания.' );
+		}
+
+		if ( crm_is_root( $current_uid ) ) {
+			global $wpdb;
+			$company_exists = (int) $wpdb->get_var( $wpdb->prepare(
+				"SELECT id FROM crm_companies WHERE id = %d AND status = 'active' LIMIT 1",
+				$company_id
+			) );
+			if ( $company_exists <= 0 ) {
+				_me_ajax_error( 'Компания не найдена.' );
+			}
+		}
+
 		$result = wp_insert_user( [
 			'user_login'   => $user_login,
 			'user_email'   => $user_email,
@@ -146,16 +161,16 @@ function me_ajax_save_user(): void {
 			'note'             => $note,
 		] );
 
-		// Назначить в компанию (только uid=1, только если company_id > 0)
+		// Назначить в компанию — у обычного CRM-пользователя она должна быть ровно одна.
 		$company_name = '';
-		if ( $company_id > 0 ) {
-			crm_assign_user_to_company( $user_id, $company_id, $current_uid );
-			global $wpdb;
-			$company_name = (string) $wpdb->get_var( $wpdb->prepare(
-				"SELECT name FROM crm_companies WHERE id = %d",
-				$company_id
-			) );
+		if ( ! crm_assign_user_to_company( $user_id, $company_id, $current_uid ) ) {
+			_me_ajax_error( 'Не удалось назначить компанию пользователю.' );
 		}
+		global $wpdb;
+		$company_name = (string) $wpdb->get_var( $wpdb->prepare(
+			"SELECT name FROM crm_companies WHERE id = %d",
+			$company_id
+		) );
 
 		// CRM-роли (назначать может только пользователь с users.assign_roles)
 		if ( crm_user_has_permission( $current_uid, 'users.assign_roles' ) ) {
@@ -168,7 +183,7 @@ function me_ajax_save_user(): void {
 			[ 'context' => [
 				'created_by'  => $current_uid,
 				'status'      => $crm_status,
-				'company_id'  => $company_id ?: null,
+				'company_id'  => $company_id,
 				'company_name' => $company_name ?: null,
 			] ]
 		);

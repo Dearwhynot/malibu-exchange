@@ -16,8 +16,9 @@ if ( ! crm_user_has_permission( get_current_user_id(), 'rates.view' ) ) {
 }
 
 // ─── Данные пары и коэффициента ──────────────────────────────────────────────
-$pair  = rates_get_pair( RATES_PAIR_CODE, CRM_DEFAULT_ORG_ID );
-$coeff = $pair ? rates_get_coefficient( (int) $pair->id, RATES_PROVIDER_EX24, RATES_PROVIDER_SOURCE ) : 0.05;
+$rates_org_id = crm_require_company_page_context();
+$pair         = rates_get_pair( RATES_PAIR_CODE, $rates_org_id );
+$coeff        = $pair ? rates_get_coefficient( (int) $pair->id, RATES_PROVIDER_EX24, RATES_PROVIDER_SOURCE ) : 0.05;
 
 // Текущие курсы Ex24 — только для отображения, кэш 5 мин, в базу не пишем
 $ex24      = rates_get_ex24_cached( RATES_PROVIDER_SOURCE );
@@ -54,12 +55,12 @@ $binance_th = rates_get_binance_th_cached();
 $cbr        = rates_get_cbr_usd_cached();
 
 // ─── Последние сохранённые снимки из crm_market_snapshots_usdt ───────────────
-$last_rapira     = rates_get_last_market_snapshot( 'rapira' );
-$last_bitkub     = rates_get_last_market_snapshot( 'bitkub' );
-$last_binance_th = rates_get_last_market_snapshot( 'binance_th' );
+$last_rapira     = rates_get_last_market_snapshot( 'rapira', $rates_org_id );
+$last_bitkub     = rates_get_last_market_snapshot( 'bitkub', $rates_org_id );
+$last_binance_th = rates_get_last_market_snapshot( 'binance_th', $rates_org_id );
 
 // ─── История снимков для таблицы ─────────────────────────────────────────────
-$market_history = rates_get_all_market_history( 100 );
+$market_history = rates_get_all_market_history( 100, $rates_org_id );
 
 // ─── Заголовок: энкодируем для JS ────────────────────────────────────────────
 $nonce_save        = wp_create_nonce( 'me_rates_save' );

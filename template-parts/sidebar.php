@@ -20,6 +20,10 @@ if (!defined('ABSPATH')) {
 $theme_uri = get_template_directory_uri();
 $current_id = get_queried_object_id();
 $vendor_img_uri = $theme_uri . '/vendor/pages/assets/img';
+$is_root = is_user_logged_in() && function_exists('crm_is_root') && crm_is_root(get_current_user_id());
+$dashboard_url = function_exists('malibu_exchange_get_dashboard_url') ? malibu_exchange_get_dashboard_url() : home_url('/dashboard/');
+$company_dashboard_url = function_exists('malibu_exchange_get_company_dashboard_url') ? malibu_exchange_get_company_dashboard_url() : home_url('/dashboard/');
+$root_dashboard_url = function_exists('malibu_exchange_get_root_dashboard_url') ? malibu_exchange_get_root_dashboard_url() : home_url('/root-dashboard/');
 ?>
 
 <nav class="page-sidebar" data-pages="sidebar">
@@ -64,12 +68,27 @@ $vendor_img_uri = $theme_uri . '/vendor/pages/assets/img';
     <div class="sidebar-menu">
         <!-- BEGIN SIDEBAR MENU ITEMS-->
         <ul class="menu-items">
+            <?php if ($is_root) : ?>
             <li class="m-t-20">
-                <a href="<?php echo esc_url(home_url('/')); ?>">
-                    <span class="title">Дашбоард</span>
+                <a href="<?php echo esc_url($root_dashboard_url); ?>">
+                    <span class="title">Сводка</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">chart_alt</i></span>
+            </li>
+            <li class="">
+                <a href="<?php echo esc_url($company_dashboard_url); ?>">
+                    <span class="title">Дашборд</span>
                 </a>
                 <span class="icon-thumbnail"><i class="pg-icon">home</i></span>
             </li>
+            <?php else : ?>
+            <li class="m-t-20">
+                <a href="<?php echo esc_url($dashboard_url); ?>">
+                    <span class="title">Дашборд</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">home</i></span>
+            </li>
+            <?php endif; ?>
             <li class="">
                 <a href="<?php echo esc_url(home_url('/rates/')); ?>">
                     <span class="title">Курсы</span>

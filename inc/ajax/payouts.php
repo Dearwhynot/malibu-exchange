@@ -22,6 +22,28 @@ function _me_payouts_check_view(): void {
 	}
 }
 
+function _me_payouts_require_current_company(): int {
+	$uid        = get_current_user_id();
+	$is_root    = crm_is_root( $uid );
+
+	$company_id = crm_get_current_user_company_id( $uid );
+
+	if ( ! $is_root && $company_id <= 0 ) {
+		crm_log_company_scope_violation(
+			'payouts.scope.user_without_company',
+			'Попытка доступа к выплатам без привязки к компании',
+			[
+				'user_id'            => $uid,
+				'current_company_id' => $company_id,
+			]
+		);
+
+		wp_send_json_error( [ 'message' => 'Аккаунт не привязан к компании.' ], 403 );
+	}
+
+	return $company_id;
+}
+
 // ─── 1. Список выплат ─────────────────────────────────────────────────────────
 
 add_action( 'wp_ajax_me_payouts_list', 'me_ajax_payouts_list' );
@@ -43,21 +65,14 @@ function me_ajax_payouts_list(): void {
 	$offset = ( $page - 1 ) * $per_page;
 
 	// ── Company scope ─────────────────────────────────────────────────────────
-	$uid = get_current_user_id();
-	if ( crm_is_root( $uid ) ) {
-		$company_id = (int) ( $_POST['company_id'] ?? 0 );
-	} else {
-		$company_id = crm_get_current_user_company_id( $uid );
-	}
+	$company_id = _me_payouts_require_current_company();
 
 	// ── WHERE ─────────────────────────────────────────────────────────────────
 	$where  = 'WHERE 1=1';
 	$params = [];
 
-	if ( $company_id > 0 ) {
-		$where   .= ' AND p.`company_id` = %d';
-		$params[] = $company_id;
-	}
+	$where   .= ' AND p.`company_id` = %d';
+	$params[] = $company_id;
 
 	// ── Запрос с именем пользователя ──────────────────────────────────────────
 	// phpcs:disable WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
@@ -78,7 +93,7 @@ function me_ajax_payouts_list(): void {
 	$rows       = $wpdb->get_results( $wpdb->prepare( $data_sql, $all_params ) );
 	// phpcs:enable
 
-	$org_id = ( $company_id > 0 ) ? $company_id : (int) CRM_DEFAULT_ORG_ID;
+	$org_id = $company_id;
 	$items  = [];
 	foreach ( (array) $rows as $row ) {
 		$items[] = _me_payouts_format_row( $row, $org_id );
@@ -132,18 +147,8 @@ function me_ajax_payouts_create(): void {
 	}
 
 	// ── Company scope ─────────────────────────────────────────────────────────
-	$uid = get_current_user_id();
-	if ( crm_is_root( $uid ) ) {
-		$company_id = (int) ( $_POST['company_id'] ?? CRM_DEFAULT_ORG_ID );
-		if ( $company_id <= 0 ) {
-			$company_id = (int) CRM_DEFAULT_ORG_ID;
-		}
-	} else {
-		$company_id = crm_get_current_user_company_id( $uid );
-		if ( $company_id <= 0 ) {
-			wp_send_json_error( [ 'message' => 'Пользователь не привязан к компании.' ] );
-		}
-	}
+	$uid        = get_current_user_id();
+	$company_id = _me_payouts_require_current_company();
 	// ── Загрузка квитанции (опционально) ─────────────────────────────────────
 	$receipt_filename = null;
 
@@ -247,8 +252,7 @@ function me_ajax_payouts_stats(): void {
 		wp_send_json_error( [ 'message' => 'Нарушена безопасность запроса.' ], 403 );
 	}
 
-	$uid        = get_current_user_id();
-	$company_id = crm_is_root( $uid ) ? (int) CRM_DEFAULT_ORG_ID : crm_get_current_user_company_id( $uid );
+	$company_id = _me_payouts_require_current_company();
 
 	wp_send_json_success( _me_payouts_get_stats( $company_id ) );
 }
@@ -262,8 +266,16 @@ function me_ajax_payouts_stats(): void {
 function _me_payouts_get_stats( int $company_id ): array {
 	global $wpdb;
 
-	$company_cond_orders  = $company_id > 0 ? $wpdb->prepare( ' AND company_id = %d', $company_id ) : '';
-	$company_cond_payouts = $company_id > 0 ? $wpdb->prepare( ' AND company_id = %d', $company_id ) : '';
+	if ( $company_id < 0 ) {
+		return [
+			'total_paid' => 0.0,
+			'total_out'  => 0.0,
+			'ep_debt'    => 0.0,
+		];
+	}
+
+	$company_cond_orders  = $wpdb->prepare( ' AND company_id = %d', $company_id );
+	$company_cond_payouts = $wpdb->prepare( ' AND company_id = %d', $company_id );
 
 	// phpcs:disable WordPress.DB.PreparedSQL.NotPrepared
 	// Суммируем USDT (amount_asset_value) по paid-ордерам — именно это должен выплатить ЭП
@@ -280,7 +292,7 @@ function _me_payouts_get_stats( int $company_id ): array {
 	);
 	// phpcs:enable
 
-	$ep_debt = max( 0.0, $total_paid - $total_out );
+	$ep_debt = $total_paid - $total_out; // отрицательное = переплата
 
 	return [
 		'total_paid' => round( $total_paid, 2 ),
@@ -292,7 +304,7 @@ function _me_payouts_get_stats( int $company_id ): array {
 /**
  * Форматировать строку выплаты для JSON-ответа.
  */
-function _me_payouts_format_row( object $row, int $org_id = 1 ): array {
+function _me_payouts_format_row( object $row, int $org_id = 0 ): array {
 	$receipt_url = null;
 	if ( ! empty( $row->receipt_filename ) ) {
 		$safe = preg_replace( '/[^A-Za-z0-9_\-.]/', '', $row->receipt_filename );
@@ -312,7 +324,7 @@ function _me_payouts_format_row( object $row, int $org_id = 1 ): array {
 		'notes'          => $row->notes,
 		'receipt_url'    => $receipt_url,
 		'recorder_name'  => $row->recorder_name ?? null,
-		'created_at'     => crm_format_dt( $row->created_at, $org_id ),
+		'created_at'     => crm_format_dt( $row->created_at, max( 0, $org_id ) ),
 	];
 }
 

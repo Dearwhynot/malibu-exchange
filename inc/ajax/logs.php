@@ -19,6 +19,50 @@ function _me_logs_check_access(): void {
 	}
 }
 
+function _me_logs_require_current_org(): int {
+	$uid     = get_current_user_id();
+	$is_root = crm_is_root( $uid );
+
+	$org_id = crm_get_current_user_company_id( $uid );
+
+	if ( ! $is_root && $org_id <= 0 ) {
+		crm_log_company_scope_violation(
+			'logs.scope.user_without_company',
+			'Попытка доступа к журналу без привязки к компании',
+			[
+				'user_id'            => $uid,
+				'current_company_id' => $org_id,
+			]
+		);
+
+		wp_send_json_error( [ 'message' => 'Аккаунт не привязан к компании.' ], 403 );
+	}
+
+	return $org_id;
+}
+
+function _me_logs_require_row_scope( object $row ): void {
+	$uid        = get_current_user_id();
+	$record_org = (int) ( $row->organization_id ?? 0 );
+
+	if ( $record_org >= 0 && crm_user_can_access_company( $uid, $record_org ) ) {
+		return;
+	}
+
+	crm_log_company_scope_violation(
+		'logs.scope.cross_company_denied',
+		'Попытка доступа к записи журнала другой компании',
+		[
+			'user_id'            => $uid,
+			'current_company_id' => crm_get_current_user_company_id( $uid ),
+			'record_company_id'  => $record_org,
+			'log_id'             => (int) ( $row->id ?? 0 ),
+		]
+	);
+
+	wp_send_json_error( [ 'message' => 'Доступ к данным другой компании запрещён.' ], 403 );
+}
+
 // ─── 1. Список логов с фильтрами и пагинацией ────────────────────────────────
 
 add_action( 'wp_ajax_me_logs_list', 'me_ajax_logs_list' );
@@ -52,18 +96,14 @@ function me_ajax_logs_list(): void {
 	$event_code  = sanitize_text_field( wp_unslash( $_POST['event_code'] ?? '' ) );
 
 	// ── Org scope ─────────────────────────────────────────────────────────────
-	$_logs_uid = get_current_user_id();
-	$_logs_org = crm_is_root( $_logs_uid ) ? 0 : crm_get_current_user_company_id( $_logs_uid );
+	$_logs_org = _me_logs_require_current_org();
 
 	// ── Построить WHERE ───────────────────────────────────────────────────────
 	$where  = 'WHERE 1=1';
 	$params = [];
 
-	// Non-root: ограничиваем видимость логами своей организации.
-	if ( $_logs_org > 0 ) {
-		$where   .= ' AND `organization_id` = %d';
-		$params[] = $_logs_org;
-	}
+	$where   .= ' AND `organization_id` = %d';
+	$params[] = $_logs_org;
 
 	if ( $search !== '' ) {
 		$like     = '%' . $wpdb->esc_like( $search ) . '%';
@@ -99,7 +139,7 @@ function me_ajax_logs_list(): void {
 		$params[] = '%' . $wpdb->esc_like( $event_code ) . '%';
 	}
 	// Фильтр по дате: пользователь вводит дату в настроенной таймзоне — конвертируем в UTC для запроса
-	$tz = crm_get_timezone( $_logs_org ?: (int) CRM_DEFAULT_ORG_ID );
+	$tz = crm_get_timezone( $_logs_org );
 	if ( $date_from !== '' && strtotime( $date_from ) ) {
 		$dt_from  = new DateTime( $date_from . ' 00:00:00', $tz );
 		$dt_from->setTimezone( new DateTimeZone( 'UTC' ) );
@@ -172,6 +212,8 @@ function me_ajax_logs_get(): void {
 		wp_send_json_error( [ 'message' => 'Запись не найдена.' ] );
 	}
 
+	_me_logs_require_row_scope( $row );
+
 	wp_send_json_success( _me_logs_format_row( $row, true ) );
 }
 
@@ -187,10 +229,22 @@ function me_ajax_logs_meta(): void {
 
 	global $wpdb;
 
-	// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-	$actions = $wpdb->get_col( 'SELECT DISTINCT `action` FROM `crm_audit_log` WHERE `action` != \'\' ORDER BY `action` ASC' ) ?: [];
-	// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-	$target_types = $wpdb->get_col( 'SELECT DISTINCT `target_type` FROM `crm_audit_log` WHERE `target_type` != \'\' ORDER BY `target_type` ASC' ) ?: [];
+	$org_id = _me_logs_require_current_org();
+
+	$actions = $wpdb->get_col( $wpdb->prepare(
+		"SELECT DISTINCT `action`
+		 FROM `crm_audit_log`
+		 WHERE `action` != '' AND `organization_id` = %d
+		 ORDER BY `action` ASC",
+		$org_id
+	) ) ?: [];
+	$target_types = $wpdb->get_col( $wpdb->prepare(
+		"SELECT DISTINCT `target_type`
+		 FROM `crm_audit_log`
+		 WHERE `target_type` != '' AND `organization_id` = %d
+		 ORDER BY `target_type` ASC",
+		$org_id
+	) ) ?: [];
 
 	wp_send_json_success( [
 		'actions'      => $actions,
@@ -201,9 +255,14 @@ function me_ajax_logs_meta(): void {
 // ─── Форматирование строки ────────────────────────────────────────────────────
 
 function _me_logs_format_row( object $row, bool $full = false ): array {
+	$org_id = (int) ( $row->organization_id ?? 0 );
+	$format_dt = static function ( ?string $dt ) use ( $org_id ) {
+		return crm_format_dt( $dt, max( 0, $org_id ) );
+	};
+
 	$out = [
 		'id'          => (int) $row->id,
-		'created_at'  => crm_format_dt( $row->created_at ),
+		'created_at'  => $format_dt( $row->created_at ),
 		'event_code'  => $row->event_code,
 		'category'    => $row->category,
 		'level'       => $row->level,

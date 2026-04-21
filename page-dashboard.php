@@ -10,158 +10,213 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 malibu_exchange_require_login();
 
-// ─── Скоп компании / таймзона ─────────────────────────────────────────────────
-$_uid        = get_current_user_id();
-$_company_id = crm_is_root( $_uid )
-	? (int) CRM_DEFAULT_ORG_ID
-	: crm_get_current_user_company_id( $_uid );
-$_org_id     = ( $_company_id > 0 ) ? $_company_id : (int) CRM_DEFAULT_ORG_ID;
-$_tz         = crm_get_timezone( $_org_id );
-
-// ─── Диапазон «сегодня» в UTC ─────────────────────────────────────────────────
-$_today_local = new DateTime( 'now', $_tz );
-
-$_day_start = ( clone $_today_local )->setTime( 0, 0, 0 );
-$_day_start->setTimezone( new DateTimeZone( 'UTC' ) );
-$_day_start_sql = $_day_start->format( 'Y-m-d H:i:s' );
-
-$_day_end = ( clone $_today_local )->setTime( 23, 59, 59 );
-$_day_end->setTimezone( new DateTimeZone( 'UTC' ) );
-$_day_end_sql = $_day_end->format( 'Y-m-d H:i:s' );
-
-// ─── Диапазон «последние 7 дней» (UTC) ───────────────────────────────────────
-$_week_start = ( clone $_today_local )->modify( '-6 days' )->setTime( 0, 0, 0 );
-$_week_start->setTimezone( new DateTimeZone( 'UTC' ) );
-$_week_start_sql = $_week_start->format( 'Y-m-d H:i:s' );
-
-// ─── Запросы ──────────────────────────────────────────────────────────────────
+// Root использует тот же company-scoped экран, что и остальные, но в company_id = 0.
+// Отдельный all-company обзор будет вынесен на специальную страницу позже.
+$_dashboard_is_root = false;
 global $wpdb;
 
-$_co_cond = $_company_id > 0 ? $wpdb->prepare( ' AND company_id = %d', $_company_id ) : '';
-$_co_po   = $_company_id > 0 ? $wpdb->prepare( ' AND company_id = %d', $_company_id ) : '';
+if ( $_dashboard_is_root ) {
+	$_tz         = function_exists( 'wp_timezone' ) ? wp_timezone() : new DateTimeZone( 'UTC' );
+	$_today_local = new DateTime( 'now', $_tz );
 
-// 1. Кол-во сделок сегодня (все статусы)
-// phpcs:disable WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-$_today_total = (int) $wpdb->get_var( $wpdb->prepare(
-	"SELECT COUNT(*) FROM `crm_fintech_payment_orders`
-	 WHERE created_at BETWEEN %s AND %s" . $_co_cond,
-	$_day_start_sql, $_day_end_sql
-) );
+	// phpcs:disable WordPress.DB.PreparedSQL.NotPrepared
+	$_root_companies = $wpdb->get_results(
+		"SELECT
+			c.id,
+			c.code,
+			c.name,
+			(
+				SELECT COUNT(*)
+				FROM crm_user_companies uc
+				WHERE uc.company_id = c.id AND uc.is_primary = 1 AND uc.status = 'active'
+			) AS users_cnt,
+			(
+				SELECT COUNT(*)
+				FROM crm_fintech_payment_orders o
+				WHERE o.company_id = c.id
+			) AS orders_cnt,
+			(
+				SELECT COALESCE(SUM(o.amount_asset_value), 0)
+				FROM crm_fintech_payment_orders o
+				WHERE o.company_id = c.id AND o.status_code = 'paid'
+			) AS paid_sum,
+			(
+				SELECT COALESCE(SUM(p.amount), 0)
+				FROM crm_acquirer_payouts p
+				WHERE p.company_id = c.id
+			) AS payouts_sum,
+			(
+				SELECT MAX(o.created_at)
+				FROM crm_fintech_payment_orders o
+				WHERE o.company_id = c.id
+			) AS last_order_at
+		FROM crm_companies c
+		WHERE c.status = 'active'
+		ORDER BY c.id ASC"
+	) ?: [];
+	// phpcs:enable
 
-// 2. Статусы за сегодня
-$_today_by_status_raw = $wpdb->get_results( $wpdb->prepare(
-	"SELECT status_code, COUNT(*) AS cnt
-	 FROM `crm_fintech_payment_orders`
-	 WHERE created_at BETWEEN %s AND %s" . $_co_cond . "
-	 GROUP BY status_code",
-	$_day_start_sql, $_day_end_sql
-) );
+	$_root_company_count = count( $_root_companies );
+	$_root_users_total   = 0;
+	$_root_orders_total  = 0;
+	$_root_paid_total    = 0.0;
+	$_root_payout_total  = 0.0;
 
-$_today_status = [];
-foreach ( (array) $_today_by_status_raw as $r ) {
-	$_today_status[ $r->status_code ] = (int) $r->cnt;
+	foreach ( $_root_companies as $_root_company ) {
+		$_root_users_total  += (int) $_root_company->users_cnt;
+		$_root_orders_total += (int) $_root_company->orders_cnt;
+		$_root_paid_total   += (float) $_root_company->paid_sum;
+		$_root_payout_total += (float) $_root_company->payouts_sum;
+	}
+
+	$_root_debt_total = $_root_paid_total - $_root_payout_total;
+} else {
+	// ─── Скоп компании / таймзона ─────────────────────────────────────────────
+	$_company_id = crm_require_company_page_context();
+	$_tz         = crm_get_timezone( $_company_id );
+
+	// ─── Диапазон «сегодня» в UTC ─────────────────────────────────────────────
+	$_today_local = new DateTime( 'now', $_tz );
+
+	$_day_start = ( clone $_today_local )->setTime( 0, 0, 0 );
+	$_day_start->setTimezone( new DateTimeZone( 'UTC' ) );
+	$_day_start_sql = $_day_start->format( 'Y-m-d H:i:s' );
+
+	$_day_end = ( clone $_today_local )->setTime( 23, 59, 59 );
+	$_day_end->setTimezone( new DateTimeZone( 'UTC' ) );
+	$_day_end_sql = $_day_end->format( 'Y-m-d H:i:s' );
+
+	// ─── Диапазон «последние 7 дней» (UTC) ───────────────────────────────────
+	$_week_start = ( clone $_today_local )->modify( '-6 days' )->setTime( 0, 0, 0 );
+	$_week_start->setTimezone( new DateTimeZone( 'UTC' ) );
+	$_week_start_sql = $_week_start->format( 'Y-m-d H:i:s' );
+
+	// ─── Запросы ──────────────────────────────────────────────────────────────
+	$_co_cond = $wpdb->prepare( ' AND company_id = %d', $_company_id );
+	$_co_po   = $wpdb->prepare( ' AND company_id = %d', $_company_id );
+
+	// 1. Кол-во сделок сегодня (все статусы)
+	// phpcs:disable WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+	$_today_total = (int) $wpdb->get_var( $wpdb->prepare(
+		"SELECT COUNT(*) FROM `crm_fintech_payment_orders`
+		 WHERE created_at BETWEEN %s AND %s" . $_co_cond,
+		$_day_start_sql, $_day_end_sql
+	) );
+
+	// 2. Статусы за сегодня
+	$_today_by_status_raw = $wpdb->get_results( $wpdb->prepare(
+		"SELECT status_code, COUNT(*) AS cnt
+		 FROM `crm_fintech_payment_orders`
+		 WHERE created_at BETWEEN %s AND %s" . $_co_cond . "
+		 GROUP BY status_code",
+		$_day_start_sql, $_day_end_sql
+	) );
+
+	$_today_status = [];
+	foreach ( (array) $_today_by_status_raw as $r ) {
+		$_today_status[ $r->status_code ] = (int) $r->cnt;
+	}
+
+	// 3. USDT накоплено по paid-ордерам за сегодня (amount_asset_value = USDT)
+	$_today_paid_sum = (float) $wpdb->get_var( $wpdb->prepare(
+		"SELECT COALESCE(SUM(amount_asset_value), 0)
+		 FROM `crm_fintech_payment_orders`
+		 WHERE status_code = 'paid' AND paid_at BETWEEN %s AND %s" . $_co_cond,
+		$_day_start_sql, $_day_end_sql
+	) );
+
+	// 4. Всего USDT по paid-ордерам (все время) — база для долга ЭП
+	$_total_paid_all = (float) $wpdb->get_var(
+		"SELECT COALESCE(SUM(amount_asset_value), 0)
+		 FROM `crm_fintech_payment_orders`
+		 WHERE status_code = 'paid'" . $_co_po
+	);
+
+	// 5. Всего выплачено ЭП в USDT (все время)
+	$_total_out_all = (float) $wpdb->get_var(
+		"SELECT COALESCE(SUM(amount), 0)
+		 FROM `crm_acquirer_payouts`
+		 WHERE 1=1" . $_co_po
+	);
+
+	$_ep_debt = max( 0.0, $_total_paid_all - $_total_out_all );
+
+	// 6. Суммы USDT по статусам (за все время)
+	$_open_statuses     = [ 'created', 'pending' ];
+	$_closed_statuses   = [ 'paid' ];
+	$_canceled_statuses = [ 'declined', 'cancelled', 'expired', 'error' ];
+
+	$_ph_open   = implode( ',', array_fill( 0, count( $_open_statuses ),     '%s' ) );
+	$_ph_closed = implode( ',', array_fill( 0, count( $_closed_statuses ),   '%s' ) );
+	$_ph_cancel = implode( ',', array_fill( 0, count( $_canceled_statuses ), '%s' ) );
+
+	$_sum_open = (float) $wpdb->get_var( $wpdb->prepare(
+		"SELECT COALESCE(SUM(amount_asset_value), 0)
+		 FROM `crm_fintech_payment_orders`
+		 WHERE status_code IN ($_ph_open)" . $_co_cond,
+		$_open_statuses
+	) );
+	$_cnt_open = (int) $wpdb->get_var( $wpdb->prepare(
+		"SELECT COUNT(*) FROM `crm_fintech_payment_orders`
+		 WHERE status_code IN ($_ph_open)" . $_co_cond,
+		$_open_statuses
+	) );
+
+	$_sum_closed = (float) $wpdb->get_var( $wpdb->prepare(
+		"SELECT COALESCE(SUM(amount_asset_value), 0)
+		 FROM `crm_fintech_payment_orders`
+		 WHERE status_code IN ($_ph_closed)" . $_co_cond,
+		$_closed_statuses
+	) );
+	$_cnt_closed = (int) $wpdb->get_var( $wpdb->prepare(
+		"SELECT COUNT(*) FROM `crm_fintech_payment_orders`
+		 WHERE status_code IN ($_ph_closed)" . $_co_cond,
+		$_closed_statuses
+	) );
+
+	$_sum_cancel = (float) $wpdb->get_var( $wpdb->prepare(
+		"SELECT COALESCE(SUM(amount_asset_value), 0)
+		 FROM `crm_fintech_payment_orders`
+		 WHERE status_code IN ($_ph_cancel)" . $_co_cond,
+		$_canceled_statuses
+	) );
+	$_cnt_cancel = (int) $wpdb->get_var( $wpdb->prepare(
+		"SELECT COUNT(*) FROM `crm_fintech_payment_orders`
+		 WHERE status_code IN ($_ph_cancel)" . $_co_cond,
+		$_canceled_statuses
+	) );
+
+	// 7. Последние 7 дней — динамика сделок
+	$_week_rows = $wpdb->get_results( $wpdb->prepare(
+		"SELECT
+			DATE(CONVERT_TZ(created_at, 'UTC', %s)) AS day_local,
+			COUNT(*) AS total,
+			SUM(CASE WHEN status_code = 'paid' THEN 1 ELSE 0 END) AS paid_cnt
+		 FROM `crm_fintech_payment_orders`
+		 WHERE created_at >= %s" . $_co_cond . "
+		 GROUP BY day_local
+		 ORDER BY day_local",
+		$_tz->getName(),
+		$_week_start_sql
+	) );
+
+	// Заполняем массив на 7 дней (могут быть пропуски)
+	$_week_data_total = [];
+	$_week_data_paid  = [];
+	$_week_labels     = [];
+
+	$_week_map  = [];
+	foreach ( (array) $_week_rows as $r ) {
+		$_week_map[ $r->day_local ] = [ 'total' => (int) $r->total, 'paid' => (int) $r->paid_cnt ];
+	}
+	for ( $i = 6; $i >= 0; $i-- ) {
+		$d = ( clone $_today_local )->modify( "-{$i} days" )->format( 'Y-m-d' );
+		$_week_data_total[] = $_week_map[ $d ]['total'] ?? 0;
+		$_week_data_paid[]  = $_week_map[ $d ]['paid']  ?? 0;
+		$_week_labels[]     = date( 'd.m', strtotime( $d ) );
+	}
+	// phpcs:enable
 }
-
-// 3. USDT накоплено по paid-ордерам за сегодня (amount_asset_value = USDT)
-$_today_paid_sum = (float) $wpdb->get_var( $wpdb->prepare(
-	"SELECT COALESCE(SUM(amount_asset_value), 0)
-	 FROM `crm_fintech_payment_orders`
-	 WHERE status_code = 'paid' AND paid_at BETWEEN %s AND %s" . $_co_cond,
-	$_day_start_sql, $_day_end_sql
-) );
-
-// 4. Всего USDT по paid-ордерам (все время) — база для долга ЭП
-$_total_paid_all = (float) $wpdb->get_var(
-	"SELECT COALESCE(SUM(amount_asset_value), 0)
-	 FROM `crm_fintech_payment_orders`
-	 WHERE status_code = 'paid'" . $_co_po
-);
-
-// 5. Всего выплачено ЭП в USDT (все время)
-$_total_out_all = (float) $wpdb->get_var(
-	"SELECT COALESCE(SUM(amount), 0)
-	 FROM `crm_acquirer_payouts`
-	 WHERE 1=1" . $_co_po
-);
-
-$_ep_debt = max( 0.0, $_total_paid_all - $_total_out_all );
-
-// 6. Суммы USDT по статусам (за все время)
-$_open_statuses     = [ 'created', 'pending' ];
-$_closed_statuses   = [ 'paid' ];
-$_canceled_statuses = [ 'declined', 'cancelled', 'expired', 'error' ];
-
-$_ph_open   = implode( ',', array_fill( 0, count( $_open_statuses ),     '%s' ) );
-$_ph_closed = implode( ',', array_fill( 0, count( $_closed_statuses ),   '%s' ) );
-$_ph_cancel = implode( ',', array_fill( 0, count( $_canceled_statuses ), '%s' ) );
-
-$_sum_open = (float) $wpdb->get_var( $wpdb->prepare(
-	"SELECT COALESCE(SUM(amount_asset_value), 0)
-	 FROM `crm_fintech_payment_orders`
-	 WHERE status_code IN ($_ph_open)" . $_co_cond,
-	$_open_statuses
-) );
-$_cnt_open = (int) $wpdb->get_var( $wpdb->prepare(
-	"SELECT COUNT(*) FROM `crm_fintech_payment_orders`
-	 WHERE status_code IN ($_ph_open)" . $_co_cond,
-	$_open_statuses
-) );
-
-$_sum_closed = (float) $wpdb->get_var( $wpdb->prepare(
-	"SELECT COALESCE(SUM(amount_asset_value), 0)
-	 FROM `crm_fintech_payment_orders`
-	 WHERE status_code IN ($_ph_closed)" . $_co_cond,
-	$_closed_statuses
-) );
-$_cnt_closed = (int) $wpdb->get_var( $wpdb->prepare(
-	"SELECT COUNT(*) FROM `crm_fintech_payment_orders`
-	 WHERE status_code IN ($_ph_closed)" . $_co_cond,
-	$_closed_statuses
-) );
-
-$_sum_cancel = (float) $wpdb->get_var( $wpdb->prepare(
-	"SELECT COALESCE(SUM(amount_asset_value), 0)
-	 FROM `crm_fintech_payment_orders`
-	 WHERE status_code IN ($_ph_cancel)" . $_co_cond,
-	$_canceled_statuses
-) );
-$_cnt_cancel = (int) $wpdb->get_var( $wpdb->prepare(
-	"SELECT COUNT(*) FROM `crm_fintech_payment_orders`
-	 WHERE status_code IN ($_ph_cancel)" . $_co_cond,
-	$_canceled_statuses
-) );
-
-// 7. Последние 7 дней — динамика сделок
-$_week_rows = $wpdb->get_results( $wpdb->prepare(
-	"SELECT
-		DATE(CONVERT_TZ(created_at, 'UTC', %s)) AS day_local,
-		COUNT(*) AS total,
-		SUM(CASE WHEN status_code = 'paid' THEN 1 ELSE 0 END) AS paid_cnt
-	 FROM `crm_fintech_payment_orders`
-	 WHERE created_at >= %s" . $_co_cond . "
-	 GROUP BY day_local
-	 ORDER BY day_local",
-	$_tz->getName(),
-	$_week_start_sql
-) );
-
-// Заполняем массив на 7 дней (могут быть пропуски)
-$_week_data_total = [];
-$_week_data_paid  = [];
-$_week_labels     = [];
-
-$_today_str = $_today_local->format( 'Y-m-d' );
-$_week_map  = [];
-foreach ( (array) $_week_rows as $r ) {
-	$_week_map[ $r->day_local ] = [ 'total' => (int) $r->total, 'paid' => (int) $r->paid_cnt ];
-}
-for ( $i = 6; $i >= 0; $i-- ) {
-	$d = ( clone $_today_local )->modify( "-{$i} days" )->format( 'Y-m-d' );
-	$_week_data_total[] = $_week_map[ $d ]['total'] ?? 0;
-	$_week_data_paid[]  = $_week_map[ $d ]['paid']  ?? 0;
-	$_week_labels[]     = date( 'd.m', strtotime( $d ) );
-}
-// phpcs:enable
 
 // ─── Вспомогательные ─────────────────────────────────────────────────────────
 function _dash_fmt_usdt( float $v ): string {
@@ -231,13 +286,148 @@ get_header();
 			</div>
 
 			<div class="container-fluid container-fixed-lg mt-4">
+				<?php if ( $_dashboard_is_root ) : ?>
+
+				<div class="row m-b-5">
+					<div class="col-12">
+						<p class="hint-text fs-12 text-uppercase m-b-10" style="letter-spacing:.07em;">
+							Root company 0 overview — <?php echo esc_html( $_today_local->format( 'd.m.Y' ) ); ?>
+							<span class="m-l-10 text-muted" style="letter-spacing:0;"><?php echo esc_html( $_tz->getName() ); ?></span>
+						</p>
+					</div>
+				</div>
+
+				<div class="row m-b-20">
+					<div class="col-xl-3 col-lg-6 col-md-6 col-sm-12 m-b-15">
+						<div class="card card-default no-margin">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase">Активных компаний</p>
+								<h3 class="no-margin bold text-master"><?php echo esc_html( $_root_company_count ); ?></h3>
+							</div>
+						</div>
+					</div>
+					<div class="col-xl-3 col-lg-6 col-md-6 col-sm-12 m-b-15">
+						<div class="card card-default no-margin">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase">Пользователей</p>
+								<h3 class="no-margin bold text-complete"><?php echo esc_html( $_root_users_total ); ?></h3>
+							</div>
+						</div>
+					</div>
+					<div class="col-xl-3 col-lg-6 col-md-6 col-sm-12 m-b-15">
+						<div class="card card-default no-margin">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase">Ордера по всем компаниям</p>
+								<h3 class="no-margin bold text-primary"><?php echo esc_html( $_root_orders_total ); ?></h3>
+							</div>
+						</div>
+					</div>
+					<div class="col-xl-3 col-lg-6 col-md-6 col-sm-12 m-b-15">
+						<div class="card card-default no-margin">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase">Общий долг ЭП</p>
+								<h3 class="no-margin bold <?php echo $_root_debt_total >= 0 ? 'text-warning' : 'text-success'; ?>">
+									<?php echo esc_html( _dash_fmt_usdt( $_root_debt_total ) ); ?>
+								</h3>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="row m-b-20">
+					<div class="col-xl-6 col-lg-6 col-md-6 col-sm-12 m-b-15">
+						<div class="card card-default no-margin">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase">Paid по всем компаниям</p>
+								<h3 class="no-margin bold text-success"><?php echo esc_html( _dash_fmt_usdt( $_root_paid_total ) ); ?></h3>
+							</div>
+						</div>
+					</div>
+					<div class="col-xl-6 col-lg-6 col-md-6 col-sm-12 m-b-15">
+						<div class="card card-default no-margin">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase">Выплаты ЭП по всем компаниям</p>
+								<h3 class="no-margin bold text-complete"><?php echo esc_html( _dash_fmt_usdt( $_root_payout_total ) ); ?></h3>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="card card-default m-b-20">
+					<div class="card-header">
+						<div class="card-title">Компании</div>
+					</div>
+					<div class="card-body">
+						<p class="hint-text m-b-20">
+							Это обзор для root с системной компанией 0. Детальные all-company экраны по ордерам, выплатам и логам можно сделать отдельно, не ослабляя company-scoped страницы.
+						</p>
+						<div class="table-responsive">
+							<table class="table table-hover m-b-0">
+								<thead>
+									<tr>
+										<th>#</th>
+										<th>Компания</th>
+										<th>Пользователи</th>
+										<th>Ордера</th>
+										<th>Paid</th>
+										<th>Выплаты</th>
+										<th>Долг ЭП</th>
+										<th>Последний ордер</th>
+									</tr>
+								</thead>
+								<tbody>
+									<?php if ( empty( $_root_companies ) ) : ?>
+									<tr>
+										<td colspan="8" class="text-center hint-text p-t-20 p-b-20">Активных компаний пока нет.</td>
+									</tr>
+									<?php else : ?>
+										<?php foreach ( $_root_companies as $_root_company ) : ?>
+											<?php
+											$_company_debt = (float) $_root_company->paid_sum - (float) $_root_company->payouts_sum;
+											$_last_order   = '';
+											if ( ! empty( $_root_company->last_order_at ) ) {
+												$_last_order = wp_date( 'd.m.Y H:i', strtotime( (string) $_root_company->last_order_at ), $_tz );
+											}
+											?>
+											<tr>
+												<td><?php echo esc_html( (int) $_root_company->id ); ?></td>
+												<td>
+													<div class="bold"><?php echo esc_html( $_root_company->name ); ?></div>
+													<div class="hint-text fs-11"><?php echo esc_html( $_root_company->code ); ?></div>
+												</td>
+												<td><?php echo esc_html( (int) $_root_company->users_cnt ); ?></td>
+												<td><?php echo esc_html( (int) $_root_company->orders_cnt ); ?></td>
+												<td class="text-success"><?php echo esc_html( _dash_fmt_usdt( (float) $_root_company->paid_sum ) ); ?></td>
+												<td class="text-complete"><?php echo esc_html( _dash_fmt_usdt( (float) $_root_company->payouts_sum ) ); ?></td>
+												<td class="<?php echo $_company_debt >= 0 ? 'text-warning' : 'text-success'; ?>">
+													<?php echo esc_html( _dash_fmt_usdt( $_company_debt ) ); ?>
+												</td>
+												<td><?php echo esc_html( $_last_order !== '' ? $_last_order : '—' ); ?></td>
+											</tr>
+										<?php endforeach; ?>
+									<?php endif; ?>
+								</tbody>
+							</table>
+						</div>
+					</div>
+				</div>
+
+				<div class="row m-b-30">
+					<div class="col-xl-3 col-lg-4 col-md-6 col-sm-12 m-b-10">
+						<a href="<?php echo esc_url( home_url( '/users/' ) ); ?>" class="btn btn-default btn-block">
+							<i class="pg-icon m-r-5">users</i>Пользователи и компании
+						</a>
+					</div>
+				</div>
+
+				<?php else : ?>
 
 				<!-- ══ ROW 1: Ключевые метрики сегодня ══════════════════════════ -->
 				<div class="row m-b-5">
 					<div class="col-12">
 						<p class="hint-text fs-12 text-uppercase m-b-10" style="letter-spacing:.07em;">
 							Сегодня — <?php echo esc_html( $_today_local->format( 'd.m.Y' ) ); ?>
-							<span class="m-l-10 text-muted" style="letter-spacing:0;"><?php echo esc_html( crm_get_timezone_label( $_org_id ) ); ?></span>
+							<span class="m-l-10 text-muted" style="letter-spacing:0;"><?php echo esc_html( crm_get_timezone_label( $_company_id ) ); ?></span>
 						</p>
 					</div>
 				</div>
@@ -469,56 +659,7 @@ get_header();
 				</div>
 				<!-- /ROW 3 -->
 
-				<!-- ══ ROW 4: Быстрая навигация ══════════════════════════════════ -->
-				<div class="row m-b-5">
-					<div class="col-12">
-						<p class="hint-text fs-12 text-uppercase m-b-10" style="letter-spacing:.07em;">Быстрые переходы</p>
-					</div>
-				</div>
-
-				<div class="row m-b-30">
-
-					<?php if ( crm_can_access( 'orders.view' ) ) : ?>
-					<div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 m-b-10">
-						<a href="<?php echo esc_url( home_url( '/orders/' ) ); ?>" class="btn btn-complete btn-block">
-							<i class="pg-icon m-r-5">list</i>Ордера
-						</a>
-					</div>
 					<?php endif; ?>
-
-					<?php if ( crm_can_access( 'payouts.view' ) ) : ?>
-					<div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 m-b-10">
-						<a href="<?php echo esc_url( home_url( '/payouts/' ) ); ?>" class="btn btn-success btn-block">
-							<i class="pg-icon m-r-5">card</i>Выплаты ЭП
-						</a>
-					</div>
-					<?php endif; ?>
-
-					<?php if ( crm_can_access( 'rates.view' ) ) : ?>
-					<div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 m-b-10">
-						<a href="<?php echo esc_url( home_url( '/rates/' ) ); ?>" class="btn btn-info btn-block">
-							<i class="pg-icon m-r-5">chart</i>Курсы
-						</a>
-					</div>
-					<?php endif; ?>
-
-					<?php if ( crm_can_access( 'users.view' ) ) : ?>
-					<div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 m-b-10">
-						<a href="<?php echo esc_url( home_url( '/users/' ) ); ?>" class="btn btn-default btn-block">
-							<i class="pg-icon m-r-5">users</i>Пользователи
-						</a>
-					</div>
-					<?php endif; ?>
-
-					<?php if ( crm_can_access( 'settings.view' ) ) : ?>
-					<div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 m-b-10">
-						<a href="<?php echo esc_url( home_url( '/settings/' ) ); ?>" class="btn btn-default btn-block">
-							<i class="pg-icon m-r-5">settings</i>Настройки
-						</a>
-					</div>
-					<?php endif; ?>
-
-				</div>
 
 			</div>
 			<!-- /container -->

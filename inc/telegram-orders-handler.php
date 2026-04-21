@@ -83,8 +83,17 @@ function _tg_orders_success_message( array $result ): string {
 	$txt  = '🧾 <b>Счёт на оплату</b>' . $e . $e;
 	$txt .= 'К оплате:' . $e;
 	$txt .= $rub . $e . $e;
-	$txt .= 'Отсканируйте QR-код камерой телефона' . $e;
-	$txt .= 'и переведите <b>точную сумму</b> по реквизитам.' . $e . $e;
+	if ( ! empty( $result['qr_url'] ) ) {
+		$txt .= 'Отсканируйте QR-код камерой телефона' . $e;
+		$txt .= 'и переведите <b>точную сумму</b> по реквизитам.' . $e . $e;
+	} elseif ( ! empty( $result['payment_link'] ) ) {
+		$txt .= 'Перейдите по ссылке оплаты и переведите' . $e;
+		$txt .= '<b>точную сумму</b> по реквизитам.' . $e . $e;
+		$txt .= '<code>' . htmlspecialchars( (string) $result['payment_link'], ENT_QUOTES ) . '</code>' . $e . $e;
+	} else {
+		$txt .= 'Счёт уже создан у провайдера, но QR ещё готовится.' . $e;
+		$txt .= 'Проверьте статус повторно через несколько секунд.' . $e . $e;
+	}
 	$txt .= '<code>───────────────────</code>' . $e;
 	$txt .= '📋 Заказ: <code>' . $merchant_id . '</code>' . $e;
 	$txt .= '📅 Дата: ' . $date . $e;

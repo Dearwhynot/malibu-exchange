@@ -10,7 +10,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 malibu_exchange_require_login();
 
-if ( ! crm_can_access( 'orders.view' ) ) {
+if ( ! crm_can_access( 'orders.create' ) ) {
 	wp_safe_redirect( home_url( '/' ) );
 	exit;
 }
@@ -79,110 +79,58 @@ get_header();
 			</div>
 
 			<div class="container-fluid container-fixed-lg mt-4">
+				<div class="row justify-content-center">
+					<div class="col-12 col-xxl-6 col-xl-7 col-lg-8 col-md-10">
+
+						<!-- ─── Форма создания ─────────────────────────────── -->
+						<form id="create-order-form">
+							<div class="card card-default" id="create-order-card">
+								<div class="card-header">
+									<div class="card-title">Новый платёжный ордер</div>
+								</div>
+								<div class="card-body">
+									<?php get_template_part( 'template-parts/order-create-form' ); ?>
+								</div>
+								<div class="card-footer p-t-10 p-b-10 p-l-20 p-r-20">
+									<div class="d-flex justify-content-end">
+										<button type="submit" id="btn-create-order" class="btn btn-primary btn-cons">
+											<i class="pg-icon m-r-5">add</i>Создать ордер
+										</button>
+									</div>
+								</div>
+							</div>
+						</form>
+
+					</div>
+				</div>
+
 				<div class="row">
 					<div class="col-lg-6 col-md-8">
 
-						<!-- ─── Форма создания ─────────────────────────────── -->
-						<div class="card card-default" id="create-order-card">
-							<div class="card-header">
-								<div class="card-title">Новый платёжный ордер</div>
-							</div>
-							<div class="card-body">
-
-								<div id="co-alert" class="alert d-none m-b-20" role="alert"></div>
-
-								<form id="create-order-form">
-									<div class="form-group">
-										<label for="co-amount-usdt">Сумма в USDT <span class="text-danger">*</span></label>
-										<div class="input-group">
-											<input type="number"
-											       id="co-amount-usdt"
-											       name="amount_usdt"
-											       class="form-control"
-											       min="0.01"
-											       step="0.01"
-											       placeholder="например 100.00"
-											       required
-											       autocomplete="off">
-											<span class="input-group-text">USDT</span>
-										</div>
-										<p class="hint-text m-t-5">Введите сумму в USDT. Конвертация в RUB производится провайдером.</p>
-									</div>
-
-									<div class="form-group">
-										<label for="co-description">Комментарий <span class="text-muted">(необязательно)</span></label>
-										<input type="text"
-										       id="co-description"
-										       name="description"
-										       class="form-control"
-										       maxlength="200"
-										       placeholder="Назначение платежа или заметка">
-									</div>
-
-									<button type="submit" id="btn-create-order" class="btn btn-primary btn-cons">
-										<i class="pg-icon m-r-5">add</i>Создать ордер
-									</button>
-								</form>
-
-							</div>
-						</div>
-
-						<!-- ─── Результат ─────────────────────────────────── -->
+						<!-- ─── Результат: стилизованный чек ───────────────── -->
 						<div id="order-result" class="d-none">
+							<div class="receipt-inline-frame" id="order-receipt-inline"></div>
 
-							<div class="card card-default">
-								<div class="card-header">
-									<div class="card-title">
-										Ордер создан
-										<span id="or-status-badge" class="m-l-10"></span>
-									</div>
-								</div>
-								<div class="card-body">
-
-									<div class="order-detail-grid m-b-20">
-										<div class="order-detail-label">Merchant ID</div>
-										<div class="order-detail-value"><code id="or-merchant-id"></code></div>
-
-										<div class="order-detail-label">Провайдер</div>
-										<div class="order-detail-value"><span id="or-provider"></span></div>
-
-										<div class="order-detail-label">Сумма USDT</div>
-										<div class="order-detail-value"><strong id="or-amount-usdt"></strong></div>
-
-										<div class="order-detail-label">Сумма RUB</div>
-										<div class="order-detail-value"><strong id="or-amount-rub"></strong></div>
-									</div>
-
-									<!-- QR-код -->
-									<div id="or-qr-block" class="d-none text-center m-b-20">
-										<p class="text-muted small m-b-10">Отправьте клиенту QR-код для оплаты через СБП</p>
-										<img id="or-qr-img" src="" alt="QR код" style="max-width:220px;border:1px solid #dee2e6;border-radius:6px;padding:8px;background:#fff">
-									</div>
-
-									<!-- Ссылка оплаты -->
-									<div id="or-link-block" class="m-b-20">
-										<label class="text-muted small d-block m-b-5">Ссылка для оплаты</label>
-										<div class="input-group">
-											<input type="text" id="or-payment-link" class="form-control form-control-sm" readonly>
-											<button class="btn btn-sm btn-default" id="btn-copy-link" type="button" title="Копировать">
-												<i class="pg-icon">copy</i>
-											</button>
-										</div>
-									</div>
-
-									<div class="d-flex gap-2 m-t-10">
-										<a href="<?php echo esc_url( home_url( '/orders/' ) ); ?>"
-										   class="btn btn-default btn-sm">
-											Все ордера
-										</a>
-										<button type="button" id="btn-new-order" class="btn btn-primary btn-sm">
-											Новый ордер
-										</button>
-									</div>
-
+							<!-- Ссылка оплаты -->
+							<div id="or-link-block" class="m-t-20" style="max-width:380px;margin-left:auto;margin-right:auto;">
+								<label class="text-muted small d-block m-b-5">Ссылка для оплаты</label>
+								<div class="input-group">
+									<input type="text" id="or-payment-link" class="form-control form-control-sm" readonly>
+									<button class="btn btn-sm btn-default" id="btn-copy-link" type="button" title="Копировать">
+										<i class="pg-icon">copy</i>
+									</button>
 								</div>
 							</div>
 
+							<div class="d-flex gap-2 m-t-20 justify-content-center">
+								<a href="<?php echo esc_url( home_url( '/orders/' ) ); ?>"
+								   class="btn btn-default btn-sm">
+									Все ордера
+								</a>
+								<button type="button" id="btn-new-order" class="btn btn-primary btn-sm">
+									Новый ордер
+								</button>
+							</div>
 						</div>
 						<!-- /.order-result -->
 
@@ -204,107 +152,69 @@ get_header();
 	</div>
 </div>
 
+<?php get_template_part( 'template-parts/toast-host' ); ?>
+<?php get_template_part( 'template-parts/order-receipt' ); ?>
 <?php get_template_part( 'template-parts/quickview' ); ?>
 <?php get_template_part( 'template-parts/overlay' ); ?>
 
 <?php
 add_action( 'wp_footer', function () use ( $nonce ) {
 ?>
-<style>
-.order-detail-grid { display: grid; grid-template-columns: 140px 1fr; gap: 8px 12px; }
-.order-detail-label { font-weight: 600; color: #6c757d; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; align-self: center; }
-.order-detail-value { word-break: break-word; }
-.order-provider-badge { display: inline-block; padding: 2px 7px; border-radius: 3px; font-size: 11px; background: #e3f2fd; color: #1565c0; font-weight: 600; }
-.order-status-badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; letter-spacing: .03em; }
-.order-status-created { background: #f1f3f4; color: #495057; }
-.order-status-pending { background: #fff8e1; color: #FF8F00; }
-</style>
-
 <script>
 (function ($) {
 	'use strict';
 
 	var AJAX_URL = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
+	// Nonce для me_orders_check_status (того же семейства me_orders_list)
+	var CHECK_NONCE = '<?php echo esc_js( wp_create_nonce( 'me_orders_list' ) ); ?>';
 	var NONCE    = '<?php echo esc_js( $nonce ); ?>';
 
-	function escHtml(str) {
-		if (str === null || str === undefined) return '';
-		return String(str)
-			.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-	}
-
-	function showAlert(msg, type) {
-		$('#co-alert')
-			.removeClass('d-none alert-success alert-danger alert-warning')
-			.addClass('alert-' + (type || 'danger'))
-			.text(msg);
-	}
-
-	function hideAlert() {
-		$('#co-alert').addClass('d-none');
+	// Конфигурируем общий чек под AJAX проверки статуса
+	if (window.MalibuOrderReceipt && MalibuOrderReceipt.configure) {
+		MalibuOrderReceipt.configure({ ajaxUrl: AJAX_URL, nonce: CHECK_NONCE });
 	}
 
 	$('#create-order-form').on('submit', function (e) {
 		e.preventDefault();
-		hideAlert();
 
-		var $btn    = $('#btn-create-order');
-		var amount  = parseFloat($('#co-amount-usdt').val());
-		var desc    = $('#co-description').val();
-
-		if (isNaN(amount) || amount <= 0) {
-			showAlert('Введите корректную сумму USDT.', 'danger');
-			return;
-		}
-
+		var $btn = $('#btn-create-order');
 		$btn.prop('disabled', true).html('<i class="pg-icon m-r-5">refresh</i>Создаём…');
 
-		$.post(AJAX_URL, {
-			action:      'me_orders_create',
-			_nonce:      NONCE,
-			amount_usdt: amount,
-			description: desc,
-		})
-		.done(function (res) {
-			if (!res.success) {
-				showAlert(res.data ? res.data.message : 'Ошибка создания ордера.', 'danger');
-				return;
-			}
+		MalibuOrderCreate.submitFromForm({
+			ajaxUrl: AJAX_URL,
+			nonce:   NONCE,
+			onSuccess: function (d, input) {
+				var receiptData = {
+					id:                   d.order_db_id,
+					status_code:          'created',
+					merchant_order_id:    d.merchant_order_id,
+					payment_amount_value: d.payment_amount_rub,
+					qr_url:               d.qr_url,
+					created_at:           d.created_at || new Date().toISOString().slice(0, 19).replace('T', ' '),
+				};
+				// Рендерим через renderInto, чтобы контекст для кнопки «Проверить» сохранился
+				MalibuOrderReceipt.renderInto('#order-receipt-inline', receiptData, {
+					onStatusChange: function () {
+						// Чек уже перерисован с новым статусом самим receipt'ом.
+						// На этой странице специальных действий не требуется.
+					},
+				});
 
-			var d = res.data;
+				if (d.payment_link) {
+					$('#or-payment-link').val(d.payment_link);
+					$('#or-link-block').show();
+				} else {
+					$('#or-link-block').hide();
+				}
 
-			// Заполняем поля результата
-			$('#or-merchant-id').text(d.merchant_order_id || '—');
-			$('#or-provider').html('<span class="order-provider-badge">' + escHtml(d.provider) + '</span>');
-			$('#or-amount-usdt').text(parseFloat(amount).toFixed(2) + ' USDT');
-			$('#or-amount-rub').text(d.payment_amount_rub ? parseFloat(d.payment_amount_rub).toFixed(2) + ' RUB' : '—');
-			$('#or-status-badge').html('<span class="order-status-badge order-status-created">created</span>');
+				$('#create-order-card').addClass('d-none');
+				$('#order-result').removeClass('d-none');
 
-			// QR
-			if (d.qr_url) {
-				$('#or-qr-img').attr('src', d.qr_url);
-				$('#or-qr-block').removeClass('d-none');
-			} else {
-				$('#or-qr-block').addClass('d-none');
-			}
-
-			// Ссылка
-			if (d.payment_link) {
-				$('#or-payment-link').val(d.payment_link);
-				$('#or-link-block').show();
-			} else {
-				$('#or-link-block').hide();
-			}
-
-			// Показываем результат, скрываем форму
-			$('#create-order-card').addClass('d-none');
-			$('#order-result').removeClass('d-none');
-		})
-		.fail(function () {
-			showAlert('Сетевая ошибка. Попробуйте ещё раз.', 'danger');
-		})
-		.always(function () {
-			$btn.prop('disabled', false).html('<i class="pg-icon m-r-5">add</i>Создать ордер');
+				if (d.warning) { MalibuOrderCreate.showAlert(d.warning, 'warning'); }
+			},
+			onEnd: function () {
+				$btn.prop('disabled', false).html('<i class="pg-icon m-r-5">add</i>Создать ордер');
+			},
 		});
 	});
 
@@ -327,9 +237,8 @@ add_action( 'wp_footer', function () use ( $nonce ) {
 	$('#btn-new-order').on('click', function () {
 		$('#create-order-card').removeClass('d-none');
 		$('#order-result').addClass('d-none');
-		$('#create-order-form')[0].reset();
-		$('#or-qr-block').addClass('d-none');
-		hideAlert();
+		MalibuOrderCreate.reset();
+		$('#order-receipt-inline').empty();
 	});
 
 }(jQuery));

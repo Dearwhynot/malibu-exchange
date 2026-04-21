@@ -19,7 +19,7 @@ function malibu_exchange_get_login_url(string $redirect_to = ''): string
     return $url;
 }
 
-function malibu_exchange_get_dashboard_url(): string
+function malibu_exchange_get_company_dashboard_url(): string
 {
     $dashboard_page = get_page_by_path('dashboard');
 
@@ -28,6 +28,30 @@ function malibu_exchange_get_dashboard_url(): string
     }
 
     return home_url('/dashboard');
+}
+
+function malibu_exchange_get_root_dashboard_url(): string
+{
+    $dashboard_page = get_page_by_path('root-dashboard');
+
+    if ($dashboard_page instanceof WP_Post) {
+        return get_permalink($dashboard_page);
+    }
+
+    return home_url('/root-dashboard');
+}
+
+function malibu_exchange_get_dashboard_url(int $user_id = 0): string
+{
+    if ($user_id === 0 && is_user_logged_in()) {
+        $user_id = get_current_user_id();
+    }
+
+    if ($user_id > 0 && function_exists('crm_is_root') && crm_is_root($user_id)) {
+        return malibu_exchange_get_root_dashboard_url();
+    }
+
+    return malibu_exchange_get_company_dashboard_url();
 }
 
 function malibu_exchange_is_login_captcha_enabled(): bool
@@ -129,6 +153,10 @@ function malibu_exchange_handle_login_submission(): array
             $state['errors'][] = wp_strip_all_tags($message);
         }
         return $state;
+    }
+
+    if (untrailingslashit($state['redirect_to']) === untrailingslashit(malibu_exchange_get_company_dashboard_url())) {
+        $state['redirect_to'] = malibu_exchange_get_dashboard_url((int) $user->ID);
     }
 
     wp_safe_redirect($state['redirect_to']);

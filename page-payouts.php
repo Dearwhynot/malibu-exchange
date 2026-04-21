@@ -16,20 +16,15 @@ if ( ! crm_can_access( 'payouts.view' ) ) {
 }
 
 // ─── Скоп компании ────────────────────────────────────────────────────────────
-$_uid        = get_current_user_id();
-$_company_id = crm_is_root( $_uid )
-	? (int) CRM_DEFAULT_ORG_ID
-	: crm_get_current_user_company_id( $_uid );
-
-$_org_id   = ( $_company_id > 0 ) ? $_company_id : (int) CRM_DEFAULT_ORG_ID;
-$_tz       = crm_get_timezone( $_org_id );
-$_tz_label = crm_get_timezone_label( $_org_id );
+$_company_id = crm_require_company_page_context();
+$_tz         = crm_get_timezone( $_company_id );
+$_tz_label   = crm_get_timezone_label( $_company_id );
 
 // ─── Агрегаты (server-side, без AJAX) ────────────────────────────────────────
 global $wpdb;
 
-$_co_cond_orders  = $_company_id > 0 ? $wpdb->prepare( ' AND company_id = %d', $_company_id ) : '';
-$_co_cond_payouts = $_company_id > 0 ? $wpdb->prepare( ' AND company_id = %d', $_company_id ) : '';
+$_co_cond_orders  = $wpdb->prepare( ' AND company_id = %d', $_company_id );
+$_co_cond_payouts = $wpdb->prepare( ' AND company_id = %d', $_company_id );
 
 // phpcs:disable WordPress.DB.PreparedSQL.NotPrepared
 // Накопленный USDT по paid-ордерам (amount_asset_value = USDT)
@@ -50,7 +45,7 @@ $_payout_count_all = (int) $wpdb->get_var(
 );
 // phpcs:enable
 
-$_ep_debt = max( 0.0, $_total_paid_all - $_total_payout_all );
+$_ep_debt = $_total_paid_all - $_total_payout_all; // может быть отрицательным (переплата)
 
 // ─── Форматирование чисел ─────────────────────────────────────────────────────
 function _fmt_usdt( float $v ): string {
@@ -144,12 +139,34 @@ get_header();
 					</div>
 
 					<div class="col-xl-4 col-lg-4 col-md-12 col-sm-12 m-b-15">
-						<div class="card no-margin <?php echo $_ep_debt > 0 ? 'bg-warning' : 'card-default'; ?>">
+						<?php if ( $_ep_debt < 0 ) : ?>
+						<div class="card no-margin bg-danger">
 							<div class="card-body p-3">
-								<p class="hint-text no-margin fs-12 text-uppercase <?php echo $_ep_debt > 0 ? 'text-white' : ''; ?>" style="letter-spacing:.05em;">Долг ЭП (не выплачено)</p>
-								<h3 class="no-margin bold <?php echo $_ep_debt > 0 ? 'text-white' : 'text-danger'; ?>"><?php echo esc_html( _fmt_usdt( $_ep_debt ) ); ?></h3>
+								<p class="hint-text no-margin fs-12 text-uppercase text-white" style="letter-spacing:.05em;">
+									⚠ Переплата ЭП
+								</p>
+								<h3 class="no-margin bold text-white"><?php echo esc_html( _fmt_usdt( $_ep_debt ) ); ?></h3>
+								<p class="no-margin fs-11 text-white" style="opacity:.8;">
+									Внесено выплат больше, чем накоплено по ордерам
+								</p>
 							</div>
 						</div>
+						<?php elseif ( $_ep_debt > 0 ) : ?>
+						<div class="card no-margin bg-warning">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase text-white" style="letter-spacing:.05em;">Долг ЭП (не выплачено)</p>
+								<h3 class="no-margin bold text-white"><?php echo esc_html( _fmt_usdt( $_ep_debt ) ); ?></h3>
+							</div>
+						</div>
+						<?php else : ?>
+						<div class="card card-default no-margin">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase" style="letter-spacing:.05em;">Долг ЭП</p>
+								<h3 class="no-margin bold text-success"><?php echo esc_html( _fmt_usdt( 0.0 ) ); ?></h3>
+								<p class="no-margin fs-11 hint-text">Расчёты в балансе</p>
+							</div>
+						</div>
+						<?php endif; ?>
 					</div>
 
 				</div>
@@ -174,9 +191,13 @@ get_header();
 						<div class="card-body">
 
 							<!-- Подсказка: текущий остаток -->
-							<div class="alert alert-info bordered m-b-20" id="payout-debt-hint">
-								Текущий долг ЭП: <strong id="payout-current-debt"><?php echo esc_html( _fmt_usdt( $_ep_debt ) ); ?></strong>.
-								После внесения выплаты остаток будет: <strong id="payout-remaining"><?php echo esc_html( _fmt_usdt( $_ep_debt ) ); ?></strong>.
+							<div class="alert bordered m-b-20 <?php echo $_ep_debt < 0 ? 'alert-danger' : 'alert-info'; ?>" id="payout-debt-hint">
+								<?php if ( $_ep_debt < 0 ) : ?>
+									⚠ Сейчас зафиксирована <strong>переплата <?php echo esc_html( _fmt_usdt( abs( $_ep_debt ) ) ); ?></strong>. Новая выплата увеличит переплату.
+								<?php else : ?>
+									Текущий долг ЭП: <strong id="payout-current-debt"><?php echo esc_html( _fmt_usdt( $_ep_debt ) ); ?></strong>.
+								<?php endif; ?>
+								После внесения выплаты баланс составит: <strong id="payout-remaining"><?php echo esc_html( _fmt_usdt( $_ep_debt ) ); ?></strong>.
 							</div>
 
 							<form id="form-add-payout" novalidate>
@@ -319,8 +340,18 @@ add_action( 'wp_footer', function () use ( $_nonce, $_can_create, $_ep_debt ) {
 		return parseFloat(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:8}) + '\u00a0USDT';
 	}
 	function updateRemaining(entered) {
-		var remaining = Math.max(0, currentDebt - entered);
-		$('#payout-remaining').text(fmtRub(remaining));
+		var remaining = currentDebt - entered;
+		var fmt = (remaining < 0 ? '−' : '') +
+			Math.abs(remaining).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:8}) +
+			'\u00a0USDT';
+		$('#payout-remaining').text(fmt);
+		// Меняем стиль хинта если уходим в минус
+		var $hint = $('#payout-debt-hint');
+		if (remaining < 0) {
+			$hint.removeClass('alert-info').addClass('alert-danger');
+		} else {
+			$hint.removeClass('alert-danger').addClass('alert-info');
+		}
 	}
 	$('#payout-amount').on('input', function() {
 		var v = parseFloat($(this).val()) || 0;
