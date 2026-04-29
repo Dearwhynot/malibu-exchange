@@ -11,6 +11,29 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 add_action( 'wp_ajax_me_settings_save', 'me_ajax_settings_save' );
 
+function _me_settings_telegram_status_payload( int $org_id ): array {
+	$status = crm_telegram_get_configuration_status( $org_id );
+
+	return [
+		'is_configured'        => ! empty( $status['is_configured'] ),
+		'webhook_ready'        => ! empty( $status['webhook_ready'] ),
+		'invite_ready'         => ! empty( $status['invite_ready'] ),
+		'blocked_reason'       => (string) ( $status['blocked_reason'] ?? '' ),
+		'missing_fields'       => array_values( $status['missing_fields'] ?? [] ),
+		'callback_url'         => (string) ( $status['callback_url'] ?? '' ),
+		'bot_handle'           => (string) ( $status['bot_handle'] ?? '' ),
+		'webhook_connected_at' => (string) ( $status['webhook_connected_at'] ?? '' ),
+		'webhook_last_error'   => (string) ( $status['webhook_last_error'] ?? '' ),
+		'webhook_lock'         => ! empty( $status['webhook_lock'] ),
+	];
+}
+
+function _me_settings_require_company_org_id( int $org_id, string $message = 'Настройки доступны только в контексте компании.' ): void {
+	if ( $org_id <= 0 ) {
+		wp_send_json_error( [ 'message' => $message ], 403 );
+	}
+}
+
 function _me_settings_fintech_status_payload( int $org_id ): array {
 	$status = crm_fintech_get_configuration_status( $org_id );
 
@@ -147,6 +170,77 @@ function me_ajax_settings_save(): void {
 		return;
 	}
 
+	if ( $section === 'merchant_settings' ) {
+		if ( $org_id <= 0 ) {
+			wp_send_json_error( [ 'message' => 'Merchant-настройки доступны только в контексте компании.' ], 403 );
+		}
+
+		$invite_ttl_minutes = (int) ( $_POST['merchant_invite_ttl_minutes'] ?? 0 );
+		$platform_fee_type  = sanitize_key( wp_unslash( $_POST['merchant_default_platform_fee_type'] ?? 'percent' ) );
+		$platform_fee_value = trim( (string) wp_unslash( $_POST['merchant_default_platform_fee_value'] ?? '0' ) );
+		$bonus_enabled      = isset( $_POST['merchant_bonus_enabled'] ) && wp_unslash( $_POST['merchant_bonus_enabled'] ) === '1' ? '1' : '0';
+		$referral_enabled   = isset( $_POST['merchant_referral_enabled'] ) && wp_unslash( $_POST['merchant_referral_enabled'] ) === '1' ? '1' : '0';
+		$reward_type        = sanitize_key( wp_unslash( $_POST['merchant_referral_reward_type'] ?? 'percent' ) );
+		$reward_value       = trim( (string) wp_unslash( $_POST['merchant_referral_reward_value'] ?? '0' ) );
+
+		if ( $invite_ttl_minutes <= 0 ) {
+			wp_send_json_error( [ 'message' => 'TTL приглашения должен быть больше нуля.' ], 422 );
+		}
+
+		$markup_types = crm_merchant_markup_types();
+		if ( ! isset( $markup_types[ $platform_fee_type ] ) ) {
+			wp_send_json_error( [ 'message' => 'Некорректный тип комиссии платформы.' ], 422 );
+		}
+		if ( ! isset( $markup_types[ $reward_type ] ) ) {
+			wp_send_json_error( [ 'message' => 'Некорректный тип реферального вознаграждения.' ], 422 );
+		}
+		if ( $platform_fee_value === '' || ! is_numeric( $platform_fee_value ) ) {
+			wp_send_json_error( [ 'message' => 'Значение комиссии платформы должно быть числом.' ], 422 );
+		}
+		if ( $reward_value === '' || ! is_numeric( $reward_value ) ) {
+			wp_send_json_error( [ 'message' => 'Значение реферального вознаграждения должно быть числом.' ], 422 );
+		}
+
+		$values = [
+			'merchant_invite_ttl_minutes'         => (string) $invite_ttl_minutes,
+			'merchant_default_platform_fee_type'  => $platform_fee_type,
+			'merchant_default_platform_fee_value' => number_format( (float) $platform_fee_value, 8, '.', '' ),
+			'merchant_bonus_enabled'              => $bonus_enabled,
+			'merchant_referral_enabled'           => $referral_enabled,
+			'merchant_referral_reward_type'       => $reward_type,
+			'merchant_referral_reward_value'      => number_format( (float) $reward_value, 8, '.', '' ),
+		];
+
+		foreach ( $values as $key => $value ) {
+			crm_set_setting( $key, $value, $org_id );
+		}
+
+		crm_log_entity(
+			'settings.merchant_saved',
+			'settings',
+			'update',
+			'Обновлены настройки merchant-контура',
+			'settings',
+			0,
+			[
+				'org_id'  => $org_id,
+				'context' => [
+					'section'                  => 'merchant_settings',
+					'invite_ttl_minutes'       => $invite_ttl_minutes,
+					'platform_fee_type'        => $platform_fee_type,
+					'platform_fee_value'       => $values['merchant_default_platform_fee_value'],
+					'bonus_enabled'            => $bonus_enabled === '1',
+					'referral_enabled'         => $referral_enabled === '1',
+					'referral_reward_type'     => $reward_type,
+					'referral_reward_value'    => $values['merchant_referral_reward_value'],
+				],
+			]
+		);
+
+		wp_send_json_success( [ 'message' => 'Настройки merchant-контура сохранены.' ] );
+		return;
+	}
+
 	// Fintech: общие
 	if ( $section === 'fintech_general' ) {
 		$active_provider = crm_fintech_normalize_provider_code(
@@ -247,24 +341,157 @@ function me_ajax_settings_save(): void {
 	}
 
 	// Telegram
+	_me_settings_require_company_org_id( $org_id, 'Telegram-настройки доступны только в контексте компании.' );
+
 	$token = isset( $_POST['telegram_bot_token'] )
-		? sanitize_text_field( wp_unslash( $_POST['telegram_bot_token'] ) )
+		? trim( (string) wp_unslash( $_POST['telegram_bot_token'] ) )
 		: '';
+	$username = isset( $_POST['telegram_bot_username'] )
+		? crm_telegram_sanitize_bot_username( (string) wp_unslash( $_POST['telegram_bot_username'] ) )
+		: '';
+	$current_telegram = crm_telegram_collect_settings( $org_id );
+	$settings_changed = $current_telegram['bot_token'] !== $token || $current_telegram['bot_username'] !== $username;
 
 	$ok = crm_set_setting( 'telegram_bot_token', $token, $org_id );
+	$ok = crm_set_setting( 'telegram_bot_username', $username, $org_id ) && $ok;
+	if ( $settings_changed ) {
+		$ok = crm_set_setting( 'telegram_webhook_url', '', $org_id ) && $ok;
+		$ok = crm_set_setting( 'telegram_webhook_connected_at', '', $org_id ) && $ok;
+		$ok = crm_set_setting( 'telegram_webhook_last_error', '', $org_id ) && $ok;
+		$ok = crm_set_setting( 'telegram_webhook_lock', '0', $org_id ) && $ok;
+	}
 
 	if ( ! $ok ) {
 		wp_send_json_error( [ 'message' => 'Ошибка сохранения в базе данных' ], 500 );
 	}
 
 	crm_log_entity( 'settings.telegram_saved', 'settings', 'update',
-		'Обновлён токен Telegram-бота',
+		'Обновлены настройки Telegram-бота компании',
 		'settings',
 		0,
-		[ 'context' => [ 'section' => 'telegram' ] ]
+		[
+			'org_id'  => $org_id,
+			'context' => [
+				'section'      => 'telegram',
+				'bot_username' => $username !== '' ? '@' . $username : '',
+			],
+		]
 	);
 
-	wp_send_json_success( [ 'message' => 'Настройки сохранены' ] );
+	$telegram_status = _me_settings_telegram_status_payload( $org_id );
+	$message = 'Telegram-настройки сохранены.';
+	if ( ! empty( $telegram_status['is_configured'] ) && empty( $telegram_status['webhook_ready'] ) ) {
+		$message .= ' Теперь нажмите «Подключить callback», чтобы включить Telegram-инвайты.';
+	}
+
+	wp_send_json_success( [
+		'message'         => $message,
+		'telegram_status' => $telegram_status,
+	] );
+}
+
+add_action( 'wp_ajax_me_settings_telegram_connect', 'me_ajax_settings_telegram_connect' );
+
+function me_ajax_settings_telegram_connect(): void {
+	check_ajax_referer( 'me_settings_save', 'nonce' );
+
+	$current_uid = get_current_user_id();
+	if ( ! crm_user_has_permission( $current_uid, 'settings.edit' ) ) {
+		wp_send_json_error( [ 'message' => 'Недостаточно прав' ], 403 );
+	}
+
+	$org_id = crm_is_root( $current_uid ) ? 0 : crm_get_current_user_company_id( $current_uid );
+	_me_settings_require_company_org_id( $org_id, 'Telegram callback можно подключать только в контексте компании.' );
+
+	$token = isset( $_POST['telegram_bot_token'] )
+		? trim( (string) wp_unslash( $_POST['telegram_bot_token'] ) )
+		: '';
+	$username = isset( $_POST['telegram_bot_username'] )
+		? crm_telegram_sanitize_bot_username( (string) wp_unslash( $_POST['telegram_bot_username'] ) )
+		: '';
+
+	$result = crm_telegram_register_webhook( $org_id, $username, $token );
+	$telegram_status = _me_settings_telegram_status_payload( $org_id );
+
+	if ( empty( $result['success'] ) ) {
+		crm_log_entity(
+			'settings.telegram_connect_failed',
+			'settings',
+			'update',
+			'Ошибка подключения Telegram callback',
+			'settings',
+			0,
+			[
+				'org_id'  => $org_id,
+				'context' => [
+					'bot_username' => $username !== '' ? '@' . $username : '',
+					'error'        => (string) ( $result['message'] ?? '' ),
+				],
+			]
+		);
+
+		wp_send_json_error( [
+			'message'         => (string) ( $result['message'] ?? 'Не удалось подключить callback.' ),
+			'telegram_status' => $telegram_status,
+		], 422 );
+	}
+
+	crm_log_entity(
+		'settings.telegram_connected',
+		'settings',
+		'update',
+		'Telegram callback подключён для компании',
+		'settings',
+		0,
+		[
+			'org_id'  => $org_id,
+			'context' => [
+				'bot_username' => $username !== '' ? '@' . $username : '',
+				'callback_url' => (string) ( $result['callback_url'] ?? '' ),
+			],
+		]
+	);
+
+	wp_send_json_success( [
+		'message'         => 'Telegram callback подключён. Инвайты готовы к работе.',
+		'telegram_status' => $telegram_status,
+	] );
+}
+
+add_action( 'wp_ajax_me_settings_telegram_unlock', 'me_ajax_settings_telegram_unlock' );
+
+function me_ajax_settings_telegram_unlock(): void {
+	check_ajax_referer( 'me_settings_save', 'nonce' );
+
+	$current_uid = get_current_user_id();
+	if ( ! crm_user_has_permission( $current_uid, 'settings.edit' ) ) {
+		wp_send_json_error( [ 'message' => 'Недостаточно прав' ], 403 );
+	}
+
+	$org_id = crm_is_root( $current_uid ) ? 0 : crm_get_current_user_company_id( $current_uid );
+	_me_settings_require_company_org_id( $org_id, 'Telegram-настройки доступны только в контексте компании.' );
+
+	crm_telegram_set_config_lock( $org_id, false );
+
+	crm_log_entity(
+		'settings.telegram_unlocked',
+		'settings',
+		'update',
+		'Telegram-блок разблокирован для редактирования',
+		'settings',
+		0,
+		[
+			'org_id'  => $org_id,
+			'context' => [
+				'section' => 'telegram',
+			],
+		]
+	);
+
+	wp_send_json_success( [
+		'message'         => 'Редактирование Telegram-настроек разблокировано.',
+		'telegram_status' => _me_settings_telegram_status_payload( $org_id ),
+	] );
 }
 
 add_action( 'wp_ajax_me_company_fintech_access_save', 'me_ajax_company_fintech_access_save' );

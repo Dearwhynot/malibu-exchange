@@ -2,13 +2,14 @@
 /**
  * Malibu Exchange — Companies AJAX Handlers
  *
- * Все операции требуют uid=1 (root).
- * Root — единственный пользователь, управляющий компаниями.
+ * Root управляет компаниями, а офисы компании создаются root либо
+ * пользователем с permission offices.create внутри своей компании.
  *
  * Actions:
  *   me_list_companies      — список компаний с числом пользователей
  *   me_create_company      — создать новую компанию
  *   me_assign_user_company — назначить пользователя в компанию
+ *   me_create_company_office — создать офис компании
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -20,6 +21,15 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 function _me_companies_root_only(): void {
 	if ( ! is_user_logged_in() || ! crm_is_root( get_current_user_id() ) ) {
+		wp_send_json_error( [ 'message' => 'Недостаточно прав.' ] );
+	}
+}
+
+/**
+ * Guard: root или пользователь с permission offices.create.
+ */
+function _me_companies_office_creator_only(): void {
+	if ( ! is_user_logged_in() || ! crm_can_create_company_offices( get_current_user_id() ) ) {
 		wp_send_json_error( [ 'message' => 'Недостаточно прав.' ] );
 	}
 }
@@ -91,6 +101,8 @@ function me_ajax_create_company(): void {
 		crm_fintech_serialize_allowed_providers( crm_fintech_default_allowed_providers() ),
 		$company_id
 	);
+	crm_telegram_seed_company_settings( $company_id );
+	crm_merchants_seed_company_settings( $company_id );
 
 	crm_log( 'company.created', [
 		'category'    => 'users',
@@ -174,5 +186,41 @@ function me_ajax_assign_user_company(): void {
 		'message'      => "Назначено в «{$company_name}».",
 		'company_id'   => $company_id,
 		'company_name' => $company_name,
+	] );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 4. СОЗДАТЬ ОФИС КОМПАНИИ
+// ════════════════════════════════════════════════════════════════════════════
+add_action( 'wp_ajax_me_create_company_office', 'me_ajax_create_company_office' );
+function me_ajax_create_company_office(): void {
+	_me_companies_office_creator_only();
+
+	if ( ! isset( $_POST['_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_nonce'] ) ), 'me_create_company_office' ) ) {
+		wp_send_json_error( [ 'message' => 'Нарушена безопасность запроса.' ] );
+	}
+
+	$result = crm_create_company_office(
+		[
+			'company_id'   => (int) ( $_POST['company_id'] ?? 0 ),
+			'name'         => wp_unslash( $_POST['name'] ?? '' ),
+			'code'         => wp_unslash( $_POST['code'] ?? '' ),
+			'city'         => wp_unslash( $_POST['city'] ?? '' ),
+			'address_line' => wp_unslash( $_POST['address_line'] ?? '' ),
+		],
+		get_current_user_id()
+	);
+
+	if ( is_wp_error( $result ) ) {
+		wp_send_json_error( [ 'message' => $result->get_error_message() ] );
+	}
+
+	wp_send_json_success( [
+		'message' => sprintf(
+			'Офис «%s» создан для компании «%s».',
+			(string) $result['name'],
+			(string) $result['company_name']
+		),
+		'office'   => $result,
 	] );
 }

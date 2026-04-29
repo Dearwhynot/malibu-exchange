@@ -35,7 +35,10 @@ DEFINE('TG_UNIVERSAL_DEBUG', false);
 DEFINE('TG_UNDER_CONSTRUCTION_MODE', false);
 DEFINE('TG_UNDER_CONSTRUCTION_TEXT', 'Service is temporarily under maintenance.');
 DEFINE('TG_UNIVERSAL_TIMEZONE', 'Asia/Bangkok');
-DEFINE('TG_BOT_TOKEN', function_exists('crm_get_setting') ? (string) crm_get_setting('telegram_bot_token') : '');
+DEFINE('TG_BOT_TOKEN', ( function_exists('crm_get_setting') && function_exists('crm_telegram_get_callback_company_id') && crm_telegram_get_callback_company_id() > 0 )
+	? (string) crm_get_setting( 'telegram_bot_token', crm_telegram_get_callback_company_id(), '' )
+	: ''
+);
 DEFINE('KANYON_CURRENCIES_URL', TG_BOT_TOKEN);
 DEFINE('TG_DEBUG_ADMIN_CHAT_ID', '160457790');
 DEFINE('KANYON_ORDER_URL', 'https://kanyonpay.pay2day.kz/api/v1/public/order');
@@ -131,34 +134,19 @@ if (!function_exists('tg_resolve_bot_token')) {
     {
         $candidates = [];
 
+        if (function_exists('crm_telegram_get_callback_company_id') && function_exists('crm_get_setting')) {
+            $callback_company_id = crm_telegram_get_callback_company_id();
+            if ($callback_company_id > 0) {
+                $candidates[] = crm_get_setting('telegram_bot_token', $callback_company_id, '');
+            }
+        }
+
         if (defined('TG_BOT_TOKEN')) {
             $candidates[] = TG_BOT_TOKEN;
         }
         $env = getenv('TG_BOT_TOKEN');
         if ($env !== false) {
             $candidates[] = $env;
-        }
-
-        if (isset($_GET['bot_token'])) {
-            $candidates[] = $_GET['bot_token'];
-        }
-        if (isset($_POST['bot_token'])) {
-            $candidates[] = $_POST['bot_token'];
-        }
-
-        if (function_exists('get_option')) {
-            $option_keys = [
-                'telegram_bot_token',
-                'bot_token',
-                'bot_token_service',
-                'bot_token_exchange',
-            ];
-            foreach ($option_keys as $key) {
-                $v = get_option($key);
-                if (!empty($v) && is_string($v)) {
-                    $candidates[] = $v;
-                }
-            }
         }
 
         foreach ($candidates as $token) {
@@ -216,6 +204,26 @@ if (!function_exists('fifo_bot_dbg')) {
             }
             $line .= ' | ' . $json;
         }
+        error_log($line);
+    }
+}
+
+if (!function_exists('tg_avatar_dbg')) {
+    function tg_avatar_dbg($message, $context = [])
+    {
+        $line = '[tg-avatar][debug] ' . (string) $message;
+        if (!empty($context)) {
+            if (function_exists('wp_json_encode')) {
+                $json = wp_json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            } else {
+                $json = json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            }
+
+            if (is_string($json) && $json !== '') {
+                $line .= ' | ' . $json;
+            }
+        }
+
         error_log($line);
     }
 }
@@ -599,32 +607,83 @@ if (!function_exists('tg_get_user_avatar')) {
             'saved_path' => null,
         ];
 
+        tg_avatar_dbg('tg_get_user_avatar:start', [
+            'user_id' => (string) $user_id,
+            'username' => (string) $username,
+            'message_id' => $message_id,
+            'target_dir' => $target_dir,
+        ]);
+
         if (!$telegram || empty($user_id)) {
+            tg_avatar_dbg('tg_get_user_avatar:skip_empty_input', [
+                'has_telegram' => (bool) $telegram,
+                'user_id' => (string) $user_id,
+            ]);
             return $result;
         }
 
         $content = ['user_id' => $user_id, 'offset' => 0, 'limit' => 1];
         $photos = $telegram->getUserProfilePhotos($content);
 
-        if (empty($photos['result']['photos'][0][0]['file_id'])) {
+        tg_avatar_dbg('tg_get_user_avatar:getUserProfilePhotos', [
+            'ok' => !empty($photos['ok']),
+            'total_count' => isset($photos['result']['total_count']) ? (int) $photos['result']['total_count'] : null,
+            'description' => isset($photos['description']) ? (string) $photos['description'] : '',
+        ]);
+
+        if (empty($photos['result']['photos'][0]) || !is_array($photos['result']['photos'][0])) {
+            tg_avatar_dbg('tg_get_user_avatar:no_photos', [
+                'response' => $photos,
+            ]);
             return $result;
         }
 
-        $file_id = $photos['result']['photos'][0][0]['file_id'];
+        $variants = array_values($photos['result']['photos'][0]);
+        $photo = end($variants);
+        if (empty($photo['file_id'])) {
+            tg_avatar_dbg('tg_get_user_avatar:no_file_id', [
+                'variants_count' => count($variants),
+                'photo' => $photo,
+            ]);
+            return $result;
+        }
+
+        $file_id = $photo['file_id'];
         $result['file_id'] = $file_id;
 
+        tg_avatar_dbg('tg_get_user_avatar:selected_variant', [
+            'file_id' => (string) $file_id,
+            'width' => isset($photo['width']) ? (int) $photo['width'] : null,
+            'height' => isset($photo['height']) ? (int) $photo['height'] : null,
+            'file_size' => isset($photo['file_size']) ? (int) $photo['file_size'] : null,
+            'variants_count' => count($variants),
+        ]);
+
+        $file = $telegram->getFile([
+            'file_id' => $file_id,
+        ]);
+        if (empty($file['result']['file_path'])) {
+            tg_avatar_dbg('tg_get_user_avatar:getFile_failed', [
+                'file_id' => (string) $file_id,
+                'response' => $file,
+            ]);
+            return $result;
+        }
+
+        $file_path = (string) $file['result']['file_path'];
         $suffix = $message_id !== null ? (string) $message_id : (string) time();
         $safe_username = preg_replace('/[^A-Za-z0-9_\-]/', '', (string) $username);
         if ($safe_username === '') {
             $safe_username = 'user';
         }
-        $file_name = 'avatar_' . $safe_username . '_' . $suffix . '.png';
-        $result['file_patch_avatar'] = $file_name;
 
-        $file = $telegram->getFile($file_id);
-        if (empty($file['result']['file_path'])) {
-            return $result;
+        $extension = strtolower((string) pathinfo($file_path, PATHINFO_EXTENSION));
+        if ($extension === '' || !preg_match('/^[a-z0-9]{2,5}$/', $extension)) {
+            $extension = 'jpg';
         }
+
+        $file_name = 'avatar_' . $safe_username . '_' . $suffix . '.' . $extension;
+        $result['file_patch_avatar'] = $file_name;
 
         if ($target_dir === null) {
             if (function_exists('get_template_directory')) {
@@ -634,14 +693,33 @@ if (!function_exists('tg_get_user_avatar')) {
             }
         }
 
+        tg_avatar_dbg('tg_get_user_avatar:resolved_target', [
+            'file_id' => (string) $file_id,
+            'telegram_file_path' => $file_path,
+            'target_dir' => (string) $target_dir,
+            'file_name' => $file_name,
+            'dir_exists_before' => is_dir($target_dir),
+            'dir_writable_before' => is_dir($target_dir) ? is_writable($target_dir) : null,
+        ]);
+
         if (!is_dir($target_dir)) {
             @mkdir($target_dir, 0775, true);
         }
 
         $full_path = rtrim($target_dir, '/') . '/' . $file_name;
-        $ok = $telegram->downloadFile($file['result']['file_path'], $full_path);
+        $ok = $telegram->downloadFile($file_path, $full_path);
         $result['saved'] = (bool) $ok;
-        $result['saved_path'] = $full_path;
+        $result['saved_path'] = $ok && is_file($full_path) ? $full_path : null;
+
+        tg_avatar_dbg('tg_get_user_avatar:download_result', [
+            'file_id' => (string) $file_id,
+            'target_dir_exists_after' => is_dir($target_dir),
+            'target_dir_writable_after' => is_dir($target_dir) ? is_writable($target_dir) : null,
+            'full_path' => $full_path,
+            'saved' => (bool) $ok,
+            'file_exists' => is_file($full_path),
+            'filesize' => is_file($full_path) ? @filesize($full_path) : null,
+        ]);
 
         return $result;
     }
@@ -1387,6 +1465,27 @@ if (!function_exists('tg_route_command')) {
         }
 
         if ($command === '/start') {
+            $project_start_handled = false;
+            if (function_exists('tg_project_handle_start_command')) {
+                $project_start_handled = (bool) tg_call_project_handler(
+                    'tg_project_handle_start_command',
+                    $text,
+                    $ctx,
+                    $telegram,
+                    $data
+                );
+            }
+            if ($project_start_handled) {
+                return true;
+            }
+
+            if (function_exists('crm_merchant_tg_route_command')) {
+                $merchant_handled = (bool) crm_merchant_tg_route_command($command, $text, $ctx, $telegram, $data);
+                if ($merchant_handled) {
+                    return true;
+                }
+            }
+
             if (!tg_universal_is_user_authorized_for_start_menu($actor_id, $chat_id)) {
                 bot_send_message($telegram, $chat_id, '⛔ У вас нет доступа к рабочему меню бота. Обратитесь к администратору. Chat ID: ' . $chat_id . ', User ID: ' . ($actor_id !== null ? (string) $actor_id : 'n/a'));
                 return true;
@@ -1399,6 +1498,13 @@ if (!function_exists('tg_route_command')) {
         }
 
         if ($command === '/menu') {
+            if (function_exists('crm_merchant_tg_route_command')) {
+                $merchant_handled = (bool) crm_merchant_tg_route_command($command, $text, $ctx, $telegram, $data);
+                if ($merchant_handled) {
+                    return true;
+                }
+            }
+
             if (!tg_universal_is_user_authorized_for_start_menu($actor_id, $chat_id)) {
                 bot_send_message($telegram, $chat_id, '⛔ У вас нет доступа к рабочему меню бота. Обратитесь к администратору. Chat ID: ' . $chat_id . ', User ID: ' . ($actor_id !== null ? (string) $actor_id : 'n/a'));
                 return true;
@@ -1408,6 +1514,13 @@ if (!function_exists('tg_route_command')) {
         }
 
         if ($command === '/help') {
+            if (function_exists('crm_merchant_tg_route_command')) {
+                $merchant_handled = (bool) crm_merchant_tg_route_command($command, $text, $ctx, $telegram, $data);
+                if ($merchant_handled) {
+                    return true;
+                }
+            }
+
             bot_send_message($telegram, $chat_id, nl2br(tg_help_text()));
             return true;
         }
@@ -1441,6 +1554,13 @@ if (!function_exists('tg_route_callback')) {
     {
         $chat_id = $ctx['chat_id'];
         $actor_id = isset($ctx['actor_id']) ? $ctx['actor_id'] : null;
+
+        if (function_exists('crm_merchant_tg_route_callback')) {
+            $merchant_handled = (bool) crm_merchant_tg_route_callback($callback_data, $ctx, $telegram, $data);
+            if ($merchant_handled) {
+                return true;
+            }
+        }
 
         $orders_actions = [
             'orders_refresh_rate' => '🔄 Команда: обновить курс',
@@ -1620,7 +1740,13 @@ if (!function_exists('tg_universal_callback_dispatch')) {
             ];
         }
 
-        if (!tg_access_allowed($data, $TG_ALLOWED_USERS, $TG_ALLOWED_CHATS, $TG_CHAT_ACL, $is_cron_request)) {
+        $ctx = tg_build_context($telegram, $data);
+        $bypass_acl = false;
+        if (function_exists('tg_project_should_bypass_acl')) {
+            $bypass_acl = (bool) tg_call_project_handler('tg_project_should_bypass_acl', $data, $ctx);
+        }
+
+        if (!$bypass_acl && !tg_access_allowed($data, $TG_ALLOWED_USERS, $TG_ALLOWED_CHATS, $TG_CHAT_ACL, $is_cron_request)) {
             fifo_bot_dbg('access denied', ['ids' => tg_extract_ids($data)]);
             return [
                 'status' => 200,
@@ -1629,7 +1755,6 @@ if (!function_exists('tg_universal_callback_dispatch')) {
             ];
         }
 
-        $ctx = tg_build_context($telegram, $data);
         fifo_bot_dbg('context', [
             'update_type' => $ctx['update_type'],
             'chat_id' => $ctx['chat_id'],
@@ -1687,6 +1812,10 @@ if (!function_exists('tg_universal_callback_dispatch')) {
                     $command = preg_split('/\s+/', $text, 2)[0];
                     $command = strtolower(preg_replace('/@[^\s]+$/', '', $command));
                     $handled = tg_route_command($command, $text, $ctx, $telegram, $data);
+                }
+
+                if (!$handled && function_exists('crm_merchant_tg_route_message')) {
+                    $handled = (bool) crm_merchant_tg_route_message($text, $ctx, $telegram, $data);
                 }
 
                 if (!$handled && function_exists('tg_project_handle_message')) {

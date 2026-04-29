@@ -102,6 +102,17 @@ function crm_rbac_permissions(): array {
 		'settings.view'      => [ 'module' => 'settings',  'action' => 'view',         'name' => 'Просмотр настроек' ],
 		'settings.edit'      => [ 'module' => 'settings',  'action' => 'edit',         'name' => 'Редактирование настроек' ],
 
+		// ── Offices ──────────────────────────────────────────────────────────
+		'offices.create'     => [ 'module' => 'offices',   'action' => 'create',       'name' => 'Создание офисов компаний' ],
+
+		// ── Merchants ─────────────────────────────────────────────────────────
+		'merchants.view'     => [ 'module' => 'merchants', 'action' => 'view',         'name' => 'Просмотр мерчантов' ],
+		'merchants.create'   => [ 'module' => 'merchants', 'action' => 'create',       'name' => 'Создание мерчантов' ],
+		'merchants.edit'     => [ 'module' => 'merchants', 'action' => 'edit',         'name' => 'Редактирование мерчантов' ],
+		'merchants.block'    => [ 'module' => 'merchants', 'action' => 'block',        'name' => 'Блокировка мерчантов' ],
+		'merchants.invite'   => [ 'module' => 'merchants', 'action' => 'invite',       'name' => 'Управление приглашениями мерчантов' ],
+		'merchants.ledger'   => [ 'module' => 'merchants', 'action' => 'ledger',       'name' => 'Просмотр ledger мерчантов' ],
+
 		// ── Logs (операционный журнал событий) ───────────────────────────────
 		'logs.view'          => [ 'module' => 'logs',      'action' => 'view',         'name' => 'Просмотр журнала событий' ],
 
@@ -630,6 +641,10 @@ function crm_can_access( string $permission ): bool {
 
 function crm_can_manage_users(): bool {
 	return crm_can_access( 'users.view' );
+}
+
+function crm_can_manage_merchants(): bool {
+	return crm_can_access( 'merchants.view' );
 }
 
 // ─── Badge helpers ───────────────────────────────────────────────────────────

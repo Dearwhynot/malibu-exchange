@@ -10,5 +10,9 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-wp_safe_redirect( home_url( '/dashboard/' ) );
+$target = function_exists('malibu_exchange_get_dashboard_url')
+    ? malibu_exchange_get_dashboard_url()
+    : home_url('/dashboard/');
+
+wp_safe_redirect($target);
 exit;

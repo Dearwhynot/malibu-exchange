@@ -164,8 +164,22 @@ $_root_cancel_cnt = (int) ( $_root_status_stats->cancel_cnt ?? 0 );
 $_root_cancel_sum = (float) ( $_root_status_stats->cancel_sum ?? 0 );
 
 function _root_dash_fmt_usdt( float $value ): string {
-	$formatted = rtrim( rtrim( number_format( $value, 8, '.', "\xc2\xa0" ), '0' ), '.' );
-	return $formatted . "\xc2\xa0USDT";
+	$formatted = number_format( $value, 8, '.', "\xc2\xa0" );
+
+	if ( strpos( $formatted, '.' ) === false ) {
+		return $formatted . '.00' . "\xc2\xa0USDT";
+	}
+
+	list( $integer, $fraction ) = explode( '.', $formatted, 2 );
+	$fraction = rtrim( $fraction, '0' );
+
+	if ( $fraction === '' ) {
+		$fraction = '00';
+	} elseif ( strlen( $fraction ) < 2 ) {
+		$fraction = str_pad( $fraction, 2, '0' );
+	}
+
+	return $integer . '.' . $fraction . "\xc2\xa0USDT";
 }
 
 $_root_company_status_map = [
@@ -273,7 +287,7 @@ get_header();
 						<div class="card card-default no-margin">
 							<div class="card-body p-3">
 								<p class="hint-text no-margin fs-12 text-uppercase">Общий долг ЭП</p>
-								<h3 class="no-margin bold <?php echo $_root_debt_total >= 0 ? 'text-warning' : 'text-success'; ?>">
+								<h3 class="no-margin bold font-montserrat <?php echo $_root_debt_total >= 0 ? 'text-warning' : 'text-success'; ?>">
 									<?php echo esc_html( _root_dash_fmt_usdt( $_root_debt_total ) ); ?>
 								</h3>
 								<p class="hint-text fs-11 no-margin">paid минус выплаты</p>
@@ -287,7 +301,7 @@ get_header();
 						<div class="card card-default no-margin">
 							<div class="card-body p-3">
 								<p class="hint-text no-margin fs-12 text-uppercase">Paid по всем компаниям</p>
-								<h3 class="no-margin bold text-success"><?php echo esc_html( _root_dash_fmt_usdt( $_root_paid_total ) ); ?></h3>
+								<h3 class="no-margin bold text-success font-montserrat"><?php echo esc_html( _root_dash_fmt_usdt( $_root_paid_total ) ); ?></h3>
 							</div>
 						</div>
 					</div>
@@ -295,7 +309,7 @@ get_header();
 						<div class="card card-default no-margin">
 							<div class="card-body p-3">
 								<p class="hint-text no-margin fs-12 text-uppercase">Выплаты ЭП</p>
-								<h3 class="no-margin bold text-complete"><?php echo esc_html( _root_dash_fmt_usdt( $_root_payout_total ) ); ?></h3>
+								<h3 class="no-margin bold text-complete font-montserrat"><?php echo esc_html( _root_dash_fmt_usdt( $_root_payout_total ) ); ?></h3>
 							</div>
 						</div>
 					</div>
@@ -322,10 +336,10 @@ get_header();
 						<div class="card card-default no-margin">
 							<div class="card-body p-3">
 								<div class="d-flex align-items-center m-b-5">
-									<i class="pg-icon text-warning m-r-10" style="font-size:22px;">list</i>
+									<i class="pg-icon text-warning m-r-10" style="font-size:22px;">time</i>
 									<span class="hint-text fs-12 text-uppercase">Открытые сделки</span>
 								</div>
-								<h4 class="no-margin bold text-warning"><?php echo esc_html( _root_dash_fmt_usdt( $_root_open_sum ) ); ?></h4>
+								<h4 class="no-margin bold text-warning font-montserrat"><?php echo esc_html( _root_dash_fmt_usdt( $_root_open_sum ) ); ?></h4>
 								<p class="hint-text fs-11 no-margin">created + pending · <?php echo esc_html( $_root_open_cnt ); ?> шт.</p>
 							</div>
 						</div>
@@ -334,10 +348,10 @@ get_header();
 						<div class="card card-default no-margin">
 							<div class="card-body p-3">
 								<div class="d-flex align-items-center m-b-5">
-									<i class="pg-icon text-success m-r-10" style="font-size:22px;">checkmark</i>
+									<i class="pg-icon text-success m-r-10" style="font-size:22px;">tick_circle</i>
 									<span class="hint-text fs-12 text-uppercase">Закрытые сделки</span>
 								</div>
-								<h4 class="no-margin bold text-success"><?php echo esc_html( _root_dash_fmt_usdt( $_root_closed_sum ) ); ?></h4>
+								<h4 class="no-margin bold text-success font-montserrat"><?php echo esc_html( _root_dash_fmt_usdt( $_root_closed_sum ) ); ?></h4>
 								<p class="hint-text fs-11 no-margin">paid · <?php echo esc_html( $_root_closed_cnt ); ?> шт.</p>
 							</div>
 						</div>
@@ -349,7 +363,7 @@ get_header();
 									<i class="pg-icon text-danger m-r-10" style="font-size:22px;">close</i>
 									<span class="hint-text fs-12 text-uppercase">Отменённые / ошибочные</span>
 								</div>
-								<h4 class="no-margin bold text-danger"><?php echo esc_html( _root_dash_fmt_usdt( $_root_cancel_sum ) ); ?></h4>
+								<h4 class="no-margin bold text-danger font-montserrat"><?php echo esc_html( _root_dash_fmt_usdt( $_root_cancel_sum ) ); ?></h4>
 								<p class="hint-text fs-11 no-margin">declined + cancelled + expired + error · <?php echo esc_html( $_root_cancel_cnt ); ?> шт.</p>
 							</div>
 						</div>

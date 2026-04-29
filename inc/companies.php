@@ -353,3 +353,238 @@ function crm_get_all_companies_full(): array {
 		 ORDER BY c.id ASC"
 	) ?: [];
 }
+
+/**
+ * Может ли пользователь создавать офисы компаний.
+ * Root имеет доступ всегда, обычный пользователь — только через явное permission.
+ *
+ * @param int $user_id 0 = текущий пользователь
+ */
+function crm_can_create_company_offices( int $user_id = 0 ): bool {
+	if ( $user_id === 0 ) {
+		$user_id = get_current_user_id();
+	}
+
+	if ( $user_id <= 0 ) {
+		return false;
+	}
+
+	if ( crm_is_root( $user_id ) ) {
+		return true;
+	}
+
+	return crm_user_has_permission( $user_id, 'offices.create' );
+}
+
+/**
+ * Детальный список офисов по наборам компаний.
+ *
+ * @param int[] $company_ids
+ * @return array<int,array<string,mixed>>
+ */
+function crm_get_company_offices_full_by_company_ids( array $company_ids ): array {
+	global $wpdb;
+
+	$company_ids = array_values( array_filter( array_map( 'intval', $company_ids ) ) );
+	if ( empty( $company_ids ) ) {
+		return [];
+	}
+
+	$sql_ids = implode( ',', $company_ids );
+	$rows    = $wpdb->get_results(
+		"SELECT o.id,
+		        o.company_id,
+		        o.code,
+		        o.name,
+		        o.city,
+		        o.address_line,
+		        o.status,
+		        o.is_default,
+		        o.sort_order,
+		        c.name AS company_name,
+		        c.code AS company_code
+		 FROM crm_company_offices o
+		 JOIN crm_companies c ON c.id = o.company_id
+		 WHERE o.company_id IN ($sql_ids)
+		 ORDER BY c.name ASC, o.is_default DESC, o.sort_order ASC, o.name ASC",
+		ARRAY_A
+	) ?: [];
+
+	return array_map(
+		static function ( array $row ): array {
+			return [
+				'id'           => (int) $row['id'],
+				'company_id'   => (int) $row['company_id'],
+				'company_name' => (string) $row['company_name'],
+				'company_code' => (string) $row['company_code'],
+				'code'         => (string) $row['code'],
+				'name'         => (string) $row['name'],
+				'city'         => (string) ( $row['city'] ?? '' ),
+				'address_line' => (string) ( $row['address_line'] ?? '' ),
+				'status'       => (string) $row['status'],
+				'is_default'   => ! empty( $row['is_default'] ),
+				'sort_order'   => (int) ( $row['sort_order'] ?? 0 ),
+			];
+		},
+		$rows
+	);
+}
+
+/**
+ * Генерирует уникальный code офиса внутри компании.
+ */
+function crm_generate_company_office_code( int $company_id, string $name, string $preferred_code = '' ): string {
+	global $wpdb;
+
+	$seed_code = $preferred_code !== '' ? $preferred_code : $name;
+	$base_code = substr(
+		sanitize_key( str_replace( ' ', '_', strtolower( $seed_code ) ) ),
+		0,
+		50
+	);
+
+	if ( $base_code === '' ) {
+		$base_code = 'office';
+	}
+
+	$code   = $base_code;
+	$suffix = 1;
+
+	while ( $wpdb->get_var( $wpdb->prepare(
+		"SELECT id
+		 FROM crm_company_offices
+		 WHERE company_id = %d
+		   AND code = %s
+		 LIMIT 1",
+		$company_id,
+		$code
+	) ) ) {
+		$code = substr( $base_code, 0, 46 ) . '_' . $suffix;
+		$suffix++;
+	}
+
+	return $code;
+}
+
+/**
+ * Создаёт офис компании с жёстким company-scope.
+ *
+ * @param array<string,mixed> $data
+ * @return array<string,mixed>|WP_Error
+ */
+function crm_create_company_office( array $data, int $actor_user_id = 0 ) {
+	global $wpdb;
+
+	if ( $actor_user_id <= 0 ) {
+		$actor_user_id = get_current_user_id();
+	}
+
+	if ( ! crm_can_create_company_offices( $actor_user_id ) ) {
+		return new WP_Error( 'forbidden', 'Недостаточно прав.' );
+	}
+
+	$company_id = (int) ( $data['company_id'] ?? 0 );
+	$name       = sanitize_text_field( (string) ( $data['name'] ?? '' ) );
+	$code_input = sanitize_text_field( (string) ( $data['code'] ?? '' ) );
+	$city       = sanitize_text_field( (string) ( $data['city'] ?? '' ) );
+	$address    = sanitize_text_field( (string) ( $data['address_line'] ?? '' ) );
+
+	if ( $company_id <= 0 ) {
+		return new WP_Error( 'invalid_company', 'Нужно выбрать компанию.' );
+	}
+
+	if ( $name === '' ) {
+		return new WP_Error( 'invalid_name', 'Название офиса обязательно.' );
+	}
+
+	if ( ! crm_is_root( $actor_user_id ) ) {
+		$current_company_id = crm_get_current_user_company_id( $actor_user_id );
+
+		if ( $current_company_id <= 0 ) {
+			return new WP_Error( 'company_missing', 'Ваш аккаунт не привязан к компании.' );
+		}
+
+		if ( $current_company_id !== $company_id ) {
+			crm_log_company_scope_violation(
+				'company.scope.office_create_cross_company',
+				'Попытка создать офис в чужой компании',
+				[
+					'user_id'            => $actor_user_id,
+					'org_id'             => $current_company_id,
+					'current_company_id' => $current_company_id,
+					'requested_company_id' => $company_id,
+					'office_name'        => $name,
+				]
+			);
+
+			return new WP_Error( 'forbidden_company_scope', 'Офис можно создавать только внутри своей компании.' );
+		}
+	}
+
+	$company = $wpdb->get_row( $wpdb->prepare(
+		"SELECT id, code, name
+		 FROM crm_companies
+		 WHERE id = %d
+		   AND status = 'active'
+		 LIMIT 1",
+		$company_id
+	), ARRAY_A );
+
+	if ( ! is_array( $company ) ) {
+		return new WP_Error( 'company_not_found', 'Компания не найдена или недоступна.' );
+	}
+
+	$code = crm_generate_company_office_code( $company_id, $name, $code_input );
+
+	$inserted = $wpdb->insert(
+		'crm_company_offices',
+		[
+			'company_id'         => $company_id,
+			'code'               => $code,
+			'name'               => $name,
+			'city'               => $city !== '' ? $city : null,
+			'address_line'       => $address !== '' ? $address : null,
+			'status'             => 'active',
+			'created_by_user_id' => $actor_user_id,
+		],
+		[ '%d', '%s', '%s', '%s', '%s', '%s', '%d' ]
+	);
+
+	if ( ! $inserted ) {
+		return new WP_Error( 'office_create_failed', 'Ошибка при создании офиса.' );
+	}
+
+	$office_id = (int) $wpdb->insert_id;
+
+	crm_log( 'company.office_created', [
+		'category'    => 'users',
+		'level'       => 'info',
+		'action'      => 'create',
+		'message'     => sprintf( 'Создан офис «%s» для компании «%s»', $name, $company['name'] ),
+		'target_type' => 'company_office',
+		'target_id'   => $office_id,
+		'org_id'      => $company_id,
+		'context'     => [
+			'company_id'   => $company_id,
+			'company_code' => (string) $company['code'],
+			'company_name' => (string) $company['name'],
+			'office_code'  => $code,
+			'city'         => $city,
+			'address_line' => $address,
+		],
+	] );
+
+	return [
+		'id'           => $office_id,
+		'company_id'   => $company_id,
+		'company_name' => (string) $company['name'],
+		'company_code' => (string) $company['code'],
+		'code'         => $code,
+		'name'         => $name,
+		'city'         => $city,
+		'address_line' => $address,
+		'status'       => 'active',
+		'is_default'   => false,
+		'sort_order'   => 0,
+	];
+}

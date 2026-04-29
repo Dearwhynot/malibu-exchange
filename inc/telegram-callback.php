@@ -9,9 +9,20 @@ function malibu_exchange_get_telegram_callback_route(): string
     return '/telegram/callback-universal';
 }
 
-function malibu_exchange_get_telegram_callback_url(): string
+function malibu_exchange_get_telegram_callback_url( int $company_id = 0 ): string
 {
-    return rest_url('malibu-exchange/v1' . malibu_exchange_get_telegram_callback_route());
+    $url = rest_url('malibu-exchange/v1' . malibu_exchange_get_telegram_callback_route());
+
+    if ( $company_id > 0 ) {
+        $url = add_query_arg(
+            [
+                'company' => $company_id,
+            ],
+            $url
+        );
+    }
+
+    return $url;
 }
 
 function malibu_exchange_register_telegram_callback_route(): void

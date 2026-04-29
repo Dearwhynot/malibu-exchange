@@ -20,6 +20,19 @@ if ( ! crm_user_has_permission( get_current_user_id(), 'settings.view' ) ) {
 $org_id   = crm_is_root( get_current_user_id() ) ? 0 : crm_get_current_user_company_id( get_current_user_id() );
 $settings = crm_get_all_settings( $org_id );
 $telegram_token = $settings['telegram_bot_token'] ?? '';
+$telegram_username = $settings['telegram_bot_username'] ?? '';
+$telegram_status = $org_id > 0 ? crm_telegram_get_configuration_status( $org_id ) : [
+	'is_configured'        => false,
+	'webhook_ready'        => false,
+	'invite_ready'         => false,
+	'blocked_reason'       => 'Telegram-настройки доступны только в контексте компании.',
+	'missing_fields'       => [],
+	'callback_url'         => '',
+	'bot_handle'           => '',
+	'webhook_connected_at' => '',
+	'webhook_last_error'   => '',
+	'webhook_lock'         => false,
+];
 
 // Fintech settings.
 // Читаем ТОЛЬКО настройки данной компании. Никакого fallback на другие компании.
@@ -99,13 +112,77 @@ if ( ! function_exists( 'me_settings_render_fintech_status_html' ) ) {
 	}
 }
 
+if ( ! function_exists( 'me_settings_render_telegram_status_html' ) ) {
+	function me_settings_render_telegram_status_html( array $status ): string {
+		$missing_labels = array_values( array_filter( array_map(
+			static fn( $item ) => (string) ( $item['label'] ?? '' ),
+			$status['missing_fields'] ?? []
+		) ) );
+		$blocked_reason = trim( (string) ( $status['blocked_reason'] ?? '' ) );
+		$bot_handle = trim( (string) ( $status['bot_handle'] ?? '' ) );
+		$last_error = trim( (string) ( $status['webhook_last_error'] ?? '' ) );
+
+		ob_start();
+		if ( ! empty( $status['invite_ready'] ) ) :
+			?>
+			<div class="alert alert-success bordered m-b-15">
+				<strong>Telegram-инвайты готовы к работе.</strong><br>
+				<?php if ( $bot_handle !== '' ) : ?>
+					Бот: <?php echo esc_html( $bot_handle ); ?>.
+				<?php endif; ?>
+				Администраторы компаний могут создавать invite-ссылки и QR-коды для мерчантов.
+			</div>
+			<?php
+		elseif ( ! empty( $status['is_configured'] ) ) :
+			?>
+			<div class="alert alert-warning bordered m-b-15">
+				<strong>Telegram-данные сохранены, но инвайты ещё не активны.</strong><br>
+				<?php if ( $blocked_reason !== '' ) : ?>
+					<?php echo esc_html( $blocked_reason ); ?>
+				<?php else : ?>
+					Нажмите «Подключить callback», чтобы зарегистрировать webhook для этой компании.
+				<?php endif; ?>
+				<?php if ( $last_error !== '' ) : ?>
+					<div class="m-t-10"><strong>Последняя ошибка Telegram API:</strong> <?php echo esc_html( $last_error ); ?></div>
+				<?php endif; ?>
+			</div>
+			<?php
+		else :
+			?>
+			<div class="alert alert-danger bordered m-b-15">
+				<strong>Telegram-инвайты сейчас заблокированы.</strong><br>
+				<?php echo esc_html( $blocked_reason !== '' ? $blocked_reason : 'Чтобы включить приглашения мерчантов, заполните имя бота и токен бота в этом разделе.' ); ?>
+				<?php if ( ! empty( $missing_labels ) ) : ?>
+					<div class="m-t-10">
+						<div class="bold fs-12">Что нужно заполнить:</div>
+						<ul class="m-b-0 p-l-20">
+							<li><?php echo esc_html( implode( ', ', $missing_labels ) ); ?></li>
+						</ul>
+					</div>
+				<?php endif; ?>
+			</div>
+			<?php
+		endif;
+
+		return (string) ob_get_clean();
+	}
+}
+
 $current_tz = $settings['timezone'] ?? 'UTC';
 
 $pair       = rates_get_pair( RATES_PAIR_CODE, $org_id );
 $coeff      = $pair ? rates_get_coefficient( (int) $pair->id, RATES_PROVIDER_EX24, RATES_PROVIDER_SOURCE ) : 0.05;
+$merchant_settings = $org_id > 0 ? crm_merchants_get_settings( $org_id ) : null;
 
 $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
 $nonce_save      = wp_create_nonce( 'me_settings_save' );
+$settings_js_bootstrap = [
+	'ajax_url'                  => admin_url( 'admin-ajax.php' ),
+	'nonce'                     => $nonce_save,
+	'fintech_allowed_providers' => array_values( $fintech_allowed_providers ),
+	'fintech_provider_labels'   => $fintech_provider_labels,
+	'telegram_status'           => _me_settings_telegram_status_payload( $org_id > 0 ? $org_id : 0 ),
+];
 
 get_header();
 ?>
@@ -189,6 +266,9 @@ get_header();
 					.crm-fintech-missing {
 						border-color: #f55753 !important;
 						background: #fff8f8 !important;
+					}
+					.crm-telegram-readonly {
+						background: #f7f9fc !important;
 					}
 					.crm-fintech-status-line {
 						font-size: 12px;
@@ -279,18 +359,41 @@ get_header();
 						<div class="card-title">Telegram-бот</div>
 					</div>
 					<div class="card-body">
+						<div id="telegram-config-alert">
+							<?php echo me_settings_render_telegram_status_html( $telegram_status ); ?>
+						</div>
+						<div id="telegram-status-line" class="crm-fintech-status-line"></div>
 						<form id="settings-form">
 							<div class="row">
-								<div class="col-md-8 col-lg-6">
+								<div class="col-md-4">
+									<div class="form-group">
+										<label for="telegram_bot_username">Имя бота</label>
+										<input type="text"
+										       class="form-control<?php echo ! empty( $telegram_status['missing_fields'] ) && in_array( 'telegram_bot_username', wp_list_pluck( $telegram_status['missing_fields'], 'id' ), true ) ? ' crm-fintech-missing' : ''; ?><?php echo ! empty( $telegram_status['webhook_lock'] ) ? ' crm-telegram-readonly' : ''; ?>"
+										       id="telegram_bot_username"
+										       name="telegram_bot_username"
+										       value="<?php echo esc_attr( $telegram_username ); ?>"
+										       placeholder="PhuketCashExchangeBot"
+										       autocomplete="off"
+										       data-telegram-field="telegram_bot_username"
+										       <?php echo ! empty( $telegram_status['webhook_lock'] ) ? 'readonly' : ''; ?>>
+										<p class="hint-text m-t-5">
+											Укажите username бота без символа <code>@</code>.
+										</p>
+									</div>
+								</div>
+								<div class="col-md-4">
 									<div class="form-group">
 										<label for="telegram_bot_token">Токен бота (Bot Token)</label>
 										<input type="text"
-										       class="form-control"
+										       class="form-control<?php echo ! empty( $telegram_status['missing_fields'] ) && in_array( 'telegram_bot_token', wp_list_pluck( $telegram_status['missing_fields'], 'id' ), true ) ? ' crm-fintech-missing' : ''; ?><?php echo ! empty( $telegram_status['webhook_lock'] ) ? ' crm-telegram-readonly' : ''; ?>"
 										       id="telegram_bot_token"
 										       name="telegram_bot_token"
 										       value="<?php echo esc_attr( $telegram_token ); ?>"
 										       placeholder="1234567890:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-										       autocomplete="off">
+										       autocomplete="off"
+										       data-telegram-field="telegram_bot_token"
+										       <?php echo ! empty( $telegram_status['webhook_lock'] ) ? 'readonly' : ''; ?>>
 										<p class="hint-text m-t-5">
 											Получить токен можно у
 											<a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a>
@@ -298,10 +401,31 @@ get_header();
 										</p>
 									</div>
 								</div>
+								<div class="col-md-4">
+									<div class="form-group">
+										<label for="telegram_callback_url">Callback URL</label>
+										<input type="text"
+										       class="form-control crm-telegram-readonly"
+										       id="telegram_callback_url"
+										       value="<?php echo esc_attr( $telegram_status['callback_url'] ?? '' ); ?>"
+										       readonly>
+										<p class="hint-text m-t-5">
+											Этот адрес регистрируется автоматически кнопкой ниже. В URL уже зашит <code>company_id</code> текущей компании.
+										</p>
+									</div>
+								</div>
 							</div>
-							<button type="submit" class="btn btn-primary btn-cons">
-								Сохранить настройки
-							</button>
+							<div class="d-flex flex-wrap gap-2">
+								<button type="submit" id="btn-save-telegram-settings" class="btn btn-primary btn-cons">
+									Сохранить настройки
+								</button>
+								<button type="button" id="btn-telegram-connect" class="btn btn-success btn-cons">
+									Подключить callback
+								</button>
+								<button type="button" id="btn-telegram-unlock" class="btn btn-default btn-cons<?php echo empty( $telegram_status['webhook_lock'] ) ? ' d-none' : ''; ?>">
+									Разблокировать редактирование
+								</button>
+							</div>
 						</form>
 					</div>
 				</div>
@@ -338,6 +462,100 @@ get_header();
 						</form>
 					</div>
 				</div>
+
+				<?php if ( $merchant_settings ) : ?>
+				<div class="card card-default m-b-30">
+					<div class="card-header">
+						<div class="card-title">Мерчанты — Базовые настройки</div>
+					</div>
+					<div class="card-body">
+						<form id="merchant-settings-form">
+							<div class="row">
+								<div class="col-md-3">
+									<div class="form-group">
+										<label for="merchant_invite_ttl_minutes">TTL приглашения (минуты)</label>
+										<input type="number"
+										       class="form-control"
+										       id="merchant_invite_ttl_minutes"
+										       name="merchant_invite_ttl_minutes"
+										       min="1"
+										       step="1"
+										       value="<?php echo esc_attr( $merchant_settings['invite_ttl_minutes'] ); ?>">
+										<p class="hint-text m-t-5">На сколько минут действует одноразовый invite_token.</p>
+									</div>
+								</div>
+								<div class="col-md-3">
+									<div class="form-group">
+										<label for="merchant_default_platform_fee_type">Наша fee — тип</label>
+										<select id="merchant_default_platform_fee_type" name="merchant_default_platform_fee_type" class="full-width" data-init-plugin="select2">
+											<?php foreach ( crm_merchant_markup_types() as $fee_type => $fee_label ) : ?>
+											<option value="<?php echo esc_attr( $fee_type ); ?>" <?php selected( $merchant_settings['default_platform_fee_type'], $fee_type ); ?>>
+												<?php echo esc_html( $fee_label ); ?>
+											</option>
+											<?php endforeach; ?>
+										</select>
+									</div>
+								</div>
+								<div class="col-md-3">
+									<div class="form-group">
+										<label for="merchant_default_platform_fee_value">Наша fee — значение</label>
+										<input type="number"
+										       class="form-control"
+										       id="merchant_default_platform_fee_value"
+										       name="merchant_default_platform_fee_value"
+										       step="0.00000001"
+										       min="0"
+										       value="<?php echo esc_attr( $merchant_settings['default_platform_fee_value'] ); ?>">
+									</div>
+								</div>
+								<div class="col-md-3">
+									<div class="form-group">
+										<label>&nbsp;</label>
+										<div class="checkbox check-success" style="margin-top:7px">
+											<input type="checkbox" id="merchant_bonus_enabled" name="merchant_bonus_enabled" value="1" <?php checked( $merchant_settings['bonus_enabled'] ); ?>>
+											<label for="merchant_bonus_enabled">Бонусный контур включён</label>
+										</div>
+										<div class="checkbox check-success m-t-10">
+											<input type="checkbox" id="merchant_referral_enabled" name="merchant_referral_enabled" value="1" <?php checked( $merchant_settings['referral_enabled'] ); ?>>
+											<label for="merchant_referral_enabled">Реферальный контур включён</label>
+										</div>
+									</div>
+								</div>
+							</div>
+							<div class="row">
+								<div class="col-md-3">
+									<div class="form-group">
+										<label for="merchant_referral_reward_type">Рефералка — тип</label>
+										<select id="merchant_referral_reward_type" name="merchant_referral_reward_type" class="full-width" data-init-plugin="select2">
+											<?php foreach ( crm_merchant_markup_types() as $fee_type => $fee_label ) : ?>
+											<option value="<?php echo esc_attr( $fee_type ); ?>" <?php selected( $merchant_settings['referral_reward_type'], $fee_type ); ?>>
+												<?php echo esc_html( $fee_label ); ?>
+											</option>
+											<?php endforeach; ?>
+										</select>
+									</div>
+								</div>
+								<div class="col-md-3">
+									<div class="form-group">
+										<label for="merchant_referral_reward_value">Рефералка — значение</label>
+										<input type="number"
+										       class="form-control"
+										       id="merchant_referral_reward_value"
+										       name="merchant_referral_reward_value"
+										       step="0.00000001"
+										       min="0"
+										       value="<?php echo esc_attr( $merchant_settings['referral_reward_value'] ); ?>">
+										<p class="hint-text m-t-5">Базовая схема начисления для будущего WebApp / bot-flow.</p>
+									</div>
+								</div>
+							</div>
+							<button type="submit" class="btn btn-primary btn-cons">
+								Сохранить настройки мерчантов
+							</button>
+						</form>
+					</div>
+				</div>
+				<?php endif; ?>
 
 				<!-- ─── Fintech: Общие ──────────────────────────────────────── -->
 				<div id="fintech-config-alert">
@@ -536,16 +754,32 @@ get_header();
 <?php get_template_part( 'template-parts/overlay' ); ?>
 
 <?php
-add_action( 'wp_footer', function () use ( $nonce_save, $fintech_allowed_providers, $fintech_provider_labels ) {
+add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 ?>
+<script type="application/json" id="settings-page-bootstrap"><?php echo crm_json_for_inline_js( $settings_js_bootstrap ); ?></script>
 <script>
 	(function ($) {
 		'use strict';
 
-		var AJAX_URL = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
-		var NONCE    = '<?php echo esc_js( $nonce_save ); ?>';
-		var FINTECH_ALLOWED_PROVIDERS = <?php echo wp_json_encode( array_values( $fintech_allowed_providers ) ); ?>;
-		var FINTECH_PROVIDER_LABELS   = <?php echo wp_json_encode( $fintech_provider_labels ); ?>;
+		function readBootstrapJson(id, fallback) {
+			var node = document.getElementById(id);
+			if (!node) {
+				return fallback;
+			}
+			try {
+				return JSON.parse(node.textContent || '{}');
+			} catch (err) {
+				console.error('Bootstrap JSON parse failed for', id, err);
+				return fallback;
+			}
+		}
+
+		var BOOTSTRAP = readBootstrapJson('settings-page-bootstrap', {});
+		var AJAX_URL = BOOTSTRAP.ajax_url || '';
+		var NONCE    = BOOTSTRAP.nonce || '';
+		var FINTECH_ALLOWED_PROVIDERS = BOOTSTRAP.fintech_allowed_providers || [];
+		var FINTECH_PROVIDER_LABELS   = BOOTSTRAP.fintech_provider_labels || {};
+		var TELEGRAM_STATUS           = BOOTSTRAP.telegram_status || {};
 		var FINTECH_FORM_SELECTOR = '#fintech-settings-form, #fintech-kanyon-form, #fintech-doverka-form';
 
 	function escapeHtml(value) {
@@ -747,6 +981,118 @@ add_action( 'wp_footer', function () use ( $nonce_save, $fintech_allowed_provide
 		});
 	}
 
+	function buildTelegramAlertHtml(status) {
+		var missingLabels = labelsFromItems(status.missing_fields || []);
+
+		if (status.invite_ready) {
+			return '' +
+				'<div class="alert alert-success bordered m-b-15">' +
+					'<strong>Telegram-инвайты готовы к работе.</strong><br>' +
+					(status.bot_handle ? 'Бот: ' + escapeHtml(status.bot_handle) + '. ' : '') +
+					'Администраторы компаний могут создавать invite-ссылки и QR-коды для мерчантов.' +
+				'</div>';
+		}
+
+		if (status.is_configured) {
+			var warningHtml = '' +
+				'<div class="alert alert-warning bordered m-b-15">' +
+					'<strong>Telegram-данные сохранены, но инвайты ещё не активны.</strong><br>' +
+					escapeHtml(status.blocked_reason || 'Нажмите «Подключить callback», чтобы зарегистрировать webhook для этой компании.');
+			if (status.webhook_last_error) {
+				warningHtml += '<div class="m-t-10"><strong>Последняя ошибка Telegram API:</strong> ' + escapeHtml(status.webhook_last_error) + '</div>';
+			}
+			warningHtml += '</div>';
+			return warningHtml;
+		}
+
+		var dangerHtml = '' +
+			'<div class="alert alert-danger bordered m-b-15">' +
+				'<strong>Telegram-инвайты сейчас заблокированы.</strong><br>' +
+				escapeHtml(status.blocked_reason || 'Чтобы включить приглашения мерчантов, заполните имя бота и токен бота в этом разделе.');
+		if (missingLabels.length) {
+			dangerHtml += '<div class="m-t-10"><div class="bold fs-12">Что нужно заполнить:</div><ul class="m-b-0 p-l-20"><li>' + escapeHtml(missingLabels.join(', ')) + '</li></ul></div>';
+		}
+		dangerHtml += '</div>';
+		return dangerHtml;
+	}
+
+	function renderTelegramStatusLine(status) {
+		var text = '';
+		if (status.invite_ready) {
+			text = '<strong>Callback зарегистрирован.</strong> Telegram-инвайты уже можно выдавать мерчантам.';
+			if (status.webhook_connected_at) {
+				text += ' Подключено: ' + escapeHtml(status.webhook_connected_at) + '.';
+			}
+		} else if (status.is_configured) {
+			text = '<strong>Шаг 2 из 2.</strong> Данные бота сохранены. Осталось нажать «Подключить callback».';
+		} else {
+			text = '<strong>Шаг 1 из 2.</strong> Сначала заполните имя бота и токен бота.';
+		}
+		if (status.webhook_lock) {
+			text += ' Блок зафиксирован; для правок нажмите «Разблокировать редактирование».';
+		}
+		$('#telegram-status-line').html(text);
+	}
+
+	function highlightTelegramField(fieldId, isMissing) {
+		$('#' + fieldId).toggleClass('crm-fintech-missing', !!isMissing);
+	}
+
+	function collectTelegramDraftStatus() {
+		var status = $.extend(true, {}, TELEGRAM_STATUS || {});
+		var username = getTrimmedValue('#telegram_bot_username').replace(/^@+/, '');
+		var token = getTrimmedValue('#telegram_bot_token');
+		var missing = [];
+
+		if (!username) {
+			missing.push({ id: 'telegram_bot_username', label: 'Имя бота' });
+		}
+		if (!token) {
+			missing.push({ id: 'telegram_bot_token', label: 'Токен бота' });
+		}
+
+		status.missing_fields = missing;
+		status.is_configured = !missing.length;
+		status.bot_handle = username ? '@' + username : '';
+
+		if (!status.is_configured) {
+			status.invite_ready = false;
+			status.blocked_reason = 'Чтобы включить приглашения мерчантов, заполните имя бота и токен бота.';
+		} else if (!status.webhook_ready) {
+			status.invite_ready = false;
+			status.blocked_reason = 'Бот ещё не подключён к callback. Сначала нажмите «Подключить callback».';
+		} else {
+			status.blocked_reason = '';
+		}
+
+		return status;
+	}
+
+	function applyTelegramLockState(status) {
+		var locked = !!status.webhook_lock;
+		$('[data-telegram-field]').prop('readonly', locked).toggleClass('crm-telegram-readonly', locked);
+		$('#btn-telegram-unlock').toggleClass('d-none', !locked);
+		$('#btn-save-telegram-settings').prop('disabled', locked);
+	}
+
+	function renderTelegramStatus(status) {
+		TELEGRAM_STATUS = $.extend(true, {}, status || {});
+		var missingIds = {};
+		$.each(TELEGRAM_STATUS.missing_fields || [], function (_, item) {
+			if (item && item.id) {
+				missingIds[item.id] = true;
+			}
+		});
+
+		$('#telegram-config-alert').html(buildTelegramAlertHtml(TELEGRAM_STATUS));
+		renderTelegramStatusLine(TELEGRAM_STATUS);
+		$('[data-telegram-field]').each(function () {
+			highlightTelegramField($(this).attr('id'), !!missingIds[$(this).attr('id')]);
+		});
+		$('#telegram_callback_url').val(TELEGRAM_STATUS.callback_url || '');
+		applyTelegramLockState(TELEGRAM_STATUS);
+	}
+
 	function handleSettingsForm($form, $alert, extraData, resetLabel) {
 		$form.on('submit', function (e) {
 			e.preventDefault();
@@ -760,6 +1106,9 @@ add_action( 'wp_footer', function () use ( $nonce_save, $fintech_allowed_provide
 					$alert.removeClass('d-none alert-danger').addClass('alert-success').text(res.data.message || 'Сохранено');
 					if (res.data.fintech_status) {
 						renderFintechStatus(res.data.fintech_status);
+					}
+					if (res.data.telegram_status) {
+						renderTelegramStatus(res.data.telegram_status);
 					} else if ($form.is(FINTECH_FORM_SELECTOR)) {
 						renderFintechStatus(collectFintechStatus());
 					}
@@ -786,7 +1135,13 @@ add_action( 'wp_footer', function () use ( $nonce_save, $fintech_allowed_provide
 	handleSettingsForm(
 		$('#settings-form'),
 		$('#settings-alert'),
-		function () { return { section: 'telegram', telegram_bot_token: $('#telegram_bot_token').val() }; },
+		function () {
+			return {
+				section: 'telegram',
+				telegram_bot_username: $('#telegram_bot_username').val(),
+				telegram_bot_token: $('#telegram_bot_token').val()
+			};
+		},
 		'Сохранить настройки'
 	);
 
@@ -795,6 +1150,24 @@ add_action( 'wp_footer', function () use ( $nonce_save, $fintech_allowed_provide
 		$('#settings-alert'),
 		function () { return { section: 'rates_coefficient', rates_coefficient: $('#rates_coefficient').val() }; },
 		'Сохранить коэффициент'
+	);
+
+	handleSettingsForm(
+		$('#merchant-settings-form'),
+		$('#settings-alert'),
+		function () {
+			return {
+				section:                           'merchant_settings',
+				merchant_invite_ttl_minutes:       $('#merchant_invite_ttl_minutes').val(),
+				merchant_default_platform_fee_type: $('#merchant_default_platform_fee_type').val(),
+				merchant_default_platform_fee_value: $('#merchant_default_platform_fee_value').val(),
+				merchant_bonus_enabled:            $('#merchant_bonus_enabled').is(':checked') ? '1' : '0',
+				merchant_referral_enabled:         $('#merchant_referral_enabled').is(':checked') ? '1' : '0',
+				merchant_referral_reward_type:     $('#merchant_referral_reward_type').val(),
+				merchant_referral_reward_value:    $('#merchant_referral_reward_value').val()
+			};
+		},
+		'Сохранить настройки мерчантов'
 	);
 
 	handleSettingsForm(
@@ -850,11 +1223,75 @@ add_action( 'wp_footer', function () use ( $nonce_save, $fintech_allowed_provide
 		renderFintechStatus(collectFintechStatus());
 	});
 
+	$('#btn-telegram-connect').on('click', function () {
+		var $btn = $(this);
+		$btn.prop('disabled', true).text('Подключаем…');
+		$('#settings-alert').addClass('d-none').removeClass('alert-success alert-danger');
+
+		$.post(AJAX_URL, {
+			action: 'me_settings_telegram_connect',
+			nonce: NONCE,
+			telegram_bot_username: $('#telegram_bot_username').val(),
+			telegram_bot_token: $('#telegram_bot_token').val()
+		})
+		.done(function (res) {
+			if (res.success) {
+				$('#settings-alert').removeClass('d-none alert-danger').addClass('alert-success').text(res.data.message || 'Telegram callback подключён.');
+				if (res.data.telegram_status) {
+					renderTelegramStatus(res.data.telegram_status);
+				}
+			} else {
+				$('#settings-alert').removeClass('d-none alert-success').addClass('alert-danger').text((res.data && res.data.message) || 'Не удалось подключить Telegram callback.');
+				if (res.data && res.data.telegram_status) {
+					renderTelegramStatus(res.data.telegram_status);
+				}
+			}
+		})
+		.fail(function () {
+			$('#settings-alert').removeClass('d-none alert-success').addClass('alert-danger').text('Сетевая ошибка при подключении Telegram callback.');
+		})
+		.always(function () {
+			$btn.prop('disabled', false).text('Подключить callback');
+		});
+	});
+
+	$('#btn-telegram-unlock').on('click', function () {
+		var $btn = $(this);
+		$btn.prop('disabled', true).text('Разблокируем…');
+		$.post(AJAX_URL, {
+			action: 'me_settings_telegram_unlock',
+			nonce: NONCE
+		})
+		.done(function (res) {
+			if (res.success) {
+				$('#settings-alert').removeClass('d-none alert-danger').addClass('alert-success').text(res.data.message || 'Редактирование разблокировано.');
+				if (res.data.telegram_status) {
+					renderTelegramStatus(res.data.telegram_status);
+				}
+			} else {
+				$('#settings-alert').removeClass('d-none alert-success').addClass('alert-danger').text((res.data && res.data.message) || 'Не удалось разблокировать Telegram-настройки.');
+			}
+		})
+		.fail(function () {
+			$('#settings-alert').removeClass('d-none alert-success').addClass('alert-danger').text('Сетевая ошибка при разблокировке Telegram-настроек.');
+		})
+		.always(function () {
+			$btn.prop('disabled', false).text('Разблокировать редактирование');
+		});
+	});
+
 	$(document).on('input change', '[data-fintech-field], #fintech_active_provider, #fintech_kanyon_verify_signature', function () {
 		renderFintechStatus(collectFintechStatus());
 	});
 
+	$(document).on('input change', '[data-telegram-field]', function () {
+		if (!$(this).prop('readonly')) {
+			renderTelegramStatus(collectTelegramDraftStatus());
+		}
+	});
+
 	renderFintechStatus(collectFintechStatus());
+	renderTelegramStatus(TELEGRAM_STATUS);
 
 }(jQuery));
 </script>

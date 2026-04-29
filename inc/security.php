@@ -54,6 +54,108 @@ function malibu_exchange_get_dashboard_url(int $user_id = 0): string
     return malibu_exchange_get_company_dashboard_url();
 }
 
+function malibu_exchange_normalize_local_redirect_path(string $url): string
+{
+    $url = trim($url);
+    if ($url === '') {
+        return '';
+    }
+
+    $path = wp_parse_url($url, PHP_URL_PATH);
+    if (!is_string($path) || $path === '') {
+        $path = $url;
+    }
+
+    $path = '/' . ltrim($path, '/');
+
+    return untrailingslashit($path) ?: '/';
+}
+
+function malibu_exchange_should_redirect_to_user_dashboard(string $redirect_to): bool
+{
+    $normalized = malibu_exchange_normalize_local_redirect_path($redirect_to);
+    if ($normalized === '') {
+        return true;
+    }
+
+    $default_targets = [
+        malibu_exchange_normalize_local_redirect_path(home_url('/')),
+        malibu_exchange_normalize_local_redirect_path(malibu_exchange_get_company_dashboard_url()),
+    ];
+
+    return in_array($normalized, $default_targets, true);
+}
+
+function malibu_exchange_get_root_blocked_company_templates(): array
+{
+    return [
+        'page-users.php',
+        'page-dashboard.php',
+        'page-rates.php',
+        'page-orders.php',
+        'page-create-order.php',
+        'page-payouts.php',
+        'page-logs.php',
+        'page-merchants.php',
+        'page-settings.php',
+    ];
+}
+
+function malibu_exchange_is_root_blocked_company_page(): bool
+{
+    foreach (malibu_exchange_get_root_blocked_company_templates() as $template) {
+        if (is_page_template($template)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function malibu_exchange_render_root_company_scope_denied(): void
+{
+    $template = locate_template('template-parts/root-company-denied.php');
+
+    if (is_string($template) && $template !== '' && file_exists($template)) {
+        require $template;
+        exit;
+    }
+
+    global $wp_query;
+    if ($wp_query instanceof WP_Query) {
+        $wp_query->set_404();
+    }
+
+    status_header(404);
+    nocache_headers();
+
+    $fallback = get_404_template();
+    if (is_string($fallback) && $fallback !== '' && file_exists($fallback)) {
+        require $fallback;
+        exit;
+    }
+
+    wp_die('404', '404', ['response' => 404]);
+}
+
+add_action('template_redirect', 'malibu_exchange_block_root_from_company_pages', 16);
+function malibu_exchange_block_root_from_company_pages(): void
+{
+    if ((is_admin() && !wp_doing_ajax()) || !is_user_logged_in()) {
+        return;
+    }
+
+    if (!function_exists('crm_is_root') || !crm_is_root(get_current_user_id())) {
+        return;
+    }
+
+    if (!malibu_exchange_is_root_blocked_company_page()) {
+        return;
+    }
+
+    malibu_exchange_render_root_company_scope_denied();
+}
+
 function malibu_exchange_is_login_captcha_enabled(): bool
 {
     return (bool) apply_filters('malibu_exchange_login_captcha_enabled', false);
@@ -155,7 +257,7 @@ function malibu_exchange_handle_login_submission(): array
         return $state;
     }
 
-    if (untrailingslashit($state['redirect_to']) === untrailingslashit(malibu_exchange_get_company_dashboard_url())) {
+    if (malibu_exchange_should_redirect_to_user_dashboard($state['redirect_to'])) {
         $state['redirect_to'] = malibu_exchange_get_dashboard_url((int) $user->ID);
     }
 

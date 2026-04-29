@@ -51,6 +51,161 @@ if (!class_exists('Telegram')) {
             return $this->apiRequest('sendPhoto', (array) $payload);
         }
 
+        public function getFile($payload = [])
+        {
+            if (!is_array($payload)) {
+                $payload = [
+                    'file_id' => (string) $payload,
+                ];
+            }
+
+            return $this->apiRequest('getFile', (array) $payload);
+        }
+
+        public function downloadFile($file_path, $destination_path)
+        {
+            $file_path = ltrim((string) $file_path, '/');
+            $destination_path = (string) $destination_path;
+
+            if (function_exists('tg_avatar_dbg')) {
+                tg_avatar_dbg('Telegram::downloadFile:start', [
+                    'file_path' => $file_path,
+                    'destination_path' => $destination_path,
+                ]);
+            }
+
+            if ($this->bot_token === '' || $file_path === '' || $destination_path === '') {
+                if (function_exists('tg_avatar_dbg')) {
+                    tg_avatar_dbg('Telegram::downloadFile:invalid_input', [
+                        'has_bot_token' => $this->bot_token !== '',
+                        'file_path' => $file_path,
+                        'destination_path' => $destination_path,
+                    ]);
+                }
+                return false;
+            }
+
+            $url = 'https://api.telegram.org/file/bot' . $this->bot_token . '/' . $file_path;
+            $dir = dirname($destination_path);
+            if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+                if (function_exists('tg_avatar_dbg')) {
+                    tg_avatar_dbg('Telegram::downloadFile:mkdir_failed', [
+                        'dir' => $dir,
+                    ]);
+                }
+                return false;
+            }
+
+            if (function_exists('wp_remote_get')) {
+                $response = wp_remote_get($url, [
+                    'timeout' => 20,
+                ]);
+
+                if (is_wp_error($response)) {
+                    if (function_exists('tg_avatar_dbg')) {
+                        tg_avatar_dbg('Telegram::downloadFile:wp_remote_get_error', [
+                            'file_path' => $file_path,
+                            'error' => $response->get_error_message(),
+                        ]);
+                    }
+                    return false;
+                }
+
+                $code = (int) wp_remote_retrieve_response_code($response);
+                if ($code < 200 || $code >= 300) {
+                    if (function_exists('tg_avatar_dbg')) {
+                        tg_avatar_dbg('Telegram::downloadFile:http_error', [
+                            'file_path' => $file_path,
+                            'http_code' => $code,
+                        ]);
+                    }
+                    return false;
+                }
+
+                $body = wp_remote_retrieve_body($response);
+                if (!is_string($body) || $body === '') {
+                    if (function_exists('tg_avatar_dbg')) {
+                        tg_avatar_dbg('Telegram::downloadFile:empty_body', [
+                            'file_path' => $file_path,
+                            'http_code' => $code,
+                        ]);
+                    }
+                    return false;
+                }
+
+                $written = file_put_contents($destination_path, $body);
+                $ok = $written !== false;
+                if (function_exists('tg_avatar_dbg')) {
+                    tg_avatar_dbg('Telegram::downloadFile:wp_remote_get_done', [
+                        'file_path' => $file_path,
+                        'http_code' => $code,
+                        'bytes_received' => strlen($body),
+                        'bytes_written' => $ok ? (int) $written : null,
+                        'saved' => $ok,
+                        'destination_exists' => is_file($destination_path),
+                    ]);
+                }
+
+                return $ok;
+            }
+
+            if (!function_exists('curl_init')) {
+                if (function_exists('tg_avatar_dbg')) {
+                    tg_avatar_dbg('Telegram::downloadFile:curl_missing', [
+                        'file_path' => $file_path,
+                    ]);
+                }
+                return false;
+            }
+
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+
+            $body = curl_exec($ch);
+            if ($body === false) {
+                $error = curl_error($ch);
+                curl_close($ch);
+                if (function_exists('tg_avatar_dbg')) {
+                    tg_avatar_dbg('Telegram::downloadFile:curl_error', [
+                        'file_path' => $file_path,
+                        'error' => (string) $error,
+                    ]);
+                }
+                return false;
+            }
+
+            $http_code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($http_code < 200 || $http_code >= 300 || !is_string($body) || $body === '') {
+                if (function_exists('tg_avatar_dbg')) {
+                    tg_avatar_dbg('Telegram::downloadFile:curl_http_error', [
+                        'file_path' => $file_path,
+                        'http_code' => $http_code,
+                        'body_length' => is_string($body) ? strlen($body) : null,
+                    ]);
+                }
+                return false;
+            }
+
+            $written = file_put_contents($destination_path, $body);
+            $ok = $written !== false;
+            if (function_exists('tg_avatar_dbg')) {
+                tg_avatar_dbg('Telegram::downloadFile:curl_done', [
+                    'file_path' => $file_path,
+                    'http_code' => $http_code,
+                    'bytes_received' => strlen($body),
+                    'bytes_written' => $ok ? (int) $written : null,
+                    'saved' => $ok,
+                    'destination_exists' => is_file($destination_path),
+                ]);
+            }
+
+            return $ok;
+        }
+
         public function __call($method, $arguments)
         {
             $payload = [];

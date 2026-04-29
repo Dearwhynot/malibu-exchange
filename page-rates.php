@@ -568,8 +568,8 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_market_save, $cha
 	});
 
 	// ── NVD3 Line Chart ───────────────────────────────────────────────────────
-	var chartSber    = <?php echo wp_json_encode( $chart_sber ); ?>;
-	var chartTinkoff = <?php echo wp_json_encode( $chart_tinkoff ); ?>;
+	var chartSber    = <?php echo crm_json_for_inline_js( $chart_sber ); ?>;
+	var chartTinkoff = <?php echo crm_json_for_inline_js( $chart_tinkoff ); ?>;
 
 	if ( (chartSber.length > 0 || chartTinkoff.length > 0) && typeof nv !== 'undefined' ) {
 		var chartData = [];

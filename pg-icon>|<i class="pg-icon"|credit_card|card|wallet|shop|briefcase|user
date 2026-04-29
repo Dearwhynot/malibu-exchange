@@ -1,0 +1,163 @@
+page-create-order.php:32:		<a href="#" class="btn-link toggle-sidebar d-lg-none pg-icon btn-icon-link" data-toggle="sidebar">menu</a>
+page-create-order.php:60:				<i class="pg-icon btn-icon-link">menu_add</i>
+page-create-order.php:97:											<i class="pg-icon m-r-5">add</i>Создать ордер
+page-create-order.php:120:										<i class="pg-icon">copy</i>
+page-create-order.php:181:		$btn.prop('disabled', true).html('<i class="pg-icon m-r-5">refresh</i>Создаём…');
+page-create-order.php:216:				$btn.prop('disabled', false).html('<i class="pg-icon m-r-5">add</i>Создать ордер');
+page-create-order.php:227:				$('#btn-copy-link').html('<i class="pg-icon">tick</i>');
+page-create-order.php:228:				setTimeout(function () { $('#btn-copy-link').html('<i class="pg-icon">copy</i>'); }, 1500);
+page-payouts.php:70:		<a href="#" class="btn-link toggle-sidebar d-lg-none pg-icon btn-icon-link" data-toggle="sidebar">menu</a>
+page-payouts.php:98:				<i class="pg-icon btn-icon-link">menu_add</i>
+page-payouts.php:180:							<i class="pg-icon m-r-5">add</i>Внести выплату от ЭП
+page-orders.php:36:		<a href="#" class="btn-link toggle-sidebar d-lg-none pg-icon btn-icon-link" data-toggle="sidebar">menu</a>
+page-orders.php:64:				<i class="pg-icon btn-icon-link">menu_add</i>
+page-orders.php:90:						<i class="pg-icon m-r-5">add</i>Создать чек
+page-orders.php:102:									<span class="input-group-text"><i class="pg-icon">search</i></span>
+page-orders.php:144:									<i class="pg-icon">search</i> Найти
+page-orders.php:160:							<i class="pg-icon" style="font-size:13px;vertical-align:middle">time</i>
+page-orders.php:164:							<span class="pg-icon" style="animation:spin 1s linear infinite;display:inline-block;">refresh</span>
+page-orders.php:246:					<i class="pg-icon m-r-5">add</i>Создать чек
+page-orders.php:308:.orders-act .pg-icon { font-size:16px; vertical-align:middle; }
+page-orders.php:448:			+ '<i class="pg-icon">more_vertical</i>'
+page-orders.php:451:			+ '<li><a class="dropdown-item btn-order-details" href="#" data-id="' + escHtml(r.id) + '"><i class="pg-icon m-r-5">see</i> Детали</a></li>'
+page-orders.php:452:			+ (!qrBlocked ? '<li><a class="dropdown-item btn-order-qr" href="#" data-id="' + escHtml(r.id) + '"><i class="pg-icon m-r-5">picture</i> QR-чек</a></li>' : '')
+page-orders.php:453:			+ (checkAllowed ? '<li><a class="dropdown-item btn-order-check" href="#" data-id="' + escHtml(r.id) + '"><i class="pg-icon m-r-5">tick_circle</i> Проверить</a></li>' : '')
+page-orders.php:560:				+ '<i class="pg-icon m-r-5">settings</i> Действия'
+page-orders.php:563:				+ '<li><a class="dropdown-item btn-check-paid" href="#" data-id="' + escHtml(d.id) + '"><i class="pg-icon m-r-5">tick_circle</i> Проверить оплату</a></li>'
+page-orders.php:565:				+ '<li><a class="dropdown-item btn-order-cancel-web" href="#" data-id="' + escHtml(d.id) + '" style="color:#c62828"><i class="pg-icon m-r-5">disable</i> Отменить ордер</a></li>'
+page-orders.php:655:		$btn.prop('disabled', true).html('<i class="pg-icon m-r-5">refresh</i>Создаём…');
+page-orders.php:676:				$btn.prop('disabled', false).html('<i class="pg-icon m-r-5">add</i>Создать чек');
+page-dashboard.php:241:		<a href="#" class="btn-link toggle-sidebar d-lg-none pg-icon btn-icon-link" data-toggle="sidebar">menu</a>
+page-dashboard.php:269:				<i class="pg-icon btn-icon-link">menu_add</i>
+page-dashboard.php:418:							<i class="pg-icon m-r-5">users</i>Пользователи и компании
+page-dashboard.php:621:									<i class="pg-icon text-warning m-r-10" style="font-size:22px;">list</i>
+page-dashboard.php:635:									<i class="pg-icon text-success m-r-10" style="font-size:22px;">checkmark</i>
+page-dashboard.php:649:									<i class="pg-icon text-danger m-r-10" style="font-size:22px;">close</i>
+template-parts/sidebar.php:59:                <i class="pg-icon">chevron_down</i>
+template-parts/sidebar.php:62:                <i class="pg-icon"></i>
+template-parts/sidebar.php:76:                <span class="icon-thumbnail"><i class="pg-icon">chart_alt</i></span>
+template-parts/sidebar.php:82:                <span class="icon-thumbnail"><i class="pg-icon">home</i></span>
+template-parts/sidebar.php:89:                <span class="icon-thumbnail"><i class="pg-icon">home</i></span>
+template-parts/sidebar.php:96:                <span class="icon-thumbnail"><i class="pg-icon">chart</i></span>
+template-parts/sidebar.php:102:                <span class="icon-thumbnail"><i class="pg-icon">table</i></span>
+template-parts/sidebar.php:108:                <span class="icon-thumbnail"><i class="pg-icon">add</i></span>
+template-parts/sidebar.php:115:                <span class="icon-thumbnail"><i class="pg-icon">card</i></span>
+template-parts/sidebar.php:122:                <span class="icon-thumbnail"><i class="pg-icon">users</i></span>
+template-parts/sidebar.php:129:                <span class="icon-thumbnail"><i class="pg-icon">credit_card</i></span>
+template-parts/sidebar.php:136:                <span class="icon-thumbnail"><i class="pg-icon">settings</i></span>
+template-parts/sidebar.php:142:                <span class="icon-thumbnail"><i class="pg-icon">clipboard</i></span>
+page-merchants.php:85:		<a href="#" class="btn-link toggle-sidebar d-lg-none pg-icon btn-icon-link" data-toggle="sidebar">menu</a>
+page-merchants.php:113:				<i class="pg-icon btn-icon-link">menu_add</i>
+page-merchants.php:143:						<i class="pg-icon m-r-5">add</i>Создать мерчанта
+page-merchants.php:153:									<span class="input-group-text"><i class="pg-icon">search</i></span>
+page-merchants.php:206:									<i class="pg-icon">search</i> Найти
+page-merchants.php:219:						<span class="pg-icon" style="animation:spin 1s linear infinite;display:inline-block;">refresh</span>
+page-merchants.php:419:						<i class="pg-icon m-r-5">add</i>Создать приглашение
+page-logs.php:47:		<a href="#" class="btn-link toggle-sidebar d-lg-none pg-icon btn-icon-link" data-toggle="sidebar">menu</a>
+page-logs.php:75:				<i class="pg-icon btn-icon-link">menu_add</i>
+page-logs.php:104:									<span class="input-group-text"><i class="pg-icon">search</i></span>
+page-logs.php:206:									<i class="pg-icon">search</i> Найти
+page-logs.php:222:							<i class="pg-icon" style="font-size:13px;vertical-align:middle">time</i>
+page-logs.php:226:							<span class="pg-icon" style="animation:spin 1s linear infinite;display:inline-block;">refresh</span>
+template-parts/overlay.php:12:                <i class="pg-icon">close</i>
+template-parts/overlay.php:87:                                <i class="pg-icon">facebook</i>
+template-parts/overlay.php:100:                                <i class="pg-icon">twitter</i>
+template-parts/overlay.php:113:                                <i class="pg-icon">google_plus</i>
+page-settings.php:122:		<a href="#" class="btn-link toggle-sidebar d-lg-none pg-icon btn-icon-link" data-toggle="sidebar">menu</a>
+page-settings.php:150:				<i class="pg-icon btn-icon-link">menu_add</i>
+page-users.php:204:		<a href="#" class="btn-link toggle-sidebar d-lg-none pg-icon btn-icon-link" data-toggle="sidebar">menu</a>
+page-users.php:232:				<i class="pg-icon btn-icon-link">menu_add</i>
+page-users.php:285:						<i class="pg-icon">user_add</i>&nbsp; Добавить пользователя
+page-users.php:304:										<span class="input-group-text"><i class="pg-icon">search</i></span>
+page-users.php:332:												<i class="pg-icon">search</i>
+page-users.php:336:												<i class="pg-icon">close</i>
+page-users.php:354:								<i class="pg-icon" style="font-size:48px;display:block;margin-bottom:12px">users</i>
+page-users.php:504:														<i class="pg-icon">more_vertical</i>
+page-users.php:514:																<i class="pg-icon m-r-5">see</i> Просмотр (WP)
+page-users.php:525:																<i class="pg-icon m-r-5">edit</i> Редактировать
+page-users.php:538:																<i class="pg-icon m-r-5">grid</i> Компания
+page-users.php:552:																	<i class="pg-icon m-r-5">tick_circle</i> Разблокировать
+page-users.php:560:																	<i class="pg-icon m-r-5">undo</i> Восстановить
+page-users.php:568:																	<i class="pg-icon m-r-5">tick_circle</i> Активировать
+page-users.php:576:																	<i class="pg-icon m-r-5">disable</i> Заблокировать
+page-users.php:588:																	<i class="pg-icon m-r-5">download</i> Архивировать
+page-users.php:601:																<i class="pg-icon m-r-5">trash</i> Удалить (в архив)
+page-users.php:610:																	<i class="pg-icon m-r-5">trash_alt</i> Удалить физически
+page-users.php:725:														<i class="pg-icon">edit</i>
+page-users.php:747:							<i class="pg-icon">add</i>&nbsp; Создать компанию
+page-users.php:813:															<i class="pg-icon">more_vertical</i>
+page-users.php:824:																	<i class="pg-icon m-r-5">settings</i> Настройки
+page-users.php:884:					<i class="pg-icon">close</i>
+page-users.php:1055:					<i class="pg-icon spin d-none" id="btn-save-spinner">refresh</i>
+page-users.php:1071:					<i class="pg-icon">close</i>
+page-users.php:1096:					<i class="pg-icon">close</i>
+page-users.php:1109:					<i class="pg-icon spin d-none" id="btn-role-perms-spinner">refresh</i>
+page-users.php:1127:					<i class="pg-icon">close</i>
+page-users.php:1150:					<i class="pg-icon spin d-none" id="btn-assign-company-spinner">refresh</i>
+page-users.php:1166:					<i class="pg-icon">close</i>
+page-users.php:1199:					<i class="pg-icon spin d-none" id="btn-create-company-spinner">refresh</i>
+page-users.php:1215:					<i class="pg-icon">close</i>
+page-users.php:1288:					<i class="pg-icon spin d-none" id="btn-company-settings-spinner">refresh</i>
+page-users.php:1350:.pg-icon.spin { animation:spin 1s linear infinite; display:inline-block; }
+page-users.php:1353:.dropdown-menu .dropdown-item .pg-icon { flex-shrink:0; line-height:1; }
+page-users.php:1515:			+     '<i class="pg-icon">more_vertical</i>'
+page-users.php:1525:			+       '<i class="pg-icon m-r-5">settings</i> Настройки'
+page-users.php:1701:						   .html('<i class="pg-icon m-r-5">tick_circle</i> Разблокировать');
+page-users.php:1705:						   .html('<i class="pg-icon m-r-5">disable</i> Заблокировать');
+template-parts/order-receipt.php:246:				+ '<i class="pg-icon m-r-5">tick_circle</i>Проверить оплату'
+template-parts/order-receipt.php:325:		$btn.prop('disabled', true).html('<i class="pg-icon m-r-5">refresh</i>Проверяем…');
+template-parts/order-receipt.php:336:				$btn.prop('disabled', false).html('<i class="pg-icon m-r-5">tick_circle</i>Проверить оплату');
+template-parts/order-receipt.php:364:				$btn.prop('disabled', false).html('<i class="pg-icon m-r-5">tick_circle</i>Проверить оплату');
+template-parts/order-receipt.php:369:			$btn.prop('disabled', false).html('<i class="pg-icon m-r-5">tick_circle</i>Проверить оплату');
+vendor/pages/pages/js/pages.js:424:			var li = hMenu.children('ul').append("<li class='more'><a href='javascript:;'><span class='title d-flex'><i class='pg-icon'>more_horizontal</i></span></a><ul></ul></li>");
+page-root-dashboard.php:186:		<a href="#" class="btn-link toggle-sidebar d-lg-none pg-icon btn-icon-link" data-toggle="sidebar">menu</a>
+page-root-dashboard.php:214:				<i class="pg-icon btn-icon-link">menu_add</i>
+page-root-dashboard.php:325:									<i class="pg-icon text-warning m-r-10" style="font-size:22px;">list</i>
+page-root-dashboard.php:337:									<i class="pg-icon text-success m-r-10" style="font-size:22px;">checkmark</i>
+page-root-dashboard.php:349:									<i class="pg-icon text-danger m-r-10" style="font-size:22px;">close</i>
+template-parts/default-page/page-container.php:6:        <a href="#" class="btn-link toggle-sidebar d-lg-none pg-icon btn-icon-link" data-toggle="sidebar">
+template-parts/default-page/page-container.php:18:                            <i class="pg-icon">world</i>
+template-parts/default-page/page-container.php:32:                                                <i class="pg-icon m-r-10">map</i>
+template-parts/default-page/page-container.php:38:                                                    <div><i class="pg-icon">chevron_down</i>
+template-parts/default-page/page-container.php:67:                                                <i class="pg-icon m-r-10">alert_warning</i>
+template-parts/default-page/page-container.php:84:                                                <i class="pg-icon m-r-10">alert_warning</i>
+template-parts/default-page/page-container.php:134:                        <i class="pg-icon">link_alt</i>
+template-parts/default-page/page-container.php:139:                        <i class="pg-icon">grid_alt</i>
+template-parts/default-page/page-container.php:145:                    class="pg-icon">search</i>Type anywhere to <span class="bold">search</span></a>
+template-parts/default-page/page-container.php:173:                <i class="pg-icon btn-icon-link">menu_add</i>
+template-parts/quickview.php:35:    <a class="btn-icon-link invert quickview-toggle" data-toggle-element="#quickview" data-toggle="quickview"><i class="pg-icon">close</i></a>
+template-parts/quickview.php:46:                                <a href="#" class="delete-note-link"><i class="pg-icon">trash_alt</i></a>
+template-parts/quickview.php:49:                                <a href="#" class="new-note-link" data-navigate="view" data-view-port="#note-views" data-view-animation="push"><i class="pg-icon">add</i></a>
+template-parts/quickview.php:52:                        <button aria-label="" class="btn-remove-notes btn btn-xs btn-block hide"><i class="pg-icon">close</i>Delete</button>
+template-parts/quickview.php:73:                                    <i class="pg-icon">chevron_right</i>
+template-parts/quickview.php:97:                                <a href="#" class="d-flex align-items-center" data-navigate="view" data-view-port="#note-views" data-view-animation="push"><i class="pg-icon">chevron_right</i></a>
+template-parts/quickview.php:120:                                <a href="#" class="d-flex align-items-center" data-navigate="view" data-view-port="#note-views" data-view-animation="push"><i class="pg-icon">chevron_right</i></a>
+template-parts/quickview.php:143:                                <a href="#" class="d-flex align-items-center" data-navigate="view" data-view-port="#note-views" data-view-animation="push"><i class="pg-icon">chevron_right</i></a>
+template-parts/quickview.php:166:                                <a href="#" class="d-flex align-items-center" data-navigate="view" data-view-port="#note-views" data-view-animation="push"><i class="pg-icon">chevron_right</i></a>
+template-parts/quickview.php:178:                            <li><a href="#" class="close-note-link"><i class="pg-icon">chevron_left</i></a>
+template-parts/quickview.php:180:                            <li><a href="#" data-action="Bold" class="fs-12"><i class="pg-icon">format_bold</i></a>
+template-parts/quickview.php:182:                            <li><a href="#" data-action="Italic" class="fs-12"><i class="pg-icon">format_italics</i></a>
+template-parts/quickview.php:184:                            <li><a href="#" class="fs-12"><i class="pg-icon">link</i></a>
+template-parts/quickview.php:212:                                <i class="pg-icon">more_horizontal</i>
+template-parts/quickview.php:220:                                <i class="pg-icon">search</i>
+template-parts/quickview.php:241:                                            <span class="text-warning fs-10"><i class="pg-icon">circle_fill</i></span>
+template-parts/quickview.php:260:                                            <span class="text-warning fs-10"><i class="pg-icon">circle_fill</i></span>
+template-parts/quickview.php:287:                                            <span class="text-complete fs-10"><i class="pg-icon">circle_fill</i></span>
+template-parts/quickview.php:302:                                            <span class="text-complete fs-10"><i class="pg-icon">circle_fill</i></span>
+template-parts/quickview.php:326:                                            <span class="text-danger fs-10"><i class="pg-icon">circle_fill</i></span>
+template-parts/quickview.php:353:                                <i class="pg-icon">add</i>
+template-parts/quickview.php:362:                                <i class="pg-icon">more_horizontal</i>
+template-parts/quickview.php:984:                                <i class="pg-icon">chevron_left</i>
+template-parts/quickview.php:991:                                <i class="pg-icon">more_horizontal</i>
+template-parts/quickview.php:1045:                                <a href="#" class="link text-color"><i class="pg-icon">add</i></a>
+template-parts/quickview.php:1052:                                <a href="#" class="link text-color"><i class="pg-icon">camera</i></a>
+vendor/pages/pages/css/pages.css:3945:.pg-icon {
+vendor/pages/pages/css/pages.css:4047:.btn .pg-icon {
+page-rates.php:91:		<a href="#" class="btn-link toggle-sidebar d-lg-none pg-icon btn-icon-link" data-toggle="sidebar">menu</a>
+page-rates.php:119:				<i class="pg-icon btn-icon-link">menu_add</i>
+page-rates.php:282:						<i class="pg-icon">save</i>&nbsp; Сохранить в историю
+page-rates.php:321:									<i class="pg-icon fs-5">save</i> Сохранить
+page-rates.php:354:									<i class="pg-icon fs-5">save</i> Сохранить
+page-rates.php:387:									<i class="pg-icon fs-5">save</i> Сохранить
+page-rates.php:672:			var BTN_LABEL = '<i class="pg-icon">save</i>&nbsp; Сохранить в историю';
+page-rates.php:678:			$btn.prop('disabled', true).html('<i class="pg-icon">save</i>&nbsp; Сохраняем…');

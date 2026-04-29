@@ -4,6 +4,22 @@ if (!defined('ABSPATH')) {
 	exit;
 }
 
+if ( ! function_exists( 'crm_json_for_inline_js' ) ) {
+	function crm_json_for_inline_js( $value ): string {
+		$encoded = wp_json_encode(
+			$value,
+			JSON_UNESCAPED_UNICODE
+			| JSON_UNESCAPED_SLASHES
+			| JSON_HEX_TAG
+			| JSON_HEX_AMP
+			| JSON_HEX_APOS
+			| JSON_HEX_QUOT
+		);
+
+		return is_string( $encoded ) && $encoded !== '' ? $encoded : 'null';
+	}
+}
+
 // error_log('functions.php загружен');
 
 // require_once get_template_directory() . '/inc/setup.php';
@@ -28,7 +44,13 @@ require_once get_template_directory() . '/inc/ajax/companies.php';
 
 // Настройки системы (crm_settings)
 require_once get_template_directory() . '/inc/settings.php';
+require_once get_template_directory() . '/inc/telegram-bot.php';
 require_once get_template_directory() . '/inc/ajax/settings.php';
+
+// Мерчанты: company-scoped бизнес-сущность + AJAX
+require_once get_template_directory() . '/inc/merchants.php';
+require_once get_template_directory() . '/inc/telegram-merchant-menu.php';
+require_once get_template_directory() . '/inc/ajax/merchants.php';
 
 // Курсы валют
 require_once get_template_directory() . '/inc/rates.php';
@@ -55,6 +77,7 @@ require_once get_template_directory() . '/inc/fintech-cron.php';
 
 // Telegram: project-хуки для ордеров (должно быть до dispatch)
 require_once get_template_directory() . '/inc/telegram-orders-handler.php';
+require_once get_template_directory() . '/inc/telegram-merchants-handler.php';
 
 // require_once get_template_directory() . '/inc/menus.php';
 // require_once get_template_directory() . '/inc/enqueue.php';
@@ -144,6 +167,7 @@ function malibu_exchange_enqueue_pages_assets(): void
 	wp_enqueue_style( 'pages-jquery-scrollbar', $theme_uri . '/vendor/pages/assets/plugins/jquery-scrollbar/jquery.scrollbar.css', [], $ver );
 	wp_enqueue_style( 'pages-select2',          $theme_uri . '/vendor/pages/assets/plugins/select2/css/select2.min.css',           [], $ver );
 	wp_enqueue_style( 'pages-core',             $theme_uri . '/vendor/pages/pages/css/pages.css',                                  ['pages-bootstrap'], $ver );
+	wp_enqueue_style( 'malibu-backoffice-overrides', $theme_uri . '/assets/css/backoffice-overrides.css', ['pages-core'], filemtime( get_template_directory() . '/assets/css/backoffice-overrides.css' ) );
 	// wp_enqueue_style( 'pages-demo-style', $theme_uri . '/vendor/pages/assets/css/style.css', ['pages-core'], $ver );
 
 	/* =========================

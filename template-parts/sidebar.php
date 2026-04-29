@@ -22,11 +22,15 @@ $current_id = get_queried_object_id();
 $vendor_img_uri = $theme_uri . '/vendor/pages/assets/img';
 $is_root = is_user_logged_in() && function_exists('crm_is_root') && crm_is_root(get_current_user_id());
 $dashboard_url = function_exists('malibu_exchange_get_dashboard_url') ? malibu_exchange_get_dashboard_url() : home_url('/dashboard/');
-$company_dashboard_url = function_exists('malibu_exchange_get_company_dashboard_url') ? malibu_exchange_get_company_dashboard_url() : home_url('/dashboard/');
 $root_dashboard_url = function_exists('malibu_exchange_get_root_dashboard_url') ? malibu_exchange_get_root_dashboard_url() : home_url('/root-dashboard/');
+$root_users_url = home_url('/root-users/');
+$root_roles_url = home_url('/root-roles/');
+$root_companies_url = home_url('/root-companies/');
+$root_offices_url = home_url('/root-offices/');
+$root_merchants_url = home_url('/root-merchants/');
 ?>
 
-<nav class="page-sidebar" data-pages="sidebar">
+<nav class="page-sidebar<?php echo $is_root ? ' page-sidebar-root' : ''; ?>" data-pages="sidebar">
     <!-- BEGIN SIDEBAR MENU TOP TRAY CONTENT-->
     <div class="sidebar-overlay-slide from-top" id="appMenu">
         <div class="row">
@@ -66,6 +70,13 @@ $root_dashboard_url = function_exists('malibu_exchange_get_root_dashboard_url') 
     <!-- END SIDEBAR MENU HEADER-->
     <!-- START SIDEBAR MENU -->
     <div class="sidebar-menu">
+        <?php if ($is_root) : ?>
+        <div class="root-sidebar-badge">
+            <div class="root-sidebar-badge__eyebrow">Root Mode</div>
+            <div class="root-sidebar-badge__title">Системный контур</div>
+            <div class="root-sidebar-badge__text">Только root-страницы. Company-scoped разделы открывай из отдельного admin-аккаунта.</div>
+        </div>
+        <?php endif; ?>
         <!-- BEGIN SIDEBAR MENU ITEMS-->
         <ul class="menu-items">
             <?php if ($is_root) : ?>
@@ -76,10 +87,34 @@ $root_dashboard_url = function_exists('malibu_exchange_get_root_dashboard_url') 
                 <span class="icon-thumbnail"><i class="pg-icon">chart_alt</i></span>
             </li>
             <li class="">
-                <a href="<?php echo esc_url($company_dashboard_url); ?>">
-                    <span class="title">Дашборд</span>
+                <a href="<?php echo esc_url($root_users_url); ?>">
+                    <span class="title">Пользователи</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">users</i></span>
+            </li>
+            <li class="">
+                <a href="<?php echo esc_url($root_roles_url); ?>">
+                    <span class="title">Роли и права</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">shield_lock</i></span>
+            </li>
+            <li class="">
+                <a href="<?php echo esc_url($root_companies_url); ?>">
+                    <span class="title">Компании</span>
                 </a>
                 <span class="icon-thumbnail"><i class="pg-icon">home</i></span>
+            </li>
+            <li class="">
+                <a href="<?php echo esc_url($root_offices_url); ?>">
+                    <span class="title">Офисы</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">grid</i></span>
+            </li>
+            <li class="m-b-40">
+                <a href="<?php echo esc_url($root_merchants_url); ?>">
+                    <span class="title">Мерчанты</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">user</i></span>
             </li>
             <?php else : ?>
             <li class="m-t-20">
@@ -88,7 +123,6 @@ $root_dashboard_url = function_exists('malibu_exchange_get_root_dashboard_url') 
                 </a>
                 <span class="icon-thumbnail"><i class="pg-icon">home</i></span>
             </li>
-            <?php endif; ?>
             <li class="">
                 <a href="<?php echo esc_url(home_url('/rates/')); ?>">
                     <span class="title">Курсы</span>
@@ -121,6 +155,14 @@ $root_dashboard_url = function_exists('malibu_exchange_get_root_dashboard_url') 
                 </a>
                 <span class="icon-thumbnail"><i class="pg-icon">users</i></span>
             </li>
+            <?php if ( function_exists('crm_can_access') && crm_can_access('merchants.view') ) : ?>
+            <li class="">
+                <a href="<?php echo esc_url(home_url('/merchants/')); ?>">
+                    <span class="title">Мерчанты</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">user</i></span>
+            </li>
+            <?php endif; ?>
             <li class="">
                 <a href="<?php echo esc_url(home_url('/settings/')); ?>">
                     <span class="title">Настройки</span>
@@ -133,6 +175,7 @@ $root_dashboard_url = function_exists('malibu_exchange_get_root_dashboard_url') 
                 </a>
                 <span class="icon-thumbnail"><i class="pg-icon">clipboard</i></span>
             </li>
+            <?php endif; ?>
         </ul>
         <div class="clearfix"></div>
     </div>

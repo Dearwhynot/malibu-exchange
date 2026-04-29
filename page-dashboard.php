@@ -186,6 +186,10 @@ if ( $_dashboard_is_root ) {
 		$_canceled_statuses
 	) );
 
+	$_all_time_total_cnt = $_cnt_open + $_cnt_closed + $_cnt_cancel;
+	$_all_time_total_sum = $_sum_open + $_sum_closed + $_sum_cancel;
+	$_dashboard_has_all_time_orders = $_all_time_total_cnt > 0;
+
 	// 7. Последние 7 дней — динамика сделок
 	$_week_rows = $wpdb->get_results( $wpdb->prepare(
 		"SELECT
@@ -215,14 +219,28 @@ if ( $_dashboard_is_root ) {
 		$_week_data_paid[]  = $_week_map[ $d ]['paid']  ?? 0;
 		$_week_labels[]     = date( 'd.m', strtotime( $d ) );
 	}
+	$_week_has_activity = array_sum( $_week_data_total ) > 0 || array_sum( $_week_data_paid ) > 0;
 	// phpcs:enable
 }
 
 // ─── Вспомогательные ─────────────────────────────────────────────────────────
 function _dash_fmt_usdt( float $v ): string {
-	// До 8 знаков, но обрезаем незначащие нули
-	$formatted = rtrim( rtrim( number_format( $v, 8, '.', "\xc2\xa0" ), '0' ), '.' );
-	return $formatted . "\xc2\xa0USDT";
+	$formatted = number_format( $v, 8, '.', "\xc2\xa0" );
+
+	if ( strpos( $formatted, '.' ) === false ) {
+		return $formatted . '.00' . "\xc2\xa0USDT";
+	}
+
+	list( $integer, $fraction ) = explode( '.', $formatted, 2 );
+	$fraction = rtrim( $fraction, '0' );
+
+	if ( $fraction === '' ) {
+		$fraction = '00';
+	} elseif ( strlen( $fraction ) < 2 ) {
+		$fraction = str_pad( $fraction, 2, '0' );
+	}
+
+	return $integer . '.' . $fraction . "\xc2\xa0USDT";
 }
 
 $_vendor_img = get_template_directory_uri() . '/vendor/pages/assets/img';
@@ -474,7 +492,7 @@ get_header();
 								</div>
 								<div class="row-xs-height">
 									<div class="col-xs-height col-middle p-l-20 p-b-20">
-										<h3 class="text-white no-margin bold"><?php echo esc_html( _dash_fmt_usdt( $_today_paid_sum ) ); ?></h3>
+										<h3 class="text-white no-margin bold font-montserrat"><?php echo esc_html( _dash_fmt_usdt( $_today_paid_sum ) ); ?></h3>
 										<p class="text-white hint-text no-margin">
 											<?php echo esc_html( "сделок: {$_paid_today_cnt}" ); ?>
 										</p>
@@ -497,7 +515,7 @@ get_header();
 								</div>
 								<div class="row-xs-height">
 									<div class="col-xs-height col-middle p-l-20 p-b-20">
-										<h3 class="no-margin bold <?php echo $_ep_debt > 0 ? 'text-white' : 'text-master'; ?>"><?php echo esc_html( _dash_fmt_usdt( $_ep_debt ) ); ?></h3>
+										<h3 class="no-margin bold font-montserrat <?php echo $_ep_debt > 0 ? 'text-white' : 'text-master'; ?>"><?php echo esc_html( _dash_fmt_usdt( $_ep_debt ) ); ?></h3>
 										<p class="hint-text no-margin <?php echo $_ep_debt > 0 ? 'text-white' : 'text-master'; ?>">не выплачено ЭП</p>
 									</div>
 								</div>
@@ -518,7 +536,7 @@ get_header();
 								</div>
 								<div class="row-xs-height">
 									<div class="col-xs-height col-middle p-l-20 p-b-20">
-										<h3 class="text-white no-margin bold"><?php echo esc_html( _dash_fmt_usdt( $_total_paid_all ) ); ?></h3>
+										<h3 class="text-white no-margin bold font-montserrat"><?php echo esc_html( _dash_fmt_usdt( $_total_paid_all ) ); ?></h3>
 										<p class="text-white hint-text no-margin">
 											<?php echo esc_html( "выплачено ЭП: " . _dash_fmt_usdt( $_total_out_all ) ); ?>
 										</p>
@@ -541,24 +559,39 @@ get_header();
 								<div class="card-title">Сделки за последние 7 дней</div>
 							</div>
 							<div class="card-body">
-								<div class="row m-b-10">
-									<div class="col-6">
-										<span class="m-r-10" style="display:inline-block;width:12px;height:12px;background:#6d5cae;border-radius:2px;"></span>
-										<span class="hint-text fs-12">Всего</span>
+								<?php if ( $_week_has_activity ) : ?>
+									<div class="row m-b-10">
+										<div class="col-6">
+											<span class="m-r-10" style="display:inline-block;width:12px;height:12px;background:#6d5cae;border-radius:2px;"></span>
+											<span class="hint-text fs-12">Всего</span>
+										</div>
+										<div class="col-6">
+											<span class="m-r-10" style="display:inline-block;width:12px;height:12px;background:#10cfbd;border-radius:2px;"></span>
+											<span class="hint-text fs-12">Paid</span>
+										</div>
 									</div>
-									<div class="col-6">
-										<span class="m-r-10" style="display:inline-block;width:12px;height:12px;background:#10cfbd;border-radius:2px;"></span>
-										<span class="hint-text fs-12">Paid</span>
+									<div id="dash-sparkline-chart" style="min-height:90px; overflow-x:auto; white-space:nowrap;"></div>
+									<div class="row m-t-10">
+										<?php foreach ( $_week_labels as $i => $label ) : ?>
+										<div class="col text-center">
+											<span class="hint-text fs-10"><?php echo esc_html( $label ); ?></span>
+										</div>
+										<?php endforeach; ?>
 									</div>
-								</div>
-								<div id="dash-sparkline-chart" style="min-height:90px; overflow-x:auto; white-space:nowrap;"></div>
-								<div class="row m-t-10">
-									<?php foreach ( $_week_labels as $i => $label ) : ?>
-									<div class="col text-center">
-										<span class="hint-text fs-10"><?php echo esc_html( $label ); ?></span>
+								<?php else : ?>
+									<div class="dashboard-empty-state dashboard-empty-state--chart">
+										<div class="dashboard-empty-state__icon" aria-hidden="true">
+											<i class="pg-icon">chart</i>
+										</div>
+										<div class="dashboard-empty-state__title">За последние 7 дней активности не было</div>
+										<p class="dashboard-empty-state__text">Когда появятся ордера, здесь покажем динамику по всем заявкам и paid.</p>
+										<div class="dashboard-empty-state__dates">
+											<?php foreach ( $_week_labels as $label ) : ?>
+												<span><?php echo esc_html( $label ); ?></span>
+											<?php endforeach; ?>
+										</div>
 									</div>
-									<?php endforeach; ?>
-								</div>
+								<?php endif; ?>
 							</div>
 						</div>
 					</div>
@@ -581,7 +614,11 @@ get_header();
 								];
 								$_total_today_for_pct = max( 1, $_today_total );
 								if ( empty( $_today_status ) ) {
-									echo '<p class="hint-text text-center m-t-20">Сделок сегодня нет.</p>';
+									echo '<div class="dashboard-empty-state dashboard-empty-state--compact">';
+									echo '<div class="dashboard-empty-state__icon" aria-hidden="true"><i class="pg-icon">alert</i></div>';
+									echo '<div class="dashboard-empty-state__title">Сегодня ордеров пока нет</div>';
+									echo '<p class="dashboard-empty-state__text">Когда появятся сделки, здесь будет раскладка по текущим статусам.</p>';
+									echo '</div>';
 								} else {
 									foreach ( $_status_defs as $code => $def ) {
 										$cnt = $_today_status[ $code ] ?? 0;
@@ -613,49 +650,93 @@ get_header();
 				</div>
 
 				<div class="row m-b-20">
+					<?php
+					$_dashboard_kpi_cards = [
+						[
+							'label'        => 'Открытые',
+							'icon'         => 'time',
+							'variant'      => 'warning',
+							'count'        => $_cnt_open,
+							'sum'          => $_sum_open,
+							'caption'      => 'созданные и ожидающие',
+						],
+						[
+							'label'        => 'Оплаченные',
+							'icon'         => 'tick_circle',
+							'variant'      => 'success',
+							'count'        => $_cnt_closed,
+							'sum'          => $_sum_closed,
+							'caption'      => 'успешно оплаченные',
+						],
+						[
+							'label'        => 'Отменённые',
+							'icon'         => 'close',
+							'variant'      => 'danger',
+							'count'        => $_cnt_cancel,
+							'sum'          => $_sum_cancel,
+							'caption'      => 'ошибка, отмена и истечение',
+						],
+					];
+					?>
+					<?php foreach ( $_dashboard_kpi_cards as $_dashboard_kpi_card ) : ?>
+						<?php
+						$_dashboard_kpi_count_share  = $_all_time_total_cnt > 0
+							? (int) round( ( $_dashboard_kpi_card['count'] / $_all_time_total_cnt ) * 100 )
+							: 0;
+						$_dashboard_kpi_volume_share = $_all_time_total_sum > 0
+							? (int) round( ( $_dashboard_kpi_card['sum'] / $_all_time_total_sum ) * 100 )
+							: 0;
+						$_dashboard_kpi_progress_css = 'width:' . $_dashboard_kpi_volume_share . '%;';
+						if ( $_dashboard_kpi_card['count'] > 0 && $_dashboard_kpi_volume_share > 0 ) {
+							$_dashboard_kpi_progress_css .= 'min-width:16px;';
+						}
+						?>
+						<div class="col-xl-4 col-lg-4 col-md-6 col-sm-12 m-b-15">
+							<div class="card card-default no-margin dashboard-kpi-card dashboard-kpi-card--<?php echo esc_attr( $_dashboard_kpi_card['variant'] ); ?>">
+								<div class="card-body">
+									<div class="dashboard-kpi-card__top">
+										<div class="dashboard-kpi-card__eyebrow">
+											<span class="dashboard-kpi-card__icon" aria-hidden="true">
+												<i class="pg-icon"><?php echo esc_html( $_dashboard_kpi_card['icon'] ); ?></i>
+											</span>
+											<div class="dashboard-kpi-card__title-group">
+												<div class="dashboard-kpi-card__label font-montserrat all-caps">
+													<?php echo esc_html( $_dashboard_kpi_card['label'] ); ?>
+												</div>
+												<div class="dashboard-kpi-card__caption">
+													<?php echo esc_html( $_dashboard_kpi_card['caption'] ); ?>
+												</div>
+											</div>
+										</div>
+										<span class="dashboard-kpi-card__count">
+											<?php echo esc_html( number_format_i18n( (int) $_dashboard_kpi_card['count'] ) ); ?>
+											<span>шт.</span>
+										</span>
+									</div>
 
-					<div class="col-xl-4 col-lg-4 col-md-4 col-sm-12 m-b-15">
-						<div class="card card-default no-margin">
-							<div class="card-body p-3">
-								<div class="d-flex align-items-center m-b-5">
-									<i class="pg-icon text-warning m-r-10" style="font-size:22px;">list</i>
-									<span class="hint-text fs-12 text-uppercase">Открытые</span>
-									<span class="badge badge-warning m-l-auto"><?php echo esc_html( $_cnt_open ); ?></span>
+									<div class="dashboard-kpi-card__value font-montserrat">
+										<?php echo esc_html( _dash_fmt_usdt( (float) $_dashboard_kpi_card['sum'] ) ); ?>
+									</div>
+
+									<div class="dashboard-kpi-card__footer">
+										<?php if ( $_dashboard_has_all_time_orders ) : ?>
+											<div class="dashboard-kpi-card__progress" aria-hidden="true">
+												<span style="<?php echo esc_attr( $_dashboard_kpi_progress_css ); ?>"></span>
+											</div>
+											<div class="dashboard-kpi-card__meta">
+												<span><?php echo esc_html( $_dashboard_kpi_count_share ); ?>% ордеров</span>
+												<span><?php echo esc_html( $_dashboard_kpi_volume_share ); ?>% объёма</span>
+											</div>
+										<?php else : ?>
+											<div class="dashboard-kpi-card__empty">
+												История появится после первых ордеров
+											</div>
+										<?php endif; ?>
+									</div>
 								</div>
-								<h4 class="no-margin bold text-warning"><?php echo esc_html( _dash_fmt_usdt( $_sum_open ) ); ?></h4>
-								<p class="hint-text fs-11 no-margin">created + pending</p>
 							</div>
 						</div>
-					</div>
-
-					<div class="col-xl-4 col-lg-4 col-md-4 col-sm-12 m-b-15">
-						<div class="card card-default no-margin">
-							<div class="card-body p-3">
-								<div class="d-flex align-items-center m-b-5">
-									<i class="pg-icon text-success m-r-10" style="font-size:22px;">checkmark</i>
-									<span class="hint-text fs-12 text-uppercase">Оплаченные</span>
-									<span class="badge badge-success m-l-auto"><?php echo esc_html( $_cnt_closed ); ?></span>
-								</div>
-								<h4 class="no-margin bold text-success"><?php echo esc_html( _dash_fmt_usdt( $_sum_closed ) ); ?></h4>
-								<p class="hint-text fs-11 no-margin">статус: paid</p>
-							</div>
-						</div>
-					</div>
-
-					<div class="col-xl-4 col-lg-4 col-md-4 col-sm-12 m-b-15">
-						<div class="card card-default no-margin">
-							<div class="card-body p-3">
-								<div class="d-flex align-items-center m-b-5">
-									<i class="pg-icon text-danger m-r-10" style="font-size:22px;">close</i>
-									<span class="hint-text fs-12 text-uppercase">Отменённые</span>
-									<span class="badge badge-danger m-l-auto"><?php echo esc_html( $_cnt_cancel ); ?></span>
-								</div>
-								<h4 class="no-margin bold text-danger"><?php echo esc_html( _dash_fmt_usdt( $_sum_cancel ) ); ?></h4>
-								<p class="hint-text fs-11 no-margin">declined + cancelled + expired</p>
-							</div>
-						</div>
-					</div>
-
+					<?php endforeach; ?>
 				</div>
 				<!-- /ROW 3 -->
 

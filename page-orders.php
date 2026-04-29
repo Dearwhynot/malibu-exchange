@@ -83,19 +83,9 @@ get_header();
 
 			<div class="container-fluid container-fixed-lg mt-4">
 
-				<!-- ─── Действия над таблицей ────────────────────────────────────── -->
-				<div class="d-flex justify-content-end align-items-center m-b-10">
-					<?php if ( $can_create ) : ?>
-					<button type="button" id="btn-open-create-receipt" class="btn btn-primary">
-						<i class="pg-icon m-r-5">add</i>Создать чек
-					</button>
-					<?php endif; ?>
-				</div>
-
 				<!-- ─── Фильтры ─────────────────────────────────────────────────── -->
 				<div class="card card-default m-b-20">
 					<div class="card-body p-t-20 p-b-15">
-
 						<div class="row g-2 align-items-center m-b-10">
 							<div class="col-12 col-md-4 col-lg-3">
 								<div class="input-group">
@@ -164,6 +154,11 @@ get_header();
 							<span class="pg-icon" style="animation:spin 1s linear infinite;display:inline-block;">refresh</span>
 							Загрузка…
 						</div>
+						<?php if ( $can_create ) : ?>
+						<button type="button" id="btn-open-create-receipt" class="btn btn-primary">
+							<i class="pg-icon m-r-5">add</i>Создать чек
+						</button>
+						<?php endif; ?>
 					</div>
 				</div>
 

@@ -27,4 +27,16 @@ CREATE TABLE IF NOT EXISTS `crm_settings` (
 
 INSERT IGNORE INTO `crm_settings` (`org_id`, `setting_key`, `setting_value`) VALUES
 (1, 'telegram_bot_token', ''),
-(1, 'fintech_allowed_providers', '["kanyon","doverka"]');
+(1, 'telegram_bot_username', ''),
+(1, 'telegram_webhook_url', ''),
+(1, 'telegram_webhook_connected_at', ''),
+(1, 'telegram_webhook_last_error', ''),
+(1, 'telegram_webhook_lock', '0'),
+(1, 'fintech_allowed_providers', '["kanyon","doverka"]'),
+(1, 'merchant_invite_ttl_minutes', '60'),
+(1, 'merchant_default_platform_fee_type', 'percent'),
+(1, 'merchant_default_platform_fee_value', '0'),
+(1, 'merchant_bonus_enabled', '1'),
+(1, 'merchant_referral_enabled', '0'),
+(1, 'merchant_referral_reward_type', 'percent'),
+(1, 'merchant_referral_reward_value', '0');

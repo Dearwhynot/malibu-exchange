@@ -10,6 +10,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 malibu_exchange_require_login();
 
+$current_uid = get_current_user_id();
+if ( crm_is_root( $current_uid ) ) {
+	malibu_exchange_render_root_company_scope_denied();
+}
+
 if ( ! crm_can_manage_users() ) {
 	wp_safe_redirect( home_url( '/' ) );
 	exit;
@@ -119,7 +124,6 @@ $all_companies     = crm_get_all_companies_list();
 // ─── Вспомогательные данные ──────────────────────────────────────────────────
 $can_assign_roles = crm_user_has_permission( get_current_user_id(), 'users.assign_roles' );
 $can_hard_delete  = me_users_can_hard_delete();
-$current_uid      = get_current_user_id();
 $page_url         = get_permalink();
 $vendor_img_uri   = get_template_directory_uri() . '/vendor/pages/assets/img';
 
@@ -129,7 +133,10 @@ $nonce_status    = wp_create_nonce( 'me_users_status' );
 $nonce_delete    = wp_create_nonce( 'me_users_delete' );
 $nonce_roles     = wp_create_nonce( 'me_roles_save' );
 $nonce_company   = wp_create_nonce( 'me_assign_user_company' );
+$nonce_merchants_list = wp_create_nonce( 'me_merchants_list' );
+$nonce_merchant_delete = wp_create_nonce( 'me_merchants_delete' );
 $nonce_create_co     = wp_create_nonce( 'me_create_company' );
+$nonce_create_office = wp_create_nonce( 'me_create_company_office' );
 $nonce_company_settings = wp_create_nonce( 'me_company_fintech_access_save' );
 
 if ( ! function_exists( 'me_users_render_company_provider_badges_html' ) ) {
@@ -166,6 +173,32 @@ if ( crm_is_root( $current_uid ) ) {
 		$company_fintech_access_map[ $co_id ] = crm_fintech_get_allowed_providers( $co_id );
 	}
 }
+
+// Данные для вкладки "Офисы" — root или пользователь с permission offices.create
+$can_manage_offices        = crm_can_create_company_offices( $current_uid );
+$office_scope_company      = null;
+$office_scope_company_name = '';
+$office_scope_company_id   = 0;
+$office_scope_company_ids  = [];
+
+if ( $can_manage_offices ) {
+	if ( crm_is_root( $current_uid ) ) {
+		$office_scope_company_ids = array_map( static fn( $company ) => (int) $company->id, $all_companies_full );
+	} else {
+		$office_scope_company = crm_get_user_primary_company( $current_uid );
+		if ( $office_scope_company ) {
+			$office_scope_company_id   = (int) $office_scope_company->id;
+			$office_scope_company_name = (string) $office_scope_company->name;
+			$office_scope_company_ids  = [ $office_scope_company_id ];
+		} else {
+			$can_manage_offices = false;
+		}
+	}
+}
+
+$company_offices = $can_manage_offices
+	? crm_get_company_offices_full_by_company_ids( $office_scope_company_ids )
+	: [];
 
 // ─── Данные для вкладки "Роли" ───────────────────────────────────────────────
 $can_edit_roles = crm_user_has_permission( get_current_user_id(), 'roles.edit' );
@@ -263,6 +296,20 @@ get_header();
 							Роли и права
 						</a>
 					</li>
+					<?php if ( $can_manage_offices ) : ?>
+					<li class="nav-item">
+						<a data-bs-toggle="tab" role="tab" data-bs-target="#tab-offices" data-target="#tab-offices" href="#tab-offices">
+							Офисы
+						</a>
+					</li>
+					<?php endif; ?>
+					<?php if ( crm_is_root( $current_uid ) ) : ?>
+					<li class="nav-item">
+						<a data-bs-toggle="tab" role="tab" data-bs-target="#tab-merchants" data-target="#tab-merchants" href="#tab-merchants">
+							Тех. мерчанты
+						</a>
+					</li>
+					<?php endif; ?>
 					<?php if ( crm_is_root( $current_uid ) ) : ?>
 					<li class="nav-item">
 						<a data-bs-toggle="tab" role="tab" data-bs-target="#tab-companies" data-target="#tab-companies" href="#tab-companies">
@@ -276,15 +323,6 @@ get_header();
 
 				<!-- ─── TAB: USERS ────────────────────────────────────────────── -->
 				<div class="tab-pane active" id="tab-users">
-
-				<!-- Page heading -->
-				<div class="d-flex align-items-center justify-content-between m-b-20 ms-2 mt-3">
-					<p class="hint-text m-b-0">Всего в выборке: <strong><?php echo (int) $total; ?></strong></p>
-					<button type="button" class="btn btn-primary btn-cons"
-					        data-bs-toggle="modal" data-bs-target="#modal-user-form">
-						<i class="pg-icon">user_add</i>&nbsp; Добавить пользователя
-					</button>
-				</div>
 
 				<!-- ─── FILTERS ────────────────────────────────────────────────── -->
 				<style>
@@ -341,6 +379,14 @@ get_header();
 							</div>
 						</form>
 					</div>
+				</div>
+
+				<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2 m-b-10">
+					<p class="hint-text m-b-0">Всего в выборке: <strong><?php echo (int) $total; ?></strong></p>
+					<button type="button" class="btn btn-primary btn-cons"
+					        data-bs-toggle="modal" data-bs-target="#modal-user-form">
+						<i class="pg-icon">user_add</i>&nbsp; Добавить пользователя
+					</button>
 				</div>
 
 				<!-- ─── USERS TABLE ────────────────────────────────────────────── -->
@@ -736,12 +782,212 @@ get_header();
 
 				</div><!-- /#tab-roles -->
 
+				<!-- ─── TAB: OFFICES ─────────────────────────────────────────── -->
+				<?php if ( $can_manage_offices ) : ?>
+				<div class="tab-pane" id="tab-offices">
+
+					<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2 m-b-10">
+						<div>
+							<p class="hint-text m-b-0">Всего офисов в контуре: <strong id="offices-total-count"><?php echo (int) count( $company_offices ); ?></strong></p>
+							<?php if ( ! crm_is_root( $current_uid ) ) : ?>
+							<p class="hint-text fs-12 m-b-0">Контур компании: <?php echo esc_html( $office_scope_company_name ); ?></p>
+							<?php endif; ?>
+						</div>
+						<button type="button" class="btn btn-primary btn-cons"
+						        data-bs-toggle="modal" data-bs-target="#modal-create-office"
+						        <?php echo empty( $all_companies ) ? 'disabled' : ''; ?>>
+							<i class="pg-icon">add</i>&nbsp; Добавить офис
+						</button>
+					</div>
+
+					<div class="card card-default">
+						<div class="card-header">
+							<div class="card-title">Офисы компаний</div>
+						</div>
+						<div class="card-body no-padding">
+							<div class="table-responsive">
+								<table class="table table-hover m-b-0" id="company-offices-table">
+									<thead>
+										<tr>
+											<th style="width:60px">ID</th>
+											<?php if ( crm_is_root( $current_uid ) ) : ?>
+											<th style="width:180px">Компания</th>
+											<?php endif; ?>
+											<th>Офис</th>
+											<th style="width:140px">Город</th>
+											<th>Адрес</th>
+											<th style="width:90px">Статус</th>
+										</tr>
+									</thead>
+									<tbody id="company-offices-tbody">
+										<?php if ( empty( $company_offices ) ) : ?>
+										<tr id="company-offices-empty-row">
+											<td colspan="<?php echo crm_is_root( $current_uid ) ? 6 : 5; ?>" class="text-center hint-text p-t-20 p-b-20">
+												Офисы пока не созданы.
+											</td>
+										</tr>
+										<?php else : ?>
+											<?php foreach ( $company_offices as $office ) : ?>
+											<tr id="office-row-<?php echo (int) $office['id']; ?>">
+												<td class="v-align-middle">
+													<span class="hint-text fs-12">#<?php echo (int) $office['id']; ?></span>
+												</td>
+												<?php if ( crm_is_root( $current_uid ) ) : ?>
+												<td class="v-align-middle">
+													<div>
+														<span class="semi-bold"><?php echo esc_html( $office['company_name'] ); ?></span>
+														<small class="hint-text m-l-5 fs-11"><?php echo esc_html( $office['company_code'] ); ?></small>
+													</div>
+												</td>
+												<?php endif; ?>
+												<td class="v-align-middle">
+													<div>
+														<span class="semi-bold"><?php echo esc_html( $office['name'] ); ?></span>
+														<?php if ( ! empty( $office['is_default'] ) ) : ?>
+														<span class="badge badge-info m-l-5">Default</span>
+														<?php endif; ?>
+													</div>
+													<small class="hint-text fs-11"><?php echo esc_html( $office['code'] ); ?></small>
+												</td>
+												<td class="v-align-middle hint-text fs-12">
+													<?php echo esc_html( $office['city'] !== '' ? $office['city'] : '—' ); ?>
+												</td>
+												<td class="v-align-middle hint-text fs-12">
+													<?php echo esc_html( $office['address_line'] !== '' ? $office['address_line'] : '—' ); ?>
+												</td>
+												<td class="v-align-middle">
+													<span class="badge badge-<?php echo $office['status'] === 'active' ? 'success' : 'secondary'; ?>">
+														<?php echo esc_html( $office['status'] ); ?>
+													</span>
+												</td>
+											</tr>
+											<?php endforeach; ?>
+										<?php endif; ?>
+									</tbody>
+								</table>
+							</div>
+						</div>
+					</div>
+
+				</div><!-- /#tab-offices -->
+				<?php endif; ?>
+
+				<!-- ─── TAB: MERCHANTS (root only) ─────────────────────────── -->
+				<?php if ( crm_is_root( $current_uid ) ) : ?>
+				<div class="tab-pane" id="tab-merchants">
+
+					<div class="card card-default m-b-20">
+						<div class="card-body p-t-20 p-b-15">
+							<div class="row g-2 align-items-center m-b-10">
+								<div class="col-12 col-md-4 col-lg-3">
+									<div class="input-group">
+										<span class="input-group-text"><i class="pg-icon">search</i></span>
+										<input type="search" id="sys-merchant-search" class="form-control"
+										       placeholder="chat_id, username, имя">
+									</div>
+								</div>
+								<div class="col-6 col-md-2">
+									<select id="sys-merchant-company" class="full-width" data-init-plugin="select2">
+										<option value="">Все компании</option>
+										<?php foreach ( $all_companies_full as $company ) : ?>
+										<option value="<?php echo (int) $company->id; ?>">
+											<?php echo esc_html( $company->name ); ?>
+										</option>
+										<?php endforeach; ?>
+									</select>
+								</div>
+								<div class="col-6 col-md-2">
+									<select id="sys-merchant-status" class="full-width" data-init-plugin="select2">
+										<option value="">Все статусы</option>
+										<?php foreach ( crm_merchant_statuses() as $status_code => $label ) : ?>
+										<option value="<?php echo esc_attr( $status_code ); ?>"><?php echo esc_html( $label ); ?></option>
+										<?php endforeach; ?>
+									</select>
+								</div>
+								<div class="col-6 col-md-2">
+									<input type="date" id="sys-merchant-date-from" class="form-control" placeholder="Дата с">
+								</div>
+								<div class="col-6 col-md-2">
+									<input type="date" id="sys-merchant-date-to" class="form-control" placeholder="Дата по">
+								</div>
+							</div>
+
+							<div class="row g-2 align-items-center">
+								<div class="col-4 col-md-1">
+									<select id="sys-merchant-per-page" class="full-width" data-init-plugin="select2">
+										<option value="25">25</option>
+										<option value="50">50</option>
+										<option value="100">100</option>
+									</select>
+								</div>
+								<div class="col-8 col-md-3 d-flex gap-2">
+									<button type="button" id="btn-sys-merchants-search" class="btn btn-primary">
+										<i class="pg-icon">search</i> Найти
+									</button>
+									<button type="button" id="btn-sys-merchants-reset" class="btn btn-default">
+										Сброс
+									</button>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2 m-b-10">
+						<div>
+							<p class="hint-text m-b-0">Root-only hard delete для dev-сценариев.</p>
+							<p class="hint-text fs-12 m-b-0">Удаление сработает только если у мерчанта нет ордеров, ledger и живых реферальных хвостов. Его собственные invite-записи будут очищены вместе с ним.</p>
+						</div>
+						<div class="d-flex align-items-center gap-2">
+							<div id="sys-merchants-stats" class="text-muted small"></div>
+							<div id="sys-merchants-loading" class="text-muted small d-none">
+								<span class="pg-icon" style="animation:spin 1s linear infinite;display:inline-block;">refresh</span>
+								Загрузка…
+							</div>
+						</div>
+					</div>
+
+					<div class="card card-default">
+						<div class="card-header">
+							<div class="card-title">Технический контур мерчантов</div>
+						</div>
+						<div class="card-body no-padding">
+							<div class="table-responsive">
+								<table class="table table-hover m-b-0" id="sys-merchants-table">
+									<thead>
+										<tr>
+											<th style="width:60px">ID</th>
+											<th>Мерчант</th>
+											<th style="width:180px">Компания</th>
+											<th style="width:150px">chat_id</th>
+											<th style="width:170px">Telegram</th>
+											<th style="width:110px">Статус</th>
+											<th style="width:150px">Создан</th>
+											<th style="width:60px"></th>
+										</tr>
+									</thead>
+									<tbody id="sys-merchants-tbody">
+										<tr id="sys-merchants-empty-row">
+											<td colspan="8" class="text-center hint-text p-t-20 p-b-20">
+												Откройте вкладку или нажмите «Найти», чтобы загрузить мерчантов.
+											</td>
+										</tr>
+									</tbody>
+								</table>
+							</div>
+						</div>
+					</div>
+
+					<div id="sys-merchants-pagination" class="d-flex justify-content-between align-items-center m-t-15"></div>
+
+				</div><!-- /#tab-merchants -->
+				<?php endif; ?>
+
 				<!-- ─── TAB: COMPANIES (uid=1 only) ─────────────────────── -->
 				<?php if ( crm_is_root( $current_uid ) ) : ?>
 				<div class="tab-pane" id="tab-companies">
 
-					<div class="d-flex align-items-center justify-content-between m-b-20 ms-2 mt-3">
-						<p class="hint-text m-b-0">Список компаний</p>
+					<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2 m-b-10">
+						<p class="hint-text m-b-0">Всего компаний: <strong><?php echo (int) count( $all_companies_full ); ?></strong></p>
 						<button type="button" class="btn btn-primary btn-cons"
 						        data-bs-toggle="modal" data-bs-target="#modal-create-company">
 							<i class="pg-icon">add</i>&nbsp; Создать компанию
@@ -857,19 +1103,7 @@ get_header();
 </div><!-- /.page-container -->
 
 
-<!-- ════════════════════════════════════════════════════════════════════════
-     TOAST
-     ════════════════════════════════════════════════════════════════════ -->
-<div aria-live="polite" aria-atomic="true"
-     style="position:fixed;bottom:24px;right:24px;z-index:99999;min-width:280px">
-	<div id="me-toast" class="toast align-items-center border-0" role="alert" aria-live="assertive" aria-atomic="true">
-		<div class="d-flex">
-			<div class="toast-body" id="me-toast-body">…</div>
-			<button type="button" class="btn-close btn-close-white me-2 m-auto"
-			        data-bs-dismiss="toast" aria-label="Закрыть"></button>
-		</div>
-	</div>
-</div>
+<?php get_template_part( 'template-parts/toast-host' ); ?>
 
 <!-- ════════════════════════════════════════════════════════════════════════
      MODAL: ADD / EDIT USER
@@ -1115,6 +1349,90 @@ get_header();
 </div>
 
 <!-- ════════════════════════════════════════════════════════════════════════
+     MODAL: CREATE OFFICE
+     ════════════════════════════════════════════════════════════════════ -->
+<?php if ( $can_manage_offices ) : ?>
+<div class="modal fade" id="modal-create-office" tabindex="-1"
+     aria-labelledby="modal-create-office-title" aria-hidden="true">
+	<div class="modal-dialog">
+		<div class="modal-content">
+			<div class="modal-header clearfix text-left">
+				<button aria-label="Закрыть" type="button" class="close" data-bs-dismiss="modal" aria-hidden="true">
+					<i class="pg-icon">close</i>
+				</button>
+				<h5 class="modal-title" id="modal-create-office-title">Добавить офис</h5>
+			</div>
+			<div class="modal-body">
+				<form id="form-company-office" novalidate>
+					<div class="row">
+						<?php if ( crm_is_root( $current_uid ) ) : ?>
+						<div class="col-12">
+							<div class="form-group form-group-default required">
+								<label>Компания <span class="text-danger">*</span></label>
+								<select class="full-width" id="cof-company-id">
+									<?php foreach ( $all_companies as $company_option ) : ?>
+									<option value="<?php echo (int) $company_option->id; ?>">
+										<?php echo esc_html( $company_option->name ); ?>
+									</option>
+									<?php endforeach; ?>
+								</select>
+							</div>
+						</div>
+						<?php else : ?>
+						<input type="hidden" id="cof-company-id" value="<?php echo (int) $office_scope_company_id; ?>">
+						<div class="col-12">
+							<div class="form-group form-group-default">
+								<label>Компания</label>
+								<input type="text" class="form-control" value="<?php echo esc_attr( $office_scope_company_name ); ?>" readonly>
+							</div>
+						</div>
+						<?php endif; ?>
+
+						<div class="col-md-6">
+							<div class="form-group form-group-default required">
+								<label>Название офиса <span class="text-danger">*</span></label>
+								<input type="text" class="form-control" id="cof-name" required placeholder="Пхукет / Паттайя / Москва">
+							</div>
+						</div>
+
+						<div class="col-md-6">
+							<div class="form-group form-group-default">
+								<label>Код</label>
+								<input type="text" class="form-control" id="cof-code" placeholder="Автоматически из названия">
+							</div>
+						</div>
+
+						<div class="col-md-6">
+							<div class="form-group form-group-default">
+								<label>Город</label>
+								<input type="text" class="form-control" id="cof-city" placeholder="Phuket">
+							</div>
+						</div>
+
+						<div class="col-md-6">
+							<div class="form-group form-group-default">
+								<label>Адрес</label>
+								<input type="text" class="form-control" id="cof-address-line" placeholder="Rawai, Soi 12">
+							</div>
+						</div>
+					</div>
+
+					<div class="alert alert-danger d-none m-t-10" id="cof-error"></div>
+				</form>
+			</div>
+			<div class="modal-footer">
+				<button type="button" class="btn btn-default" data-bs-dismiss="modal">Отмена</button>
+				<button type="button" class="btn btn-primary" id="btn-create-office">
+					<span class="btn-label">Создать</span>
+					<i class="pg-icon spin d-none" id="btn-create-office-spinner">refresh</i>
+				</button>
+			</div>
+		</div>
+	</div>
+</div>
+<?php endif; ?>
+
+<!-- ════════════════════════════════════════════════════════════════════════
      MODAL: ASSIGN COMPANY (uid=1 only)
      ════════════════════════════════════════════════════════════════════ -->
 <?php if ( crm_is_root( $current_uid ) ) : ?>
@@ -1344,15 +1662,12 @@ get_header();
 .table th { font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
 .table td { font-size:13px; }
 .btn-xs { padding:3px 8px; font-size:12px; }
-.toast { background:#1c2b3a; color:#f7fbff; }
-.toast.toast-success { border-left:3px solid #1dd3b0; }
-.toast.toast-error   { border-left:3px solid #ff6b6b; }
 .pg-icon.spin { animation:spin 1s linear infinite; display:inline-block; }
 @keyframes spin { to { transform:rotate(360deg); } }
 .dropdown-menu .dropdown-item { display:flex; align-items:center; }
 .dropdown-menu .dropdown-item .pg-icon { flex-shrink:0; line-height:1; }
 /* ── Tabs ── */
-#tab-users, #tab-roles { padding: 0; }
+#tab-users, #tab-roles, #tab-offices, #tab-merchants, #tab-companies { padding: 0; }
 .nav-tabs ~ .tab-content { overflow: visible; }
 .perm-module-title { font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:#aaa; margin:14px 0 6px; padding-bottom:4px; border-bottom:1px solid rgba(0,0,0,.06); }
 .perm-check-label { font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px; margin-bottom:4px; }
@@ -1360,7 +1675,7 @@ get_header();
 </style>
 
 <?php
-add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_delete, $nonce_roles, $nonce_company, $nonce_create_co, $nonce_company_settings, $f_status, $can_assign_roles, $can_edit_roles, $all_permissions_grouped, $role_permissions_map, $current_uid ) {
+add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_delete, $nonce_roles, $nonce_company, $nonce_merchants_list, $nonce_merchant_delete, $nonce_create_co, $nonce_create_office, $nonce_company_settings, $f_status, $can_assign_roles, $can_edit_roles, $all_permissions_grouped, $role_permissions_map, $current_uid, $can_manage_offices ) {
 ?>
 <script>
 (function ($) {
@@ -1369,7 +1684,7 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 	// ── Tab switching (fix Pages + Bootstrap 5 incompatibility) ─────────────────
 	var $usersTabNav   = $('#users-page-tabs');
 	var $usersTabLinks = $usersTabNav.find('a[data-bs-toggle="tab"]');
-	var $usersTabPanes = $('#tab-users, #tab-roles, #tab-companies');
+	var $usersTabPanes = $('#tab-users, #tab-roles, #tab-offices, #tab-merchants, #tab-companies');
 
 	function activateTab(targetId) {
 		if ( ! targetId || targetId === 'undefined' ) {
@@ -1388,6 +1703,10 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 
 		$usersTabPanes.removeClass('show active');
 		$(targetId).addClass('show active');
+
+		if ( targetId === '#tab-merchants' && typeof ensureSystemMerchantsLoaded === 'function' ) {
+			ensureSystemMerchantsLoaded();
+		}
 	}
 	// Desktop: перехватываем клик; .data('bs-target') не работает в jQuery 3 — используем .attr()
 	$(document).on('click.me-tabs', '#users-page-tabs a[data-bs-toggle="tab"]', function (e) {
@@ -1428,12 +1747,16 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 		status:        '<?php echo esc_js( $nonce_status ); ?>',
 		delete:        '<?php echo esc_js( $nonce_delete ); ?>',
 		company:       '<?php echo esc_js( $nonce_company ); ?>',
+		merchantList:  '<?php echo esc_js( $nonce_merchants_list ); ?>',
+		merchantDelete:'<?php echo esc_js( $nonce_merchant_delete ); ?>',
 		createCo:      '<?php echo esc_js( $nonce_create_co ); ?>',
+		createOffice:  '<?php echo esc_js( $nonce_create_office ); ?>',
 		companySettings: '<?php echo esc_js( $nonce_company_settings ); ?>'
 	};
 	var CAN_ASSIGN_ROLES = <?php echo $can_assign_roles ? 'true' : 'false'; ?>;
+	var CAN_MANAGE_OFFICES = <?php echo $can_manage_offices ? 'true' : 'false'; ?>;
 	var IS_ROOT          = <?php echo crm_is_root( $current_uid ) ? 'true' : 'false'; ?>;
-	var FINTECH_PROVIDER_LABELS = <?php echo wp_json_encode( crm_fintech_provider_labels() ); ?>;
+	var FINTECH_PROVIDER_LABELS = <?php echo crm_json_for_inline_js( crm_fintech_provider_labels() ); ?>;
 
 	// ── Дропдауны Actions: strategy fixed (fix overflow in .table-responsive) ──
 	function initActionDropdowns($scope) {
@@ -1468,10 +1791,11 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 
 	// ── Toast ─────────────────────────────────────────────────────────────────
 	function showToast(message, type) {
-		var $el = $('#me-toast');
-		$el.removeClass('toast-success toast-error').addClass(type === 'error' ? 'toast-error' : 'toast-success');
-		$('#me-toast-body').text(message);
-		new bootstrap.Toast($el[0], { delay: 4000 }).show();
+		if (window.MalibuToast && typeof window.MalibuToast.show === 'function') {
+			window.MalibuToast.show(message, type || 'info');
+			return;
+		}
+		alert(message);
 	}
 
 	function escapeHtml(value) {
@@ -1526,6 +1850,192 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 			+     '</a></li>'
 			+   '</ul>'
 			+ '</div>';
+	}
+
+	function renderOfficeStatusBadge(status) {
+		var normalized = $.trim(String(status || '')).toLowerCase();
+		var badgeClass = normalized === 'active' ? 'success' : 'secondary';
+
+		return '<span class="badge badge-' + badgeClass + '">' + escapeHtml(normalized || '—') + '</span>';
+	}
+
+	function buildOfficeRow(office) {
+		var html = ''
+			+ '<tr id="office-row-' + escapeHtml(office.id) + '">'
+			+   '<td class="v-align-middle"><span class="hint-text fs-12">#' + escapeHtml(office.id) + '</span></td>';
+
+		if (IS_ROOT) {
+			html += ''
+				+ '<td class="v-align-middle">'
+				+   '<div><span class="semi-bold">' + escapeHtml(office.company_name || '—') + '</span>'
+				+   '<small class="hint-text m-l-5 fs-11">' + escapeHtml(office.company_code || '') + '</small></div>'
+				+ '</td>';
+		}
+
+		html += ''
+			+ '<td class="v-align-middle">'
+			+   '<div><span class="semi-bold">' + escapeHtml(office.name || '—') + '</span>';
+
+		if (office.is_default) {
+			html += '<span class="badge badge-info m-l-5">Default</span>';
+		}
+
+		html += ''
+			+   '</div>'
+			+   '<small class="hint-text fs-11">' + escapeHtml(office.code || '') + '</small>'
+			+ '</td>'
+			+ '<td class="v-align-middle hint-text fs-12">' + escapeHtml(office.city || '—') + '</td>'
+			+ '<td class="v-align-middle hint-text fs-12">' + escapeHtml(office.address_line || '—') + '</td>'
+			+ '<td class="v-align-middle">' + renderOfficeStatusBadge(office.status || '') + '</td>'
+			+ '</tr>';
+
+		return html;
+	}
+
+	// ── Root merchants tab ────────────────────────────────────────────────────
+	var SYSTEM_MERCHANTS_STATE = {
+		page: 1,
+		loaded: false,
+		loading: false
+	};
+
+	function systemMerchantInitials(label) {
+		return $.trim(String(label || 'TG')).replace(/\s+/g, ' ').substring(0, 2).toUpperCase() || 'TG';
+	}
+
+	function systemMerchantAvatarHtml(url, label) {
+		if (url) {
+			return '<span class="thumbnail-wrapper d32 circular inline m-r-10" style="overflow:hidden;">'
+				+ '<img src="' + escapeHtml(url) + '" data-src="' + escapeHtml(url) + '" data-src-retina="' + escapeHtml(url) + '" alt="Profile Image" width="32" height="32" style="width:32px;height:32px;object-fit:cover;">'
+				+ '</span>';
+		}
+
+		return '<span class="thumbnail-wrapper d32 circular inline m-r-10 bg-complete text-white" style="display:inline-flex;align-items:center;justify-content:center;font-weight:700;">'
+			+ escapeHtml(systemMerchantInitials(label))
+			+ '</span>';
+	}
+
+	function buildSystemMerchantActions(row) {
+		return ''
+			+ '<div class="dropdown">'
+			+   '<button type="button" class="btn btn-default btn-xs dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Действия мерчанта">'
+			+     '<i class="pg-icon">more_vertical</i>'
+			+   '</button>'
+			+   '<ul class="dropdown-menu dropdown-menu-end">'
+			+     '<li><a class="dropdown-item text-danger js-system-merchant-delete" href="#"'
+			+       ' data-merchant-id="' + escapeHtml(row.id) + '"'
+			+       ' data-merchant-name="' + escapeHtml(row.name || ('Merchant #' + row.id)) + '">'
+			+       '<i class="pg-icon m-r-5">trash</i> Удалить физически'
+			+     '</a></li>'
+			+   '</ul>'
+			+ '</div>';
+	}
+
+	function buildSystemMerchantRow(row) {
+		var profileLine = $.trim([row.telegram_first_name || '', row.telegram_last_name || ''].join(' '));
+		var tgHtml = row.telegram_username ? '@' + escapeHtml(row.telegram_username) : '<span class="hint-text">—</span>';
+		var nameHtml = '<div class="d-flex align-items-center">'
+			+ systemMerchantAvatarHtml(row.telegram_avatar_url || '', row.name || row.telegram_first_name || row.telegram_username || 'TG')
+			+ '<div><div class="semi-bold">' + escapeHtml(row.name || profileLine || ('Merchant #' + row.id)) + '</div>'
+			+ '<div class="hint-text fs-12">ID #' + escapeHtml(row.id) + (profileLine ? ' · ' + escapeHtml(profileLine) : '') + '</div></div></div>';
+
+		return ''
+			+ '<tr id="sys-merchant-row-' + escapeHtml(row.id) + '" data-merchant-id="' + escapeHtml(row.id) + '">'
+			+   '<td class="v-align-middle"><span class="hint-text fs-12">#' + escapeHtml(row.id) + '</span></td>'
+			+   '<td class="v-align-middle">' + nameHtml + '</td>'
+			+   '<td class="v-align-middle"><div>' + escapeHtml(row.company_name || '—') + '</div><div class="hint-text fs-12">' + escapeHtml(row.company_code || '') + '</div></td>'
+			+   '<td class="v-align-middle"><code>' + escapeHtml(row.chat_id || '—') + '</code></td>'
+			+   '<td class="v-align-middle">' + tgHtml + '</td>'
+			+   '<td class="v-align-middle"><span class="badge badge-' + escapeHtml(row.status_badge || 'secondary') + '">' + escapeHtml(row.status_label || row.status || '—') + '</span></td>'
+			+   '<td class="v-align-middle hint-text fs-12">' + escapeHtml(row.created_at || '—') + '</td>'
+			+   '<td class="v-align-middle text-right">' + buildSystemMerchantActions(row) + '</td>'
+			+ '</tr>';
+	}
+
+	function renderSystemMerchantsTable(rows) {
+		var $tbody = $('#sys-merchants-tbody').empty();
+
+		if (!rows || !rows.length) {
+			$tbody.html('<tr id="sys-merchants-empty-row"><td colspan="8" class="text-center hint-text p-t-20 p-b-20">Мерчанты не найдены.</td></tr>');
+			return;
+		}
+
+		$.each(rows, function (_, row) {
+			$tbody.append(buildSystemMerchantRow(row));
+		});
+
+		initActionDropdowns($tbody);
+	}
+
+	function renderSystemMerchantsPagination(totalPages, current) {
+		var $wrap = $('#sys-merchants-pagination').empty();
+		if (totalPages <= 1) {
+			return;
+		}
+
+		var html = '<ul class="pagination pagination-sm no-margin">';
+		html += '<li class="page-item' + (current <= 1 ? ' disabled' : '') + '"><a class="page-link" href="#" data-page="' + (current - 1) + '">&laquo;</a></li>';
+		for (var i = 1; i <= totalPages; i++) {
+			html += '<li class="page-item' + (i === current ? ' active' : '') + '"><a class="page-link" href="#" data-page="' + i + '">' + i + '</a></li>';
+		}
+		html += '<li class="page-item' + (current >= totalPages ? ' disabled' : '') + '"><a class="page-link" href="#" data-page="' + (current + 1) + '">&raquo;</a></li>';
+		html += '</ul>';
+		$wrap.html(html);
+	}
+
+	function collectSystemMerchantFilters() {
+		return {
+			action: 'me_merchants_list',
+			_nonce: NONCES.merchantList,
+			page: SYSTEM_MERCHANTS_STATE.page,
+			per_page: $('#sys-merchant-per-page').val() || '25',
+			search: $('#sys-merchant-search').val() || '',
+			company_id: $('#sys-merchant-company').val() || '',
+			status: $('#sys-merchant-status').val() || '',
+			date_from: $('#sys-merchant-date-from').val() || '',
+			date_to: $('#sys-merchant-date-to').val() || ''
+		};
+	}
+
+	function loadSystemMerchants(page) {
+		if (!IS_ROOT) {
+			return;
+		}
+
+		if (page) {
+			SYSTEM_MERCHANTS_STATE.page = page;
+		}
+
+		SYSTEM_MERCHANTS_STATE.loading = true;
+		$('#sys-merchants-loading').removeClass('d-none');
+
+		$.post(AJAX_URL, collectSystemMerchantFilters())
+			.done(function (res) {
+				if (!res || !res.success) {
+					showToast((res && res.data && res.data.message) || 'Не удалось загрузить мерчантов.', 'error');
+					return;
+				}
+
+				SYSTEM_MERCHANTS_STATE.loaded = true;
+				renderSystemMerchantsTable(res.data.rows || []);
+				renderSystemMerchantsPagination(parseInt(res.data.total_pages || 1, 10), parseInt(res.data.page || 1, 10));
+				$('#sys-merchants-stats').text('Найдено: ' + (res.data.total || 0));
+			})
+			.fail(function () {
+				showToast('Ошибка сервера при загрузке мерчантов.', 'error');
+			})
+			.always(function () {
+				SYSTEM_MERCHANTS_STATE.loading = false;
+				$('#sys-merchants-loading').addClass('d-none');
+			});
+	}
+
+	function ensureSystemMerchantsLoaded() {
+		if (!IS_ROOT || SYSTEM_MERCHANTS_STATE.loaded || SYSTEM_MERCHANTS_STATE.loading) {
+			return;
+		}
+
+		loadSystemMerchants(1);
 	}
 
 	// ── Confirm modal ─────────────────────────────────────────────────────────
@@ -1758,9 +2268,93 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 		.fail(function () { showToast('Ошибка сервера.', 'error'); });
 	}
 
+	// ── Root merchants tab ────────────────────────────────────────────────────
+	$('#btn-sys-merchants-search').on('click', function () {
+		SYSTEM_MERCHANTS_STATE.page = 1;
+		loadSystemMerchants(1);
+	});
+
+	$('#btn-sys-merchants-reset').on('click', function () {
+		$('#sys-merchant-search').val('');
+		$('#sys-merchant-company').val('');
+		$('#sys-merchant-status').val('');
+		$('#sys-merchant-date-from').val('');
+		$('#sys-merchant-date-to').val('');
+		$('#sys-merchant-per-page').val('25');
+
+		$('#sys-merchant-company, #sys-merchant-status, #sys-merchant-per-page').each(function () {
+			if ($(this).hasClass('select2-hidden-accessible')) {
+				$(this).trigger('change.select2');
+			}
+		});
+
+		SYSTEM_MERCHANTS_STATE.page = 1;
+		loadSystemMerchants(1);
+	});
+
+	$('#sys-merchant-search').on('keydown', function (e) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			SYSTEM_MERCHANTS_STATE.page = 1;
+			loadSystemMerchants(1);
+		}
+	});
+
+	$('#sys-merchants-pagination').on('click', '.page-link', function (e) {
+		e.preventDefault();
+		var page = parseInt($(this).data('page'), 10) || 1;
+		if ($(this).closest('.page-item').hasClass('disabled') || $(this).closest('.page-item').hasClass('active')) {
+			return;
+		}
+		loadSystemMerchants(page);
+	});
+
+	$(document).on('click', '.js-system-merchant-delete', function (e) {
+		e.preventDefault();
+
+		var merchantId = parseInt($(this).data('merchant-id'), 10) || 0;
+		var merchantName = $(this).data('merchant-name') || ('Merchant #' + merchantId);
+		if (!merchantId) {
+			return;
+		}
+
+		showConfirm(
+			'Физически удалить мерчанта «' + merchantName + '»? Удаление сработает только если у него нет связанных ордеров, ledger и живых реферальных хвостов.',
+			function () {
+				var currentRows = $('#sys-merchants-tbody tr[data-merchant-id]').length;
+				$.post(AJAX_URL, {
+					action: 'me_merchants_delete',
+					merchant_id: merchantId,
+					_nonce: NONCES.merchantDelete
+				})
+				.done(function (res) {
+					if (!res || !res.success) {
+						showToast((res && res.data && res.data.message) || 'Не удалось удалить мерчанта.', 'error');
+						return;
+					}
+
+					showToast(res.data.message || 'Мерчант удалён.', 'success');
+					if (currentRows <= 1 && SYSTEM_MERCHANTS_STATE.page > 1) {
+						SYSTEM_MERCHANTS_STATE.page -= 1;
+					}
+					SYSTEM_MERCHANTS_STATE.loaded = false;
+					loadSystemMerchants(SYSTEM_MERCHANTS_STATE.page);
+				})
+				.fail(function (xhr) {
+					var message = 'Ошибка сервера при удалении мерчанта.';
+					if (xhr && xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
+						message = xhr.responseJSON.data.message;
+					}
+					showToast(message, 'error');
+				});
+			},
+			{ btnClass: 'btn-danger', btnText: 'Удалить мерчанта' }
+		);
+	});
+
 
 	// ── Roles: permissions modal ──────────────────────────────────────────────
-	var PERMS_GROUPED  = <?php echo wp_json_encode( $all_permissions_grouped ); ?>;
+	var PERMS_GROUPED  = <?php echo crm_json_for_inline_js( $all_permissions_grouped ); ?>;
 	var NONCE_ROLES    = '<?php echo esc_js( $nonce_roles ); ?>';
 	var _editRoleId    = 0;
 	var $roleModal     = $('#modal-role-perms');
@@ -1829,6 +2423,96 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 				.end().find('#btn-role-perms-spinner').addClass('d-none');
 		});
 	});
+
+	if (CAN_MANAGE_OFFICES) {
+		var $createOfficeModal = $('#modal-create-office');
+
+		function resetOfficeForm() {
+			$('#form-company-office')[0].reset();
+			$('#cof-error').addClass('d-none').text('');
+			$('#btn-create-office').prop('disabled', false)
+				.find('.btn-label').show()
+				.end().find('#btn-create-office-spinner').addClass('d-none');
+			if (IS_ROOT && $('#cof-company-id').hasClass('select2-hidden-accessible')) {
+				$('#cof-company-id').trigger('change.select2');
+			}
+		}
+
+		$createOfficeModal.on('shown.bs.modal', function () {
+			if (IS_ROOT && !$('#cof-company-id').hasClass('select2-hidden-accessible')) {
+				$('#cof-company-id').select2({ dropdownParent: $createOfficeModal });
+			}
+		});
+
+		$createOfficeModal.on('hidden.bs.modal', function () {
+			if (IS_ROOT && $('#cof-company-id').hasClass('select2-hidden-accessible')) {
+				$('#cof-company-id').select2('destroy');
+			}
+			resetOfficeForm();
+		});
+
+		$('#btn-create-office').on('click', function () {
+			var $btn = $(this);
+			var companyId = parseInt($('#cof-company-id').val(), 10) || 0;
+			var name = $.trim($('#cof-name').val());
+			var code = $.trim($('#cof-code').val());
+			var city = $.trim($('#cof-city').val());
+			var addressLine = $.trim($('#cof-address-line').val());
+
+			$('#cof-error').addClass('d-none').text('');
+
+			if (companyId <= 0) {
+				$('#cof-error').removeClass('d-none').text(IS_ROOT ? 'Выберите компанию.' : 'Компания не определена.');
+				return;
+			}
+
+			if (!name) {
+				$('#cof-error').removeClass('d-none').text('Введите название офиса.');
+				return;
+			}
+
+			$btn.prop('disabled', true)
+				.find('.btn-label').hide()
+				.end().find('#btn-create-office-spinner').removeClass('d-none');
+
+			$.post(AJAX_URL, {
+				action: 'me_create_company_office',
+				company_id: companyId,
+				name: name,
+				code: code,
+				city: city,
+				address_line: addressLine,
+				_nonce: NONCES.createOffice
+			})
+			.done(function (res) {
+				if (!res.success) {
+					$('#cof-error').removeClass('d-none').text(res.data && res.data.message ? res.data.message : 'Ошибка создания офиса.');
+					$btn.prop('disabled', false)
+						.find('.btn-label').show()
+						.end().find('#btn-create-office-spinner').addClass('d-none');
+					return;
+				}
+
+				var office = res.data.office || {};
+				var $tbody = $('#company-offices-tbody');
+				$('#company-offices-empty-row').remove();
+				$tbody.append($(buildOfficeRow(office)));
+				$('#offices-total-count').text((parseInt($('#offices-total-count').text(), 10) || 0) + 1);
+
+				showToast(res.data.message || 'Офис создан.', 'success');
+				bootstrap.Modal.getInstance($createOfficeModal[0]).hide();
+			})
+			.fail(function (xhr) {
+				var msg = (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message)
+					? xhr.responseJSON.data.message
+					: 'Ошибка сервера.';
+				$('#cof-error').removeClass('d-none').text(msg);
+				$btn.prop('disabled', false)
+					.find('.btn-label').show()
+					.end().find('#btn-create-office-spinner').addClass('d-none');
+			});
+		});
+	}
 
 
 	<?php if ( crm_is_root( $current_uid ) ) : ?>
@@ -2048,6 +2732,9 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 					var newOpt = $('<option>').val(co.id).text(co.name);
 				$('#uf-company-id').append(newOpt.clone());
 				$('#ac-company-select').append(newOpt.clone());
+				if (CAN_MANAGE_OFFICES && IS_ROOT && $('#cof-company-id').length) {
+					$('#cof-company-id').append(newOpt.clone());
+				}
 			} else {
 				$('#cc-error').removeClass('d-none').text(res.data.message || 'Ошибка.');
 				$btn.prop('disabled', false)
