@@ -499,7 +499,23 @@ class Fintech_Payment_Gateway {
 	}
 
 	private static function mask_sensitive_data( array $data ): array {
-		$sensitive_keys = [ 'password', 'api_key', 'apikey', 'authorization', 'authorization-token', 'accessToken', 'token', 'login' ];
+		$sensitive_keys = [
+			'password',
+			'api_key',
+			'apikey',
+			'x-api-key',
+			'authorization',
+			'authorization-token',
+			'token',
+			'access_token',
+			'refresh_token',
+			'accesstoken',
+			'refreshtoken',
+			'client_secret',
+			'secret',
+			'private_key',
+			'login',
+		];
 		$masked = [];
 
 		foreach ( $data as $key => $value ) {

@@ -48,6 +48,7 @@ function crm_fintech_cron_poll_orders(): void {
 	$orders = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		"SELECT * FROM `crm_fintech_payment_orders`
 		 WHERE `status_code` IN ('created', 'pending')
+		   AND (`source_channel` IS NULL OR `source_channel` <> 'rate_check')
 		   AND `created_at` >= DATE_SUB(NOW(), INTERVAL 48 HOUR)
 		 ORDER BY `id` ASC
 		 LIMIT 50"

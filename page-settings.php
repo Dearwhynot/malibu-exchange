@@ -174,7 +174,42 @@ $pair       = rates_get_pair( RATES_PAIR_CODE, $org_id );
 $coeff      = $pair ? rates_get_coefficient( (int) $pair->id, RATES_PROVIDER_EX24, RATES_PROVIDER_SOURCE ) : 0.05;
 $merchant_settings = $org_id > 0 ? crm_merchants_get_settings( $org_id ) : null;
 
-$vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
+// Снимок состояния всех валютных пар для текущей компании.
+$rates_pair_blocks      = [];
+$usdt_market_pair_codes = [ 'USDT_THB' ];
+if ( function_exists( 'crm_root_available_rate_pairs' ) ) {
+	foreach ( crm_root_available_rate_pairs() as $pair_def ) {
+		$existing = function_exists( 'rates_get_any_pair' ) ? rates_get_any_pair( $pair_def['code'], $org_id ) : null;
+
+		$coeff_value = null;
+		$coeff_type  = 'absolute';
+
+		if ( $existing && (int) $existing->is_active === 1 ) {
+			$state = 'active';
+		} elseif ( $existing ) {
+			$state = 'disabled';
+		} else {
+			$state = 'not_configured';
+		}
+
+		if ( $existing ) {
+			$full        = rates_get_coefficient_full( (int) $existing->id, RATES_PROVIDER_EX24, RATES_PROVIDER_SOURCE );
+			$coeff_value = (float) $full['value'];
+			$coeff_type  = (string) $full['type'];
+		}
+
+		$rates_pair_blocks[] = [
+			'pair_code'         => $pair_def['code'],
+			'pair_title'        => $pair_def['title'],
+			'state'             => $state,
+			'coefficient'       => $coeff_value,
+			'coefficient_type'  => $coeff_type,
+			'has_market_source' => in_array( $pair_def['code'], $usdt_market_pair_codes, true ),
+			'market_source'     => $existing ? (string) ( $existing->market_source ?? 'bitkub' ) : 'bitkub',
+		];
+	}
+}
+
 $nonce_save      = wp_create_nonce( 'me_settings_save' );
 $settings_js_bootstrap = [
 	'ajax_url'                  => admin_url( 'admin-ajax.php' ),
@@ -193,41 +228,7 @@ get_header();
 
 <div class="page-container">
 
-	<!-- HEADER -->
-	<div class="header">
-		<a href="#" class="btn-link toggle-sidebar d-lg-none pg-icon btn-icon-link" data-toggle="sidebar">menu</a>
-		<div class="">
-			<div class="brand inline">
-				<img src="<?php echo esc_url( $vendor_img_uri . '/logo.png' ); ?>" alt="logo"
-				     data-src="<?php echo esc_url( $vendor_img_uri . '/logo.png' ); ?>"
-				     data-src-retina="<?php echo esc_url( $vendor_img_uri . '/logo_2x.png' ); ?>"
-				     width="78" height="22">
-			</div>
-		</div>
-		<div class="d-flex align-items-center">
-			<div class="dropdown pull-right d-lg-block d-none">
-				<button class="profile-dropdown-toggle" type="button" data-bs-toggle="dropdown"
-				        aria-haspopup="true" aria-expanded="false" aria-label="profile dropdown">
-					<span class="thumbnail-wrapper d32 circular inline">
-						<img src="<?php echo esc_url( $vendor_img_uri . '/profiles/avatar.jpg' ); ?>"
-						     alt="" width="32" height="32">
-					</span>
-				</button>
-				<div class="dropdown-menu dropdown-menu-right profile-dropdown" role="menu">
-					<a href="#" class="dropdown-item">
-						<span>Вход как<br><b><?php echo esc_html( wp_get_current_user()->display_name ); ?></b></span>
-					</a>
-					<div class="dropdown-divider"></div>
-					<a href="<?php echo esc_url( wp_logout_url( home_url( '/' ) ) ); ?>" class="dropdown-item">Выйти</a>
-				</div>
-			</div>
-			<a href="#" class="header-icon m-l-5 sm-no-margin d-inline-block"
-			   data-toggle="quickview" data-toggle-element="#quickview">
-				<i class="pg-icon btn-icon-link">menu_add</i>
-			</a>
-		</div>
-	</div>
-	<!-- END HEADER -->
+	<?php get_template_part( 'template-parts/header-backoffice' ); ?>
 
 	<div class="page-content-wrapper">
 		<div class="content">
@@ -430,38 +431,22 @@ get_header();
 					</div>
 				</div>
 
-				<!-- ─── Курсы ──────────────────────────────────────────────────── -->
-				<div class="card card-default m-b-30">
-					<div class="card-header">
-						<div class="card-title">Курсы — RUB/THB</div>
+				<!-- ─── Курсы (по парам) ─────────────────────────────────────────── -->
+				<?php if ( function_exists( 'crm_is_root' ) && crm_is_root( get_current_user_id() ) ) : ?>
+					<div class="alert alert-info m-b-20" role="alert">
+						<i class="pg-icon m-r-5">settings</i>
+						<strong>Root.</strong> Активация и деактивация валютных пар выполняется на отдельной странице
+						<a href="<?php echo esc_url( home_url( '/root-rate-pairs/' ) ); ?>"
+						   class="alert-link semi-bold m-l-5">
+							Курсы и пары
+						</a>.
+						Здесь, в настройках компании, задаются <strong>тип</strong> (сдвиг / процент) и <strong>значение</strong> наценки.
 					</div>
-					<div class="card-body">
-						<form id="rates-settings-form">
-							<div class="row">
-								<div class="col-md-4 col-lg-3">
-									<div class="form-group">
-										<label for="rates_coefficient">Коэффициент вычитания (Ex24 / <?php echo esc_html( RATES_PROVIDER_SOURCE ); ?>)</label>
-										<input type="number"
-										       class="form-control"
-										       id="rates_coefficient"
-										       name="rates_coefficient"
-										       value="<?php echo esc_attr( number_format( $coeff, 4, '.', '' ) ); ?>"
-										       step="0.0001"
-										       min="0"
-										       placeholder="0.0500">
-										<p class="hint-text m-t-5">
-											Наш курс = курс конкурента − этот коэффициент.<br>
-											Пример: 2.70 − 0.05 = 2.65
-										</p>
-									</div>
-								</div>
-							</div>
-							<button type="submit" class="btn btn-primary btn-cons">
-								Сохранить коэффициент
-							</button>
-						</form>
-					</div>
-				</div>
+				<?php endif; ?>
+
+				<?php foreach ( $rates_pair_blocks as $rates_block ) : ?>
+					<?php get_template_part( 'template-parts/rates-coefficient-block', null, $rates_block ); ?>
+				<?php endforeach; ?>
 
 				<?php if ( $merchant_settings ) : ?>
 				<div class="card card-default m-b-30">
@@ -737,21 +722,13 @@ get_header();
 
 			</div>
 		</div>
-		<!-- START COPYRIGHT -->
-		<div class="container-fluid container-fixed-lg footer">
-			<div class="copyright sm-text-center">
-				<p class="small-text no-margin pull-left sm-pull-reset">
-					©2014-2020 All Rights Reserved. Pages® and/or its subsidiaries or affiliates are registered trademark of Revox Ltd.
-				</p>
-				<div class="clearfix"></div>
-			</div>
-		</div>
-		<!-- END COPYRIGHT -->
+		<?php get_template_part( 'template-parts/footer-backoffice' ); ?>
 	</div>
 </div>
 
 <?php get_template_part( 'template-parts/quickview' ); ?>
 <?php get_template_part( 'template-parts/overlay' ); ?>
+<?php get_template_part( 'template-parts/toast-host' ); ?>
 
 <?php
 add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
@@ -1093,6 +1070,12 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 		applyTelegramLockState(TELEGRAM_STATUS);
 	}
 
+	function settingsToast(message, type) {
+		if (window.MalibuToast && typeof window.MalibuToast.show === 'function') {
+			window.MalibuToast.show(message, type || 'info');
+		}
+	}
+
 	function handleSettingsForm($form, $alert, extraData, resetLabel) {
 		$form.on('submit', function (e) {
 			e.preventDefault();
@@ -1103,7 +1086,9 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 			$.post(AJAX_URL, $.extend({ action: 'me_settings_save', nonce: NONCE }, extraData()))
 			.done(function (res) {
 				if (res.success) {
-					$alert.removeClass('d-none alert-danger').addClass('alert-success').text(res.data.message || 'Сохранено');
+					var msg = (res.data && res.data.message) || 'Сохранено';
+					$alert.removeClass('d-none alert-danger').addClass('alert-success').text(msg);
+					settingsToast(msg, 'success');
 					if (res.data.fintech_status) {
 						renderFintechStatus(res.data.fintech_status);
 					}
@@ -1113,11 +1098,15 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 						renderFintechStatus(collectFintechStatus());
 					}
 				} else {
-					$alert.removeClass('d-none alert-success').addClass('alert-danger').text(res.data.message || 'Ошибка сохранения');
+					var errMsg = (res.data && res.data.message) || 'Ошибка сохранения';
+					$alert.removeClass('d-none alert-success').addClass('alert-danger').text(errMsg);
+					settingsToast(errMsg, 'danger');
 				}
 			})
 			.fail(function () {
-				$alert.removeClass('d-none alert-success').addClass('alert-danger').text('Сетевая ошибка. Попробуйте ещё раз.');
+				var netMsg = 'Сетевая ошибка. Попробуйте ещё раз.';
+				$alert.removeClass('d-none alert-success').addClass('alert-danger').text(netMsg);
+				settingsToast(netMsg, 'danger');
 			})
 			.always(function () {
 				$btn.prop('disabled', false).text(resetLabel);
@@ -1145,12 +1134,53 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 		'Сохранить настройки'
 	);
 
-	handleSettingsForm(
-		$('#rates-settings-form'),
-		$('#settings-alert'),
-		function () { return { section: 'rates_coefficient', rates_coefficient: $('#rates_coefficient').val() }; },
-		'Сохранить коэффициент'
-	);
+	$('.rates-coefficient-form').each(function () {
+		var $form = $(this);
+		var pairCode = $form.attr('data-pair-code') || '';
+		var $unit = $form.find('.rates-value-unit');
+		var $hint = $form.find('.rates-formula-hint');
+
+		function syncTypeUI() {
+			var type = $form.find('.rates-type-input:checked').val() || 'absolute';
+			$unit.text(type === 'percent' ? $unit.attr('data-unit-percent') : $unit.attr('data-unit-absolute'));
+			$hint.text(type === 'percent' ? $hint.attr('data-hint-percent') : $hint.attr('data-hint-absolute'));
+		}
+
+		$form.on('change', '.rates-type-input', syncTypeUI);
+		syncTypeUI();
+
+		handleSettingsForm(
+			$form,
+			$('#settings-alert'),
+			function () {
+				return {
+					section:                'rates_coefficient',
+					pair_code:              pairCode,
+					coefficient_type:       $form.find('.rates-type-input:checked').val() || 'absolute',
+					rates_coefficient:      $form.find('.rates-coefficient-input').val()
+				};
+			},
+			'Сохранить'
+		);
+	});
+
+	$('.rates-source-form').each(function () {
+		var $form    = $(this);
+		var pairCode = $form.attr('data-pair-code') || '';
+
+		handleSettingsForm(
+			$form,
+			$('#settings-alert'),
+			function () {
+				return {
+					section:       'rates_market_source',
+					pair_code:     pairCode,
+					market_source: $form.find('input[type="radio"]:checked').val() || 'bitkub'
+				};
+			},
+			'Сохранить'
+		);
+	});
 
 	handleSettingsForm(
 		$('#merchant-settings-form'),

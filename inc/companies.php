@@ -72,12 +72,12 @@ function crm_get_all_companies_list(): array {
 /**
  * Get primary company assigned to a user.
  * Uses crm_user_companies.is_primary = 1.
- * Returns null if no active primary company is assigned.
+ * Returns null if no active primary membership is assigned.
  */
 function crm_get_user_primary_company( int $user_id ): ?object {
 	global $wpdb;
 	return $wpdb->get_row( $wpdb->prepare(
-		"SELECT c.id, c.code, c.name
+		"SELECT c.id, c.code, c.name, c.status, c.blocked_at, c.block_reason
 		 FROM crm_user_companies uc
 		 JOIN crm_companies c ON c.id = uc.company_id
 		 WHERE uc.user_id = %d AND uc.is_primary = 1 AND uc.status = 'active'
@@ -97,7 +97,7 @@ function crm_get_companies_for_users( array $user_ids ): array {
 	}
 	$ids  = implode( ',', array_map( 'intval', $user_ids ) );
 	$rows = $wpdb->get_results(
-		"SELECT uc.user_id, c.id, c.code, c.name
+		"SELECT uc.user_id, c.id, c.code, c.name, c.status
 		 FROM crm_user_companies uc
 		 JOIN crm_companies c ON c.id = uc.company_id
 		 WHERE uc.user_id IN ($ids) AND uc.is_primary = 1 AND uc.status = 'active'"
@@ -107,6 +107,100 @@ function crm_get_companies_for_users( array $user_ids ): array {
 		$map[ (int) $row->user_id ] = $row;
 	}
 	return $map;
+}
+
+/**
+ * Human-readable labels for company statuses.
+ */
+function crm_company_status_label( string $status ): string {
+	$labels = [
+		'active'   => 'Активна',
+		'blocked'  => 'Заблокирована',
+		'archived' => 'Архив',
+	];
+
+	return $labels[ $status ] ?? $status;
+}
+
+function crm_company_status_badge_class( string $status ): string {
+	if ( $status === 'blocked' ) {
+		return 'danger';
+	}
+	if ( $status === 'archived' ) {
+		return 'secondary';
+	}
+
+	return 'success';
+}
+
+function crm_get_company_by_id( int $company_id ): ?object {
+	global $wpdb;
+
+	if ( $company_id <= 0 ) {
+		return null;
+	}
+
+	return $wpdb->get_row( $wpdb->prepare(
+		"SELECT id, code, name, status, note, phone, address,
+		        blocked_at, blocked_by_user_id, block_reason
+		 FROM crm_companies
+		 WHERE id = %d
+		 LIMIT 1",
+		$company_id
+	) ) ?: null;
+}
+
+/**
+ * Returns null when the user can access CRM under their company context.
+ * For non-root users, missing or inactive company context is a hard blocker.
+ *
+ * @return array<string,mixed>|null
+ */
+function crm_get_user_company_access_error( int $user_id = 0 ): ?array {
+	if ( $user_id === 0 ) {
+		$user_id = get_current_user_id();
+	}
+
+	if ( $user_id <= 0 ) {
+		return [
+			'code'       => 'not_authenticated',
+			'message'    => 'Требуется вход в систему.',
+			'company_id' => 0,
+		];
+	}
+
+	if ( crm_is_root( $user_id ) ) {
+		return null;
+	}
+
+	$company = crm_get_user_primary_company( $user_id );
+	if ( ! $company ) {
+		return [
+			'code'       => 'no_company',
+			'message'    => 'Ваш аккаунт ещё не привязан к компании.',
+			'company_id' => 0,
+		];
+	}
+
+	$status = (string) ( $company->status ?? '' );
+	if ( $status !== 'active' ) {
+		$label = crm_company_status_label( $status );
+		return [
+			'code'         => $status === 'blocked' ? 'company_blocked' : 'company_unavailable',
+			'message'      => sprintf( 'Компания «%s» сейчас недоступна: %s.', (string) $company->name, $label ),
+			'company_id'   => (int) $company->id,
+			'company_name' => (string) $company->name,
+			'status'       => $status,
+			'blocked_at'   => (string) ( $company->blocked_at ?? '' ),
+			'block_reason' => (string) ( $company->block_reason ?? '' ),
+		];
+	}
+
+	return null;
+}
+
+function crm_user_has_company_access_or_root( int $user_id = 0 ): bool {
+	return crm_get_user_company_access_error( $user_id ) === null;
 }
 
 /**
@@ -226,26 +320,13 @@ function crm_require_company_page_context(): int {
 		return 0;
 	}
 
-	if ( $company_id > 0 ) {
+	$access_error = crm_get_user_company_access_error( $uid );
+	if ( $access_error === null && $company_id > 0 ) {
 		return $company_id;
 	}
 
-	crm_log_company_scope_violation(
-		'company.scope.user_without_company',
-		'Попытка открыть company-scoped страницу без привязки к компании',
-		[
-			'user_id'            => $uid,
-			'current_company_id' => 0,
-			'request_uri'        => isset( $_SERVER['REQUEST_URI'] ) ? (string) $_SERVER['REQUEST_URI'] : '',
-		]
-	);
-
-	wp_die(
-		'<p style="font-size:16px">Ваш аккаунт ещё не привязан к компании.</p>'
-		. '<p>Обратитесь к администратору для получения доступа.</p>',
-		'Доступ ограничен — нет компании',
-		[ 'response' => 403 ]
-	);
+	crm_log_company_access_denied( $uid, $access_error ?? [] );
+	crm_render_company_access_denied( $access_error ?? [] );
 }
 
 /**
@@ -254,6 +335,10 @@ function crm_require_company_page_context(): int {
 function crm_user_can_access_company( int $viewer_user_id, int $company_id ): bool {
 	if ( crm_is_root( $viewer_user_id ) ) {
 		return $company_id === 0;
+	}
+
+	if ( crm_get_user_company_access_error( $viewer_user_id ) !== null ) {
+		return false;
 	}
 
 	$current_company_id = crm_get_current_user_company_id( $viewer_user_id );
@@ -270,17 +355,51 @@ function crm_user_has_company_or_root( int $user_id = 0 ): bool {
 	if ( $user_id === 0 ) {
 		$user_id = get_current_user_id();
 	}
-	if ( crm_is_root( $user_id ) ) {
-		return true;
-	}
-	return crm_get_current_user_company_id( $user_id ) > 0;
+	return crm_user_has_company_access_or_root( $user_id );
 }
 
-// ─── Gate: блокировка пользователей без компании ──────────────────────────────
+/**
+ * Logs and renders company access failures in one consistent shape.
+ */
+function crm_log_company_access_denied( int $user_id, array $access_error ): void {
+	$code       = (string) ( $access_error['code'] ?? 'company_access_denied' );
+	$company_id = (int) ( $access_error['company_id'] ?? 0 );
+	$message    = (string) ( $access_error['message'] ?? 'Доступ к компании ограничен.' );
+
+	crm_log_company_scope_violation(
+		$code === 'no_company' ? 'company.scope.user_without_company' : 'company.access.company_unavailable',
+		$message,
+		[
+			'user_id'            => $user_id,
+			'current_company_id' => $company_id,
+			'company_status'     => (string) ( $access_error['status'] ?? '' ),
+			'request_uri'        => isset( $_SERVER['REQUEST_URI'] ) ? (string) $_SERVER['REQUEST_URI'] : '',
+		]
+	);
+}
+
+function crm_render_company_access_denied( array $access_error ): void {
+	$code    = (string) ( $access_error['code'] ?? '' );
+	$message = (string) ( $access_error['message'] ?? 'Доступ к системе временно ограничен.' );
+	$title   = $code === 'no_company'
+		? 'Доступ ограничен — нет компании'
+		: 'Доступ ограничен — компания недоступна';
+	$reason  = trim( (string) ( $access_error['block_reason'] ?? '' ) );
+
+	$html = '<p style="font-size:16px">' . esc_html( $message ) . '</p>';
+	if ( $reason !== '' ) {
+		$html .= '<p>Причина: ' . esc_html( $reason ) . '</p>';
+	}
+	$html .= '<p>Обратитесь к администратору для получения доступа.</p>';
+
+	wp_die( $html, $title, [ 'response' => 403 ] );
+}
+
+// ─── Gate: блокировка пользователей без активной компании ─────────────────────
 
 /**
  * template_redirect (priority 15) — срабатывает после проверки логина.
- * Если пользователь залогинен, но не имеет компании — выводит 403 с инструкцией.
+ * Если пользователь залогинен, но не имеет активной компании — выводит 403.
  * root (uid=1) и страница логина — всегда пропускаются.
  */
 add_action( 'template_redirect', 'crm_companies_require_assignment', 15 );
@@ -300,24 +419,41 @@ function crm_companies_require_assignment(): void {
 		return; // root всегда проходит
 	}
 
-	if ( ! crm_user_has_company_or_root( $uid ) ) {
-		crm_log_company_scope_violation(
-			'company.scope.user_without_company',
-			'Попытка доступа без привязки к компании',
-			[
-				'user_id'            => $uid,
-				'current_company_id' => 0,
-				'request_uri'        => isset( $_SERVER['REQUEST_URI'] ) ? (string) $_SERVER['REQUEST_URI'] : '',
-			]
-		);
-
-		wp_die(
-			'<p style="font-size:16px">Ваш аккаунт ещё не привязан к компании.</p>'
-			. '<p>Обратитесь к администратору для получения доступа.</p>',
-			'Доступ ограничен — нет компании',
-			[ 'response' => 403 ]
-		);
+	$access_error = crm_get_user_company_access_error( $uid );
+	if ( $access_error !== null ) {
+		crm_log_company_access_denied( $uid, $access_error );
+		crm_render_company_access_denied( $access_error );
 	}
+}
+
+/**
+ * admin-ajax does not pass through template_redirect, so block inactive company
+ * users before any AJAX handler can read or write company-scoped data.
+ */
+add_action( 'admin_init', 'crm_companies_require_ajax_access', 15 );
+function crm_companies_require_ajax_access(): void {
+	if ( ! wp_doing_ajax() || ! is_user_logged_in() ) {
+		return;
+	}
+
+	$uid = get_current_user_id();
+	if ( crm_is_root( $uid ) ) {
+		return;
+	}
+
+	$access_error = crm_get_user_company_access_error( $uid );
+	if ( $access_error === null ) {
+		return;
+	}
+
+	crm_log_company_access_denied( $uid, $access_error );
+	wp_send_json_error(
+		[
+			'message' => (string) ( $access_error['message'] ?? 'Доступ к системе временно ограничен.' ),
+			'code'    => (string) ( $access_error['code'] ?? 'company_access_denied' ),
+		],
+		403
+	);
 }
 
 // ─── Список всех компаний (admin) ────────────────────────────────────────────
@@ -343,7 +479,7 @@ function crm_get_all_companies_full(): array {
 	global $wpdb;
 	return $wpdb->get_results(
 		"SELECT c.id, c.code, c.name, c.status, c.note,
-		        c.phone, c.address,
+		        c.phone, c.address, c.blocked_at, c.blocked_by_user_id, c.block_reason,
 		        COUNT(uc.id) as user_count
 		 FROM crm_companies c
 		 LEFT JOIN crm_user_companies uc
@@ -352,6 +488,117 @@ function crm_get_all_companies_full(): array {
 		 GROUP BY c.id
 		 ORDER BY c.id ASC"
 	) ?: [];
+}
+
+/**
+ * Root-only company status switch. This does not rewrite user statuses.
+ * When a company is blocked, active sessions for its users are destroyed.
+ *
+ * @return array<string,mixed>|WP_Error
+ */
+function crm_set_company_status( int $company_id, string $status, int $actor_user_id = 0, string $reason = '' ) {
+	global $wpdb;
+
+	if ( $actor_user_id <= 0 ) {
+		$actor_user_id = get_current_user_id();
+	}
+
+	if ( ! crm_is_root( $actor_user_id ) ) {
+		return new WP_Error( 'forbidden', 'Недостаточно прав.' );
+	}
+
+	if ( $company_id <= 0 ) {
+		return new WP_Error( 'invalid_company', 'Неверный ID компании.' );
+	}
+
+	if ( ! in_array( $status, [ 'active', 'blocked' ], true ) ) {
+		return new WP_Error( 'invalid_status', 'Недопустимый статус компании.' );
+	}
+
+	$company = crm_get_company_by_id( $company_id );
+	if ( ! $company ) {
+		return new WP_Error( 'company_not_found', 'Компания не найдена.' );
+	}
+
+	if ( (string) $company->status === 'archived' ) {
+		return new WP_Error( 'company_archived', 'Архивную компанию нельзя блокировать или активировать из этого действия.' );
+	}
+
+	$reason = sanitize_textarea_field( $reason );
+	$update = [
+		'status'             => $status,
+		'updated_by_user_id' => $actor_user_id,
+	];
+
+	if ( $status === 'blocked' ) {
+		$update['blocked_at']         = current_time( 'mysql' );
+		$update['blocked_by_user_id'] = $actor_user_id;
+		$update['block_reason']       = $reason !== '' ? $reason : null;
+	} else {
+		$update['blocked_at']         = null;
+		$update['blocked_by_user_id'] = null;
+		$update['block_reason']       = null;
+	}
+
+	$updated = $wpdb->update(
+		'crm_companies',
+		$update,
+		[ 'id' => $company_id ],
+		array_map(
+			static fn( $value ) => is_int( $value ) ? '%d' : '%s',
+			$update
+		),
+		[ '%d' ]
+	);
+
+	if ( $updated === false ) {
+		return new WP_Error( 'company_update_failed', 'Ошибка обновления компании.' );
+	}
+
+	$user_ids           = crm_get_company_user_ids( $company_id );
+	$sessions_destroyed = 0;
+
+	if ( $status === 'blocked' ) {
+		foreach ( $user_ids as $user_id ) {
+			if ( $user_id <= 0 || crm_is_root( $user_id ) ) {
+				continue;
+			}
+
+			WP_Session_Tokens::get_instance( $user_id )->destroy_all();
+			$sessions_destroyed++;
+		}
+	}
+
+	$updated_company = crm_get_company_by_id( $company_id );
+	$event_code      = $status === 'blocked' ? 'company.blocked' : 'company.unblocked';
+	$company_name    = $updated_company ? (string) $updated_company->name : (string) $company->name;
+
+	crm_log( $event_code, [
+		'category'    => $status === 'blocked' ? 'security' : 'users',
+		'level'       => $status === 'blocked' ? 'security' : 'info',
+		'action'      => 'status_change',
+		'message'     => sprintf(
+			'Компания «%s» %s',
+			$company_name,
+			$status === 'blocked' ? 'заблокирована' : 'разблокирована'
+		),
+		'target_type' => 'company',
+		'target_id'   => $company_id,
+		'org_id'      => $company_id,
+		'context'     => [
+			'status'             => $status,
+			'changed_by'         => $actor_user_id,
+			'reason'             => $reason,
+			'user_count'         => count( $user_ids ),
+			'sessions_destroyed' => $sessions_destroyed,
+		],
+	] );
+
+	return [
+		'company'            => $updated_company,
+		'user_count'         => count( $user_ids ),
+		'sessions_destroyed' => $sessions_destroyed,
+	];
 }
 
 /**

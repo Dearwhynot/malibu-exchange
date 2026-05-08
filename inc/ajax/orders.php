@@ -108,7 +108,7 @@ function me_ajax_orders_list(): void {
 	$_tz_org    = $company_id;
 
 	// ── WHERE ─────────────────────────────────────────────────────────────────
-	$where  = 'WHERE 1=1';
+	$where  = "WHERE (`source_channel` IS NULL OR `source_channel` <> 'rate_check')";
 	$params = [];
 
 	if ( $search !== '' ) {

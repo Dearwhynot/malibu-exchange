@@ -31,6 +31,7 @@ foreach ( $all_companies_full as $company ) {
 
 $nonce_create_company   = wp_create_nonce( 'me_create_company' );
 $nonce_company_settings = wp_create_nonce( 'me_company_fintech_access_save' );
+$nonce_company_status   = wp_create_nonce( 'me_company_status' );
 
 if ( ! function_exists( 'me_users_render_company_provider_badges_html' ) ) {
 	function me_users_render_company_provider_badges_html( array $providers ): string {
@@ -96,7 +97,7 @@ get_template_part(
 						<tr>
 							<th style="width:50px">ID</th>
 							<th>Название</th>
-							<th style="width:80px">Статус</th>
+							<th style="width:130px">Статус</th>
 							<th style="width:120px">Пользователей</th>
 							<th>Телефон</th>
 							<th>Адрес / заметка</th>
@@ -113,7 +114,7 @@ get_template_part(
 						<tr>
 							<th style="width:50px">ID</th>
 							<th>Название</th>
-							<th style="width:80px">Статус</th>
+							<th style="width:130px">Статус</th>
 							<th style="width:120px">Пользователей</th>
 							<th>Телефон</th>
 							<th>Адрес / заметка</th>
@@ -125,6 +126,10 @@ get_template_part(
 							<?php
 							$company_id        = (int) $company->id;
 							$allowed_providers = $company_fintech_access_map[ $company_id ] ?? crm_fintech_default_allowed_providers();
+							$company_status    = (string) $company->status;
+							$status_label      = crm_company_status_label( $company_status );
+							$status_badge      = crm_company_status_badge_class( $company_status );
+							$block_reason      = trim( (string) ( $company->block_reason ?? '' ) );
 							?>
 							<tr id="corow-<?php echo $company_id; ?>">
 								<td class="v-align-middle">
@@ -139,10 +144,13 @@ get_template_part(
 										<?php echo me_users_render_company_provider_badges_html( $allowed_providers ); ?>
 									</div>
 								</td>
-								<td class="v-align-middle">
-									<span class="badge badge-<?php echo $company->status === 'active' ? 'success' : 'secondary'; ?>">
-										<?php echo esc_html( $company->status ); ?>
+								<td class="v-align-middle" id="company-status-<?php echo $company_id; ?>">
+									<span class="badge badge-<?php echo esc_attr( $status_badge ); ?>">
+										<?php echo esc_html( $status_label ); ?>
 									</span>
+									<?php if ( $company_status === 'blocked' && $block_reason !== '' ) : ?>
+										<div class="hint-text fs-11 m-t-5"><?php echo esc_html( $block_reason ); ?></div>
+									<?php endif; ?>
 								</td>
 								<td class="v-align-middle hint-text fs-12">
 									<?php echo (int) $company->user_count; ?>
@@ -168,12 +176,32 @@ get_template_part(
 												   data-company-id="<?php echo $company_id; ?>"
 												   data-company-name="<?php echo esc_attr( $company->name ); ?>"
 												   data-company-code="<?php echo esc_attr( $company->code ); ?>"
+												   data-company-status="<?php echo esc_attr( $company_status ); ?>"
 												   data-allowed-providers="<?php echo esc_attr( implode( ',', $allowed_providers ) ); ?>"
 												   data-bs-toggle="modal"
 												   data-bs-target="#modal-company-settings">
 													<i class="pg-icon m-r-5">settings</i> Настройки
 												</a>
 											</li>
+											<?php if ( $company_status === 'active' ) : ?>
+												<li>
+													<a class="dropdown-item text-danger js-company-status" href="#"
+													   data-company-id="<?php echo $company_id; ?>"
+													   data-company-name="<?php echo esc_attr( $company->name ); ?>"
+													   data-status="blocked">
+														<i class="pg-icon m-r-5">lock</i> Заблокировать
+													</a>
+												</li>
+											<?php elseif ( $company_status === 'blocked' ) : ?>
+												<li>
+													<a class="dropdown-item text-success js-company-status" href="#"
+													   data-company-id="<?php echo $company_id; ?>"
+													   data-company-name="<?php echo esc_attr( $company->name ); ?>"
+													   data-status="active">
+														<i class="pg-icon m-r-5">unlock</i> Разблокировать
+													</a>
+												</li>
+											<?php endif; ?>
 										</ul>
 									</div>
 								</td>
@@ -323,11 +351,53 @@ get_template_part(
 	</div>
 </div>
 
+<div class="modal fade" id="modal-company-status" tabindex="-1"
+     aria-labelledby="modal-company-status-title" aria-hidden="true">
+	<div class="modal-dialog">
+		<div class="modal-content">
+			<div class="modal-header clearfix text-left">
+				<button aria-label="Закрыть" type="button" class="close" data-bs-dismiss="modal" aria-hidden="true">
+					<i class="pg-icon">close</i>
+				</button>
+				<h5 class="modal-title" id="modal-company-status-title">Изменить статус компании</h5>
+				<p class="p-b-10 m-b-0" id="company-status-message"></p>
+			</div>
+			<div class="modal-body">
+				<form id="form-company-status" novalidate>
+					<input type="hidden" id="cst-company-id" value="0">
+					<input type="hidden" id="cst-status" value="">
+
+					<div class="form-group form-group-default">
+						<label>Компания</label>
+						<input type="text" class="form-control" id="cst-company-name" value="" readonly>
+					</div>
+
+					<div class="form-group form-group-default" id="cst-reason-wrap">
+						<label>Причина блокировки</label>
+						<textarea class="form-control" id="cst-reason" rows="3" placeholder="Можно оставить пустой"></textarea>
+					</div>
+
+					<div class="hint-text fs-12 m-t-5" id="company-status-impact"></div>
+					<div class="alert alert-danger d-none m-t-10" id="cst-error"></div>
+				</form>
+			</div>
+			<div class="modal-footer">
+				<button type="button" class="btn btn-default" data-bs-dismiss="modal">Отмена</button>
+				<button type="button" class="btn btn-danger" id="btn-company-status-confirm">
+					<span class="btn-label">Подтвердить</span>
+					<i class="pg-icon spin d-none" id="btn-company-status-spinner">refresh</i>
+				</button>
+			</div>
+		</div>
+	</div>
+</div>
+
 <style>
 .badge { font-size:11px; font-weight:600; padding:3px 8px; border-radius:20px; }
 .badge-success  { background:rgba(29,211,176,.18); color:#0d9e82; border:1px solid rgba(29,211,176,.3); }
 .badge-info     { background:rgba(76,201,240,.18); color:#1579a8; border:1px solid rgba(76,201,240,.3); }
 .badge-primary  { background:rgba(90,128,255,.18); color:#3f5fcc; border:1px solid rgba(90,128,255,.3); }
+.badge-danger   { background:rgba(240,83,83,.16); color:#c93b3b; border:1px solid rgba(240,83,83,.28); }
 .badge-secondary{ background:rgba(120,120,140,.15); color:#888; border:1px solid rgba(120,120,140,.2); }
 .m-r-2 { margin-right:2px; }
 .table th { font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
@@ -342,7 +412,7 @@ get_template_part(
 <?php
 add_action(
 	'wp_footer',
-	function () use ( $nonce_create_company, $nonce_company_settings ) {
+	function () use ( $nonce_create_company, $nonce_company_settings, $nonce_company_status ) {
 		?>
 <script>
 (function ($) {
@@ -351,11 +421,13 @@ add_action(
 	var AJAX_URL = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
 	var NONCES = {
 		createCo: '<?php echo esc_js( $nonce_create_company ); ?>',
-		companySettings: '<?php echo esc_js( $nonce_company_settings ); ?>'
+		companySettings: '<?php echo esc_js( $nonce_company_settings ); ?>',
+		companyStatus: '<?php echo esc_js( $nonce_company_status ); ?>'
 	};
 	var FINTECH_PROVIDER_LABELS = <?php echo crm_json_for_inline_js( crm_fintech_provider_labels() ); ?>;
 	var $companySettingsModal = $('#modal-company-settings');
 	var $createCompanyModal = $('#modal-create-company');
+	var $companyStatusModal = $('#modal-company-status');
 
 	function showToast(message, type) {
 		if (window.MalibuToast && typeof window.MalibuToast.show === 'function') {
@@ -401,7 +473,57 @@ add_action(
 		return html;
 	}
 
+	function companyStatusLabel(status) {
+		var labels = {
+			active: 'Активна',
+			blocked: 'Заблокирована',
+			archived: 'Архив'
+		};
+
+		return labels[status] || status || '—';
+	}
+
+	function companyStatusBadgeClass(status) {
+		if (status === 'blocked') {
+			return 'danger';
+		}
+		if (status === 'archived') {
+			return 'secondary';
+		}
+
+		return 'success';
+	}
+
+	function renderCompanyStatusCell(company) {
+		var status = company.status || 'active';
+		var html = '<span class="badge badge-' + companyStatusBadgeClass(status) + '">' + escapeHtml(companyStatusLabel(status)) + '</span>';
+		if (status === 'blocked' && company.block_reason) {
+			html += '<div class="hint-text fs-11 m-t-5">' + escapeHtml(company.block_reason) + '</div>';
+		}
+
+		return html;
+	}
+
 	function buildCompanyActionsDropdown(company) {
+		var status = company.status || 'active';
+		var statusAction = '';
+
+		if (status === 'active') {
+			statusAction = '<li><a class="dropdown-item text-danger js-company-status" href="#"'
+				+ ' data-company-id="' + escapeHtml(company.id) + '"'
+				+ ' data-company-name="' + escapeHtml(company.name) + '"'
+				+ ' data-status="blocked">'
+				+ '<i class="pg-icon m-r-5">lock</i> Заблокировать'
+				+ '</a></li>';
+		} else if (status === 'blocked') {
+			statusAction = '<li><a class="dropdown-item text-success js-company-status" href="#"'
+				+ ' data-company-id="' + escapeHtml(company.id) + '"'
+				+ ' data-company-name="' + escapeHtml(company.name) + '"'
+				+ ' data-status="active">'
+				+ '<i class="pg-icon m-r-5">unlock</i> Разблокировать'
+				+ '</a></li>';
+		}
+
 		return ''
 			+ '<div class="dropdown">'
 			+ '<button type="button" class="btn btn-default btn-xs dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Действия компании">'
@@ -412,11 +534,13 @@ add_action(
 			+ ' data-company-id="' + escapeHtml(company.id) + '"'
 			+ ' data-company-name="' + escapeHtml(company.name) + '"'
 			+ ' data-company-code="' + escapeHtml(company.code) + '"'
+			+ ' data-company-status="' + escapeHtml(status) + '"'
 			+ ' data-allowed-providers="' + escapeHtml((company.allowed_providers || []).join(',')) + '"'
 			+ ' data-bs-toggle="modal"'
 			+ ' data-bs-target="#modal-company-settings">'
 			+ '<i class="pg-icon m-r-5">settings</i> Настройки'
 			+ '</a></li>'
+			+ statusAction
 			+ '</ul>'
 			+ '</div>';
 	}
@@ -436,6 +560,33 @@ add_action(
 			return [];
 		}
 		return normalizeProviderCodes(String(rawValue).split(','));
+	}
+
+	function getCompanyFromRow(companyId) {
+		var $settings = $('#corow-' + companyId).find('.js-company-settings');
+
+		return {
+			id: companyId,
+			name: $settings.attr('data-company-name') || '',
+			code: $settings.attr('data-company-code') || '',
+			status: $settings.attr('data-company-status') || 'active',
+			allowed_providers: parseCompanyProvidersAttr($settings.attr('data-allowed-providers')),
+			block_reason: ''
+		};
+	}
+
+	function updateCompanyStatusUi(data) {
+		var companyId = parseInt(data.company_id, 10) || 0;
+		var company = getCompanyFromRow(companyId);
+		var $row = $('#corow-' + companyId);
+
+		company.status = data.status || 'active';
+		company.block_reason = data.block_reason || '';
+
+		$row.find('.js-company-settings').attr('data-company-status', company.status);
+		$('#company-status-' + companyId).html(renderCompanyStatusCell(company));
+		$row.find('td:last').html(buildCompanyActionsDropdown(company));
+		initActionDropdowns($row);
 	}
 
 	initActionDropdowns($(document));
@@ -458,6 +609,23 @@ add_action(
 		$('#btn-save-company-settings').prop('disabled', false)
 			.find('.btn-label').show()
 			.end().find('#btn-company-settings-spinner').addClass('d-none');
+	});
+
+	$companyStatusModal.on('hidden.bs.modal', function () {
+		$('#cst-company-id').val(0);
+		$('#cst-status').val('');
+		$('#cst-company-name').val('');
+		$('#cst-reason').val('');
+		$('#company-status-message').text('');
+		$('#company-status-impact').text('');
+		$('#cst-error').addClass('d-none').text('');
+		$('#cst-reason-wrap').removeClass('d-none');
+		$('#btn-company-status-confirm')
+			.removeClass('btn-success btn-danger')
+			.addClass('btn-danger')
+			.prop('disabled', false)
+			.find('.btn-label').text('Подтвердить').show()
+			.end().find('#btn-company-status-spinner').addClass('d-none');
 	});
 
 	$(document).on('click', '.js-company-settings', function () {
@@ -525,6 +693,86 @@ add_action(
 		});
 	});
 
+	function openCompanyStatusModal(companyId, status, companyName) {
+		if (!companyId || (status !== 'blocked' && status !== 'active')) {
+			return;
+		}
+
+		$('#cst-company-id').val(companyId);
+		$('#cst-status').val(status);
+		$('#cst-company-name').val(companyName || '—');
+		$('#cst-reason').val('');
+		$('#cst-error').addClass('d-none').text('');
+
+		if (status === 'blocked') {
+			$('#modal-company-status-title').text('Заблокировать компанию');
+			$('#company-status-message').text('Компания «' + companyName + '» будет заблокирована.');
+			$('#company-status-impact').text('Все пользователи компании сразу потеряют доступ к системе. Индивидуальные статусы пользователей не изменятся.');
+			$('#cst-reason-wrap').removeClass('d-none');
+			$('#btn-company-status-confirm')
+				.removeClass('btn-success')
+				.addClass('btn-danger')
+				.find('.btn-label').text('Заблокировать');
+		} else {
+			$('#modal-company-status-title').text('Разблокировать компанию');
+			$('#company-status-message').text('Компания «' + companyName + '» будет разблокирована.');
+			$('#company-status-impact').text('Доступ вернётся только пользователям этой компании с активным индивидуальным статусом.');
+			$('#cst-reason-wrap').addClass('d-none');
+			$('#btn-company-status-confirm')
+				.removeClass('btn-danger')
+				.addClass('btn-success')
+				.find('.btn-label').text('Разблокировать');
+		}
+
+		bootstrap.Modal.getOrCreateInstance($companyStatusModal[0]).show();
+	}
+
+	function submitCompanyStatus() {
+		var $btn = $('#btn-company-status-confirm');
+		var companyId = parseInt($('#cst-company-id').val(), 10) || 0;
+		var status = String($('#cst-status').val() || '');
+		var reason = $.trim($('#cst-reason').val());
+
+		if (!companyId || (status !== 'blocked' && status !== 'active')) {
+			return;
+		}
+
+		$('#cst-error').addClass('d-none').text('');
+		$btn.prop('disabled', true)
+			.find('.btn-label').hide()
+			.end().find('#btn-company-status-spinner').removeClass('d-none');
+
+		$.post(AJAX_URL, {
+			action: 'me_set_company_status',
+			_nonce: NONCES.companyStatus,
+			company_id: companyId,
+			status: status,
+			reason: reason
+		})
+		.done(function (res) {
+			if (!res || !res.success) {
+				$('#cst-error').removeClass('d-none').text((res && res.data && res.data.message) || 'Ошибка изменения статуса компании.');
+				$btn.prop('disabled', false)
+					.find('.btn-label').show()
+					.end().find('#btn-company-status-spinner').addClass('d-none');
+				return;
+			}
+
+			updateCompanyStatusUi(res.data || {});
+			showToast(res.data.message || 'Статус компании изменён.', 'success');
+			bootstrap.Modal.getInstance($companyStatusModal[0]).hide();
+		})
+		.fail(function (xhr) {
+			var message = (xhr && xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message)
+				? xhr.responseJSON.data.message
+				: 'Ошибка сервера.';
+			$('#cst-error').removeClass('d-none').text(message);
+			$btn.prop('disabled', false)
+				.find('.btn-label').show()
+				.end().find('#btn-company-status-spinner').addClass('d-none');
+		});
+	}
+
 	$('#btn-create-company').on('click', function () {
 		var $btn = $(this);
 		var name = $.trim($('#cc-name').val());
@@ -565,7 +813,7 @@ add_action(
 				+ '<tr id="corow-' + company.id + '">'
 				+ '<td class="v-align-middle"><span class="hint-text fs-12">#' + company.id + '</span></td>'
 				+ '<td class="v-align-middle"><div><span class="semi-bold">' + escapeHtml(company.name) + '</span> <small class="hint-text m-l-5 fs-11">' + escapeHtml(company.code) + '</small></div><div class="m-t-5" id="company-providers-' + company.id + '">' + providerBadges + '</div></td>'
-				+ '<td class="v-align-middle"><span class="badge badge-success">active</span></td>'
+				+ '<td class="v-align-middle" id="company-status-' + company.id + '">' + renderCompanyStatusCell(company) + '</td>'
 				+ '<td class="v-align-middle hint-text fs-12">0</td>'
 				+ '<td class="v-align-middle hint-text fs-12">' + escapeHtml(company.phone || '—') + '</td>'
 				+ '<td class="v-align-middle hint-text fs-12">' + escapeHtml(company.address || '—') + '</td>'
@@ -590,6 +838,21 @@ add_action(
 				.find('.btn-label').show()
 				.end().find('#btn-create-company-spinner').addClass('d-none');
 		});
+	});
+
+	$(document).on('click', '.js-company-status', function (e) {
+		e.preventDefault();
+
+		var $trigger = $(this);
+		openCompanyStatusModal(
+			parseInt($trigger.attr('data-company-id'), 10) || 0,
+			String($trigger.attr('data-status') || ''),
+			$trigger.attr('data-company-name') || 'компания'
+		);
+	});
+
+	$('#btn-company-status-confirm').on('click', function () {
+		submitCompanyStatus();
 	});
 
 }(jQuery));

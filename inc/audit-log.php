@@ -249,8 +249,8 @@ function crm_audit_wp_login_failed( string $username, $error = null ): void {
 
 	if ( $error instanceof WP_Error ) {
 		$error_code = $error->get_error_code();
-		// Заблокированный / архивированный / ожидающий аккаунт
-		if ( in_array( $error_code, [ 'crm_blocked', 'crm_archived', 'crm_pending' ], true ) ) {
+		// Заблокированный / архивированный / ожидающий аккаунт или недоступная компания.
+		if ( in_array( $error_code, [ 'crm_blocked', 'crm_archived', 'crm_pending', 'crm_company_blocked', 'crm_company_unavailable', 'crm_no_company' ], true ) ) {
 			$level    = 'security';
 			$category = 'security';
 		}

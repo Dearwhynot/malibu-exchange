@@ -24,6 +24,28 @@ A task is not considered complete if important actions are not logged.
 
 ---
 
+## Where to check errors during 500/502/AJAX failures
+
+For fast diagnostics of PHP, WordPress, database and `admin-ajax.php` failures, check the WordPress debug log first.
+
+- Server log file: `wp-content/debug.log` (`WP_CONTENT_DIR . '/debug.log'`).
+- WP admin viewer: `/wp-admin/admin.php?page=debug-log`.
+- Viewer implementation: `includes/debug-log-2.php`.
+- Viewer menu label: `Debug Log`.
+- The viewer supports refresh, search, clearing the file, pagination and emoji severity/source prefixes.
+- CRM audit log is separate: `/logs/` and table `crm_audit_log`. It records business actions, but it does not replace `debug.log` for PHP fatal errors.
+
+For AJAX errors, reproduce the action once, open the debug log immediately, and search by:
+- `admin-ajax.php`
+- the AJAX action name, for example `me_kanyon_rate_check`
+- local markers, for example `[rates.ajax]`, `Kanyon`, `[FINTECH]`
+- fatal/database markers: `PHP Fatal error`, `Uncaught`, `WordPress database error`, `MySQL`
+- the timestamp close to the browser console error
+
+When reporting a 500/502, include the newest relevant log lines with timestamp. Do not paste secrets, tokens, passwords, private keys, cookies or full provider payloads.
+
+---
+
 ## What must be logged
 
 ### 1. Authentication and access

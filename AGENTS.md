@@ -159,6 +159,31 @@
   - `.vscode/sftp.json`
 - Assume target folders must already exist on the server unless known otherwise.
 
+## Server debug log self-service protocol (IMPORTANT)
+- When the user reports `500`, `502`, blank page, `admin-ajax.php` failure, REST failure, webhook failure, migration failure, or any server-side PHP/DB error, the agent must independently inspect the server debug log before asking the user to provide log lines.
+- First locate the log implementation and path in the codebase:
+  - search for `debug.log`, `WP_CONTENT_DIR`, `debug-log`, `error_log`, and project log viewer files such as `includes/debug-log-2.php`;
+  - in this project the primary PHP debug file is `wp-content/debug.log`;
+  - the WP admin viewer is `/wp-admin/admin.php?page=debug-log`;
+  - the viewer implementation is `includes/debug-log-2.php`.
+- Use the existing deployment/SFTP configuration to read logs when available:
+  - deployment config: `.vscode/sftp.json`;
+  - theme remote path usually points to `.../wp-content/themes/<theme>`;
+  - WordPress debug log is usually one level above themes: `.../wp-content/debug.log`.
+- Prefer downloading the log to a temporary local file under `/private/tmp` and reading only the tail/relevant matches. Do not paste full logs into the chat.
+- Build SFTP commands through a temporary script file instead of putting credentials directly in long visible command arguments. Remove temporary scripts/files after use.
+- If sandbox/network restrictions block log download, request escalation for the exact SFTP/log-read command and continue; do not ask the user to open the log manually unless all automated paths are blocked.
+- For AJAX issues, search the fresh log by:
+  - timestamp of the browser error;
+  - AJAX action name, for example `me_kanyon_rate_check`;
+  - local markers such as `[rates.ajax]`, `[FINTECH]`, provider names;
+  - `PHP Fatal error`, `Uncaught`, `WordPress database error`, `MySQL`, `admin-ajax.php`.
+- Treat `admin-ajax.php 502` carefully: it may be a deliberate `wp_send_json_error(..., 502)` from application code, not only an upstream server crash. Confirm by reading the JSON/body and the debug log.
+- Never expose secrets from logs. Before summarizing findings, redact tokens, passwords, API keys, authorization headers, cookies, private keys, QR/payment payloads if sensitive, and personal data.
+- If logs reveal that debug output contains unmasked secrets, fix masking immediately before running more provider/API tests.
+- Temporary diagnostic PHP files are a last resort. If one is unavoidable, it must be token-protected, narrowly scoped, removed from the server immediately after use, and deleted from the workspace unless intentionally kept.
+- After every fix for a server-side failure, re-open a normal WordPress URL to trigger migrations/hooks if needed, then re-read the server debug log and confirm there are no new fatal/schema errors.
+
 ## Collaboration protocol
 - Work in small, testable steps.
 - Do not jump ahead too far.
@@ -416,6 +441,6 @@ Rules:
 All new business-critical functionality must follow the project logging policy.
 
 See:
-- `project-kit-rich/docs/LOGGING.md`
+- `docs/LOGGING.md`
 
 Do not ship new modules, handlers, status transitions, auth flows, admin tools, cron jobs, imports, or integrations without proper logging.

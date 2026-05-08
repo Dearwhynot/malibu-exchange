@@ -115,7 +115,7 @@ get_header();
                 <div class="m-b-30 p-r-80 sm-m-t-20 sm-p-r-15 sm-p-b-20 clearfix">
                     <div class="col-sm-9 no-padding m-t-10">
                         <p class="small-text normal hint-text">
-                            &copy;<?php echo esc_html(gmdate('Y')); ?> Malibu Exchange. All Rights Reserved.
+                            <?php get_template_part( 'template-parts/footer-copyright-text' ); ?>
                         </p>
                     </div>
                 </div>

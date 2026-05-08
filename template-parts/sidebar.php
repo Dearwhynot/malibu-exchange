@@ -20,6 +20,7 @@ if (!defined('ABSPATH')) {
 $theme_uri = get_template_directory_uri();
 $current_id = get_queried_object_id();
 $vendor_img_uri = $theme_uri . '/vendor/pages/assets/img';
+$theme_img_uri = $theme_uri . '/assets/img';
 $is_root = is_user_logged_in() && function_exists('crm_is_root') && crm_is_root(get_current_user_id());
 $dashboard_url = function_exists('malibu_exchange_get_dashboard_url') ? malibu_exchange_get_dashboard_url() : home_url('/dashboard/');
 $root_dashboard_url = function_exists('malibu_exchange_get_root_dashboard_url') ? malibu_exchange_get_root_dashboard_url() : home_url('/root-dashboard/');
@@ -28,6 +29,8 @@ $root_roles_url = home_url('/root-roles/');
 $root_companies_url = home_url('/root-companies/');
 $root_offices_url = home_url('/root-offices/');
 $root_merchants_url = home_url('/root-merchants/');
+$root_rate_pairs_url = home_url('/root-rate-pairs/');
+$root_fintech_providers_url = home_url('/root-fintech-providers/');
 ?>
 
 <nav class="page-sidebar<?php echo $is_root ? ' page-sidebar-root' : ''; ?>" data-pages="sidebar">
@@ -57,9 +60,9 @@ $root_merchants_url = home_url('/root-merchants/');
     <!-- END SIDEBAR MENU TOP TRAY CONTENT-->
     <!-- BEGIN SIDEBAR MENU HEADER-->
     <div class="sidebar-header">
-        <img src="<?php echo esc_url($vendor_img_uri . '/logo_white.png'); ?>" alt="logo" class="brand" data-src="<?php echo esc_url($vendor_img_uri . '/logo_white.png'); ?>" data-src-retina="<?php echo esc_url($vendor_img_uri . '/logo_white_2x.png'); ?>" width="78" height="22">
+        <img src="<?php echo esc_url($theme_img_uri . '/malibu-exchange-sidebar-logo.png'); ?>" alt="Malibu Exchange" class="brand sidebar-brand-logo" data-src="<?php echo esc_url($theme_img_uri . '/malibu-exchange-sidebar-logo.png'); ?>" data-src-retina="<?php echo esc_url($theme_img_uri . '/malibu-exchange-sidebar-logo.png'); ?>" width="402" height="229">
         <div class="sidebar-header-controls">
-            <button aria-label="Toggle Drawer" type="button" class="btn btn-icon-link invert sidebar-slide-toggle m-l-20 m-r-10" data-pages-toggle="#appMenu">
+            <button aria-label="Toggle Drawer" type="button" class="btn btn-icon-link invert sidebar-slide-toggle d-none m-l-20 m-r-10" data-pages-toggle="#appMenu">
                 <i class="pg-icon">chevron_down</i>
             </button>
             <button aria-label="Pin Menu" type="button" class="btn btn-icon-link invert d-lg-inline-block d-xlg-inline-block d-md-inline-block d-sm-none d-none" data-toggle-pin="sidebar">
@@ -110,11 +113,23 @@ $root_merchants_url = home_url('/root-merchants/');
                 </a>
                 <span class="icon-thumbnail"><i class="pg-icon">grid</i></span>
             </li>
-            <li class="m-b-40">
+            <li class="">
                 <a href="<?php echo esc_url($root_merchants_url); ?>">
                     <span class="title">Мерчанты</span>
                 </a>
                 <span class="icon-thumbnail"><i class="pg-icon">user</i></span>
+            </li>
+            <li class="">
+                <a href="<?php echo esc_url($root_rate_pairs_url); ?>">
+                    <span class="title">Курсы и пары</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">chart</i></span>
+            </li>
+            <li class="m-b-40">
+                <a href="<?php echo esc_url($root_fintech_providers_url); ?>">
+                    <span class="title">Платёжные системы</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">card</i></span>
             </li>
             <?php else : ?>
             <li class="m-t-20">

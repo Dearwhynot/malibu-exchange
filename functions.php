@@ -55,6 +55,7 @@ require_once get_template_directory() . '/inc/ajax/merchants.php';
 // Курсы валют
 require_once get_template_directory() . '/inc/rates.php';
 require_once get_template_directory() . '/inc/ajax/rates.php';
+require_once get_template_directory() . '/inc/ajax/root-rate-pairs.php';
 
 // Журнал действий (страница логов)
 require_once get_template_directory() . '/inc/ajax/logs.php';

@@ -5,3 +5,4 @@ vendorsphp/
 .env/
 theme source html bootstrap demo/
 /интеграция
+.claude/

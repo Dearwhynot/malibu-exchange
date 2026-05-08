@@ -2,7 +2,8 @@
 	background: linear-gradient(180deg, #4b1117 0%, #2a0b10 55%, #17070b 100%);
 }
 
-.page-sidebar-root .sidebar-header {
+.page-sidebar-root .sidebar-header,
+.page-sidebar:not(.page-sidebar-root) .sidebar-header {
 	background: transparent;
 	display: flex;
 	align-items: center;
@@ -10,12 +11,23 @@
 	gap: 16px;
 }
 
-.page-sidebar-root .sidebar-header .brand {
+.page-sidebar-root .sidebar-header .brand,
+.page-sidebar:not(.page-sidebar-root) .sidebar-header .brand {
 	filter: brightness(1.15);
 	flex: 0 0 auto;
 }
 
-.page-sidebar-root .sidebar-header .sidebar-header-controls {
+.page-sidebar .sidebar-header .sidebar-brand-logo {
+	width: auto;
+	height: 22px;
+	max-width: 118px;
+	max-height: 22px;
+	object-fit: contain;
+	vertical-align: middle;
+}
+
+.page-sidebar-root .sidebar-header .sidebar-header-controls,
+.page-sidebar:not(.page-sidebar-root) .sidebar-header .sidebar-header-controls {
 	display: flex;
 	align-items: center;
 	justify-content: flex-end;
@@ -26,7 +38,9 @@
 }
 
 body.sidebar-visible .page-sidebar-root .sidebar-header .sidebar-header-controls,
-body.menu-pin .page-sidebar-root .sidebar-header .sidebar-header-controls {
+body.menu-pin .page-sidebar-root .sidebar-header .sidebar-header-controls,
+body.sidebar-visible .page-sidebar:not(.page-sidebar-root) .sidebar-header .sidebar-header-controls,
+body.menu-pin .page-sidebar:not(.page-sidebar-root) .sidebar-header .sidebar-header-controls {
 	-webkit-transform: none;
 	-ms-transform: none;
 	transform: none;
@@ -39,6 +53,17 @@ body.menu-pin .page-sidebar-root .sidebar-header .sidebar-header-controls {
 	background: rgba(255, 255, 255, 0.08);
 	border: 1px solid rgba(255, 255, 255, 0.14);
 	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+	-webkit-transition: opacity 220ms ease, visibility 220ms ease;
+	transition: opacity 220ms ease, visibility 220ms ease;
+}
+
+/* Бейдж виден только когда sidebar раскрыт (hover или закреплён). */
+@media only screen and (min-width: 980px) {
+	body:not(.sidebar-visible):not(.menu-pin) .root-sidebar-badge {
+		opacity: 0;
+		visibility: hidden;
+		pointer-events: none;
+	}
 }
 
 .root-sidebar-badge__eyebrow {
@@ -85,27 +110,65 @@ body.menu-pin .page-sidebar-root .sidebar-header .sidebar-header-controls {
 
 @media only screen and (min-width: 980px) {
 	.page-sidebar-root {
-		width: 320px;
-		left: -250px;
+		width: 384px;
+		left: -314px;
+	}
+
+	/* Перебиваем inline transform от vendor JS (он считает sideBarWidthCondensed=210 для базового sidebar). */
+	body.sidebar-visible .page-sidebar-root {
+		-webkit-transform: translate(314px, 0) !important;
+		-ms-transform: translate(314px, 0) !important;
+		transform: translate(314px, 0) !important;
 	}
 
 	body.menu-pin .page-sidebar-root {
-		width: 320px;
-		-webkit-transform: translate(250px, 0) !important;
-		-ms-transform: translate(250px, 0) !important;
-		transform: translate(250px, 0) !important;
+		width: 384px;
+		-webkit-transform: translate(314px, 0) !important;
+		-ms-transform: translate(314px, 0) !important;
+		transform: translate(314px, 0) !important;
 	}
 
 	body.menu-pin .page-sidebar-root + .page-container .page-content-wrapper .content {
-		padding-left: 320px;
+		padding-left: 384px;
 	}
 
 	body.menu-pin .page-sidebar-root + .page-container .page-content-wrapper .footer {
-		left: 320px;
+		left: 384px;
 	}
 
 	body.menu-pin .page-sidebar-root + .page-container .header .brand {
-		width: 315px;
+		width: 379px;
+	}
+
+	/* ─── Обычный (не-root) sidebar: расширение по той же формуле ───────────── */
+	.page-sidebar:not(.page-sidebar-root) {
+		width: 336px;
+		left: -266px;
+	}
+
+	body.sidebar-visible .page-sidebar:not(.page-sidebar-root) {
+		-webkit-transform: translate(266px, 0) !important;
+		-ms-transform: translate(266px, 0) !important;
+		transform: translate(266px, 0) !important;
+	}
+
+	body.menu-pin .page-sidebar:not(.page-sidebar-root) {
+		width: 336px;
+		-webkit-transform: translate(266px, 0) !important;
+		-ms-transform: translate(266px, 0) !important;
+		transform: translate(266px, 0) !important;
+	}
+
+	body.menu-pin .page-sidebar:not(.page-sidebar-root) + .page-container .page-content-wrapper .content {
+		padding-left: 336px;
+	}
+
+	body.menu-pin .page-sidebar:not(.page-sidebar-root) + .page-container .page-content-wrapper .footer {
+		left: 336px;
+	}
+
+	body.menu-pin .page-sidebar:not(.page-sidebar-root) + .page-container .header .brand {
+		width: 331px;
 	}
 }
 
@@ -415,5 +478,165 @@ body.menu-pin .page-sidebar-root .sidebar-header .sidebar-header-controls {
 
 	.dashboard-kpi-card__value {
 		font-size: 32px;
+	}
+}
+
+/* Rates page: keep DataTables footers compact; Pages default stretches them vertically. */
+.rates-page .dataTables_wrapper table.dataTable {
+	margin-bottom: 0 !important;
+}
+
+.rates-page .rates-dt-footer {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 24px;
+	min-height: 32px;
+	margin-top: 12px;
+}
+
+.rates-page .rates-dt-footer .dataTables_info,
+.rates-page .rates-dt-footer .dataTables_paginate {
+	float: none;
+	clear: none;
+	margin-top: 0 !important;
+	padding: 0;
+}
+
+.rates-page .rates-dt-footer .dataTables_info {
+	color: #667481;
+	font-size: 12px;
+	line-height: 22px;
+}
+
+.rates-page .rates-dt-footer .pagination {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+}
+
+.rates-page .rates-dt-footer .pagination > li > a,
+.rates-page .rates-dt-footer .pagination > li > span {
+	min-width: 22px;
+	padding: 3px 7px;
+	border: 0;
+	background: transparent;
+	text-align: center;
+	line-height: 18px;
+}
+
+.rates-page .rates-dt-table {
+	overflow-x: auto;
+}
+
+.rates-page #market-history-table th:first-child,
+.rates-page #market-history-table td:first-child,
+.rates-page #rates-history-table th:first-child,
+.rates-page #rates-history-table td:first-child,
+.rates-page #kanyon-history-table th:first-child,
+.rates-page #kanyon-history-table td:first-child {
+	width: 168px !important;
+	min-width: 168px;
+	white-space: nowrap;
+	word-break: keep-all;
+}
+
+.rates-page .rates-chart-scroll {
+	width: 100%;
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+
+.rates-page .rates-line-chart {
+	width: 100%;
+	min-width: 420px;
+	height: 260px;
+}
+
+.rates-page .rates-line-chart svg {
+	display: block;
+	width: 100%;
+	height: 260px;
+}
+
+.rates-page .rates-kanyon-section-title {
+	margin-top: 14px;
+	margin-bottom: 8px;
+}
+
+.rates-page .rates-kanyon-check {
+	align-items: stretch;
+}
+
+.rates-page .rates-kanyon-card .card-body {
+	min-height: 118px;
+}
+
+.rates-page .rates-kanyon-card .card-footer {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	border-top: 1px solid rgba(0, 0, 0, 0.07);
+	background: #fff;
+}
+
+.rates-page .rates-kanyon-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 30px;
+	padding: 0 12px;
+	line-height: 1;
+	white-space: nowrap;
+}
+
+.rates-page .rates-kanyon-button .pg-icon {
+	font-size: 13px;
+	line-height: 1;
+}
+
+.rates-page .rates-kanyon-cooldown {
+	margin-left: 0 !important;
+	font-weight: 500;
+}
+
+.rates-page .rates-kanyon-info-card .card-body {
+	display: flex;
+	align-items: center;
+	min-height: 118px;
+}
+
+.rates-page .rates-kanyon-note {
+	max-width: 820px;
+	line-height: 1.55;
+}
+
+.rates-page .rates-kanyon-history-card .dataTables_wrapper {
+	width: 100%;
+}
+
+.rates-page .rates-kanyon-history-card table.dataTable {
+	width: 100% !important;
+	margin-bottom: 0 !important;
+}
+
+.rates-page .rates-kanyon-history-card table th,
+.rates-page .rates-kanyon-history-card table td {
+	white-space: nowrap;
+}
+
+@media (max-width: 767px) {
+	.rates-page .rates-dt-footer {
+		align-items: flex-start;
+		flex-direction: column;
+		gap: 8px;
+		margin-top: 10px;
+	}
+
+	.rates-page .rates-kanyon-info-card .card-body {
+		min-height: 0;
 	}
 }

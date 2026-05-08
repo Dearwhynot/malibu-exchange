@@ -140,33 +140,120 @@ function me_ajax_settings_save(): void {
 	}
 
 	if ( $section === 'rates_coefficient' ) {
-		$pair = rates_get_pair( RATES_PAIR_CODE, $org_id );
+		$pair_code = sanitize_text_field( wp_unslash( $_POST['pair_code'] ?? '' ) );
+		if ( $pair_code === '' ) {
+			$pair_code = RATES_PAIR_CODE;
+		}
+
+		$pair_def = function_exists( 'crm_root_get_pair_definition' ) ? crm_root_get_pair_definition( $pair_code ) : null;
+		if ( ! $pair_def ) {
+			wp_send_json_error( [ 'message' => 'Неизвестная пара: ' . $pair_code ], 400 );
+		}
+
+		$pair = function_exists( 'rates_get_any_pair' ) ? rates_get_any_pair( $pair_code, $org_id ) : null;
 		if ( ! $pair ) {
-			wp_send_json_error( [ 'message' => 'Активная пара не найдена.' ], 500 );
+			wp_send_json_error( [ 'message' => 'Пара не активирована для компании. Активацию производит root.' ], 409 );
+		}
+		if ( (int) $pair->is_active !== 1 ) {
+			wp_send_json_error( [ 'message' => 'Пара отключена root\'ом. Изменение наценки недоступно.' ], 409 );
 		}
 
-		$coeff = isset( $_POST['rates_coefficient'] )
-			? (float) $_POST['rates_coefficient']
-			: 0.05;
-
-		if ( $coeff < 0 || $coeff > 100 ) {
-			wp_send_json_error( [ 'message' => 'Некорректное значение коэффициента.' ], 422 );
+		$coeff_type = sanitize_key( wp_unslash( $_POST['coefficient_type'] ?? 'absolute' ) );
+		if ( ! in_array( $coeff_type, [ 'absolute', 'percent' ], true ) ) {
+			wp_send_json_error( [ 'message' => 'Некорректный тип наценки.' ], 422 );
 		}
 
-		$ok = rates_update_coefficient( (int) $pair->id, $coeff );
+		$coeff = isset( $_POST['rates_coefficient'] ) ? (float) $_POST['rates_coefficient'] : 0.0;
+
+		if ( $coeff < 0 ) {
+			wp_send_json_error( [ 'message' => 'Значение наценки не может быть отрицательным.' ], 422 );
+		}
+		if ( $coeff_type === 'percent' && $coeff > 100 ) {
+			wp_send_json_error( [ 'message' => 'Процент не может превышать 100.' ], 422 );
+		}
+		if ( $coeff_type === 'absolute' && $coeff > 1000000 ) {
+			wp_send_json_error( [ 'message' => 'Сдвиг слишком большой.' ], 422 );
+		}
+
+		$ok = rates_update_coefficient( (int) $pair->id, $coeff, $coeff_type );
 
 		if ( ! $ok ) {
-			wp_send_json_error( [ 'message' => 'Ошибка сохранения коэффициента.' ], 500 );
+			wp_send_json_error( [ 'message' => 'Ошибка сохранения наценки.' ], 500 );
 		}
 
-		crm_log_entity( 'settings.rates_coefficient_saved', 'settings', 'update',
-			"Обновлён коэффициент курса: {$coeff}",
+		crm_log_entity(
+			'settings.rates_coefficient_saved',
 			'settings',
-			0,
-			[ 'context' => [ 'section' => 'rates_coefficient', 'coefficient' => $coeff ] ]
+			'update',
+			sprintf( 'Обновлена наценка пары %s: %.4f (%s)', $pair_code, $coeff, $coeff_type ),
+			'rate_pair',
+			(int) $pair->id,
+			[ 'context' => [
+				'section'          => 'rates_coefficient',
+				'pair_code'        => $pair_code,
+				'coefficient'      => $coeff,
+				'coefficient_type' => $coeff_type,
+			] ]
 		);
 
-		wp_send_json_success( [ 'message' => 'Коэффициент сохранён.' ] );
+		wp_send_json_success( [
+			'message'          => 'Наценка сохранена.',
+			'pair_code'        => $pair_code,
+			'coefficient'      => $coeff,
+			'coefficient_type' => $coeff_type,
+		] );
+		return;
+	}
+
+	if ( $section === 'rates_market_source' ) {
+		global $wpdb;
+
+		$pair_code           = sanitize_text_field( wp_unslash( $_POST['pair_code'] ?? '' ) );
+		$allowed_source_pairs = [ 'USDT_THB', 'RUB_USDT' ];
+		if ( ! in_array( $pair_code, $allowed_source_pairs, true ) ) {
+			wp_send_json_error( [ 'message' => 'Источник котировки не применим для пары: ' . $pair_code ], 400 );
+		}
+
+		$pair = function_exists( 'rates_get_any_pair' ) ? rates_get_any_pair( $pair_code, $org_id ) : null;
+		if ( ! $pair ) {
+			wp_send_json_error( [ 'message' => 'Пара не найдена для компании.' ], 404 );
+		}
+		if ( (int) $pair->is_active !== 1 ) {
+			wp_send_json_error( [ 'message' => 'Пара отключена root\'ом. Изменение источника недоступно.' ], 409 );
+		}
+
+		$source          = sanitize_key( wp_unslash( $_POST['market_source'] ?? '' ) );
+		$allowed_sources = [ 'bitkub', 'binance_th' ];
+		if ( ! in_array( $source, $allowed_sources, true ) ) {
+			wp_send_json_error( [ 'message' => 'Неизвестный источник котировки: ' . $source ], 422 );
+		}
+
+		$updated = $wpdb->update(
+			'crm_rate_pairs',
+			[ 'market_source' => $source ],
+			[ 'id' => (int) $pair->id ],
+			[ '%s' ],
+			[ '%d' ]
+		);
+		if ( $updated === false ) {
+			wp_send_json_error( [ 'message' => 'Ошибка сохранения источника.' ], 500 );
+		}
+
+		crm_log_entity(
+			'settings.rates_market_source_saved',
+			'settings',
+			'update',
+			sprintf( 'Изменён источник котировки пары %s: %s', $pair_code, $source ),
+			'rate_pair',
+			(int) $pair->id,
+			[ 'context' => [ 'pair_code' => $pair_code, 'market_source' => $source ] ]
+		);
+
+		wp_send_json_success( [
+			'message'       => 'Источник котировки сохранён.',
+			'pair_code'     => $pair_code,
+			'market_source' => $source,
+		] );
 		return;
 	}
 

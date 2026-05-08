@@ -315,6 +315,16 @@ function crm_authenticate_check_status( $user, $username, $password ) {
 		return new WP_Error( 'crm_pending', 'Аккаунт ожидает активации.' );
 	}
 
+	if ( ! crm_is_root( (int) $user->ID ) && function_exists( 'crm_get_user_company_access_error' ) ) {
+		$company_access_error = crm_get_user_company_access_error( (int) $user->ID );
+		if ( $company_access_error !== null ) {
+			$error_code = (string) ( $company_access_error['code'] ?? 'company_unavailable' );
+			$message    = (string) ( $company_access_error['message'] ?? 'Доступ к компании ограничен.' );
+
+			return new WP_Error( 'crm_' . $error_code, $message );
+		}
+	}
+
 	return $user;
 }
 
@@ -634,6 +644,9 @@ function crm_can_access( string $permission ): bool {
 	}
 	$uid = get_current_user_id();
 	if ( $uid !== 1 && crm_get_user_status( $uid ) !== CRM_STATUS_ACTIVE ) {
+		return false;
+	}
+	if ( $uid !== 1 && function_exists( 'crm_user_has_company_access_or_root' ) && ! crm_user_has_company_access_or_root( $uid ) ) {
 		return false;
 	}
 	return crm_user_has_permission( $uid, $permission );

@@ -8,6 +8,7 @@
  * Actions:
  *   me_list_companies      — список компаний с числом пользователей
  *   me_create_company      — создать новую компанию
+ *   me_set_company_status  — root-only блокировка / разблокировка компании
  *   me_assign_user_company — назначить пользователя в компанию
  *   me_create_company_office — создать офис компании
  */
@@ -21,7 +22,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 function _me_companies_root_only(): void {
 	if ( ! is_user_logged_in() || ! crm_is_root( get_current_user_id() ) ) {
-		wp_send_json_error( [ 'message' => 'Недостаточно прав.' ] );
+		wp_send_json_error( [ 'message' => 'Недостаточно прав.' ], 403 );
 	}
 }
 
@@ -30,7 +31,7 @@ function _me_companies_root_only(): void {
  */
 function _me_companies_office_creator_only(): void {
 	if ( ! is_user_logged_in() || ! crm_can_create_company_offices( get_current_user_id() ) ) {
-		wp_send_json_error( [ 'message' => 'Недостаточно прав.' ] );
+		wp_send_json_error( [ 'message' => 'Недостаточно прав.' ], 403 );
 	}
 }
 
@@ -122,6 +123,8 @@ function me_ajax_create_company(): void {
 			'code'       => $code,
 			'name'       => $name,
 			'status'     => 'active',
+			'status_label' => crm_company_status_label( 'active' ),
+			'status_badge' => crm_company_status_badge_class( 'active' ),
 			'user_count' => 0,
 			'phone'      => $phone,
 			'address'    => $address,
@@ -132,7 +135,49 @@ function me_ajax_create_company(): void {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// 3. НАЗНАЧИТЬ ПОЛЬЗОВАТЕЛЯ В КОМПАНИЮ
+// 3. ИЗМЕНИТЬ СТАТУС КОМПАНИИ
+// ════════════════════════════════════════════════════════════════════════════
+add_action( 'wp_ajax_me_set_company_status', 'me_ajax_set_company_status' );
+function me_ajax_set_company_status(): void {
+	_me_companies_root_only();
+
+	$nonce = sanitize_text_field( wp_unslash( $_POST['_nonce'] ?? ( $_POST['nonce'] ?? '' ) ) );
+	if ( ! wp_verify_nonce( $nonce, 'me_company_status' ) ) {
+		wp_send_json_error( [ 'message' => 'Нарушена безопасность запроса.' ], 403 );
+	}
+
+	$company_id = (int) ( $_POST['company_id'] ?? 0 );
+	$status     = sanitize_key( $_POST['status'] ?? '' );
+	$reason     = sanitize_textarea_field( wp_unslash( $_POST['reason'] ?? '' ) );
+
+	$result = crm_set_company_status( $company_id, $status, get_current_user_id(), $reason );
+	if ( is_wp_error( $result ) ) {
+		wp_send_json_error( [ 'message' => $result->get_error_message() ], 400 );
+	}
+
+	$company = $result['company'] ?? null;
+	if ( ! $company ) {
+		wp_send_json_error( [ 'message' => 'Компания обновлена, но не удалось перечитать данные.' ], 500 );
+	}
+
+	$status_label = crm_company_status_label( (string) $company->status );
+
+	wp_send_json_success( [
+		'message'            => sprintf( 'Компания «%s»: %s.', (string) $company->name, $status_label ),
+		'company_id'         => (int) $company->id,
+		'status'             => (string) $company->status,
+		'status_label'       => $status_label,
+		'status_badge'       => crm_company_status_badge_class( (string) $company->status ),
+		'blocked_at'         => (string) ( $company->blocked_at ?? '' ),
+		'blocked_by_user_id' => (int) ( $company->blocked_by_user_id ?? 0 ),
+		'block_reason'       => (string) ( $company->block_reason ?? '' ),
+		'user_count'         => (int) ( $result['user_count'] ?? 0 ),
+		'sessions_destroyed' => (int) ( $result['sessions_destroyed'] ?? 0 ),
+	] );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 4. НАЗНАЧИТЬ ПОЛЬЗОВАТЕЛЯ В КОМПАНИЮ
 // ════════════════════════════════════════════════════════════════════════════
 add_action( 'wp_ajax_me_assign_user_company', 'me_ajax_assign_user_company' );
 function me_ajax_assign_user_company(): void {
@@ -190,7 +235,7 @@ function me_ajax_assign_user_company(): void {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// 4. СОЗДАТЬ ОФИС КОМПАНИИ
+// 5. СОЗДАТЬ ОФИС КОМПАНИИ
 // ════════════════════════════════════════════════════════════════════════════
 add_action( 'wp_ajax_me_create_company_office', 'me_ajax_create_company_office' );
 function me_ajax_create_company_office(): void {
