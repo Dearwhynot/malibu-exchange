@@ -601,7 +601,7 @@ get_template_part(
 </div>
 
 <div class="modal fade" id="modal-confirm" tabindex="-1" aria-hidden="true">
-	<div class="modal-dialog">
+	<div class="modal-dialog modal-dialog-centered">
 		<div class="modal-content">
 			<div class="modal-header clearfix text-left">
 				<button aria-label="Закрыть" type="button" class="close" data-bs-dismiss="modal" aria-hidden="true">
@@ -741,7 +741,9 @@ add_action(
 			window.MalibuToast.show(message, type || 'info');
 			return;
 		}
-		alert(message);
+		if (window.console && console.warn) {
+			console.warn(message);
+		}
 	}
 
 	function initActionDropdowns($scope) {

@@ -434,7 +434,9 @@ add_action(
 			window.MalibuToast.show(message, type || 'info');
 			return;
 		}
-		alert(message);
+		if (window.console && console.warn) {
+			console.warn(message);
+		}
 	}
 
 	function escapeHtml(value) {

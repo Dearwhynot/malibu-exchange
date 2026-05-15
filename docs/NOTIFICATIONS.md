@@ -20,6 +20,8 @@
    `<?php get_template_part( 'template-parts/toast-host' ); ?>`
 2. Вызывать из JS:
    `window.MalibuToast.show(message, type)`
+3. Для подтверждений действий использовать общий центрированный confirm:
+   `window.MalibuConfirm.show(message, callback, options)`
 
 Поддерживаемые типы:
 - `success`
@@ -41,6 +43,8 @@
 - не копировать локальные самописные уведомления со старых страниц;
 - не внедрять новую библиотеку уведомлений;
 - сначала использовать `template-parts/toast-host.php`.
+- не использовать браузерные `alert()`, `confirm()`, `window.alert()` или `window.confirm()`;
+- подтверждения опасных или необратимых действий показывать через `MalibuConfirm`, чтобы они были центрированными и одинаковыми по всему backoffice.
 
 Если требуется нестандартный вариант уведомления:
 - сначала проверить, есть ли подходящий вариант в `pgNotification`;

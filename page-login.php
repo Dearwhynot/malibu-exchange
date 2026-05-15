@@ -28,9 +28,9 @@ get_header();
     <!-- START Login Right Container-->
     <div class="login-container bg-white">
         <div class="p-l-50 p-r-50 p-t-50 m-t-30 sm-p-l-15 sm-p-r-15 sm-p-t-40">
-            <img src="<?php echo esc_url(get_template_directory_uri()); ?>/vendor/pages/assets/img/logo-48x48_c.png"
-                 alt="logo"
-                 width="48" height="48">
+            <img src="<?php echo esc_url(get_template_directory_uri()); ?>/assets/img/malibu-exchange-sidebar-logo.png"
+                 alt="Malibu Exchange"
+                 width="48" height="27">
 
             <h2 class="p-t-25">Get Started <br> with your Dashboard</h2>
             <p class="mw-80 m-t-5">Sign in to your account</p>

@@ -26,6 +26,19 @@
 	vertical-align: middle;
 }
 
+.malibu-brand-logo {
+	width: auto;
+	height: 22px;
+	max-width: 48px;
+	max-height: 22px;
+	object-fit: contain;
+	vertical-align: middle;
+}
+
+.header .brand .backoffice-header-logo {
+	display: inline-block;
+}
+
 .page-sidebar-root .sidebar-header .sidebar-header-controls,
 .page-sidebar:not(.page-sidebar-root) .sidebar-header .sidebar-header-controls {
 	display: flex;

@@ -693,7 +693,17 @@ add_action(
 			window.MalibuToast.show(message, type || 'info');
 			return;
 		}
-		alert(message);
+		if (window.console && console.warn) {
+			console.warn(message);
+		}
+	}
+
+	function showConfirm(message, callback, options) {
+		if (window.MalibuConfirm && typeof window.MalibuConfirm.show === 'function') {
+			window.MalibuConfirm.show(message, callback, options || {});
+			return;
+		}
+		showToast('Не удалось открыть окно подтверждения. Обновите страницу и повторите действие.', 'danger');
 	}
 
 	function showInlineAlert($el, message, type) {
@@ -759,22 +769,22 @@ add_action(
 		});
 
 		if (status.invite_ready) {
-			return '<div class="alert alert-success bordered m-b-0"><strong>Telegram-инвайты готовы к работе.</strong><br>'
+			return '<div class="alert alert-success bordered m-b-0"><strong>Создание Telegram invite-ссылок доступно.</strong><br>'
 				+ (status.bot_handle ? 'Бот: ' + escHtml(status.bot_handle) + '. ' : '')
 				+ 'Можно создавать deep-link, показывать QR и ждать запуск /start от мерчанта.</div>';
 		}
 
 		if (status.is_configured) {
-			var html = '<div class="alert alert-warning bordered m-b-0"><strong>Инвайт в Telegram пока недоступен.</strong><br>'
+			var html = '<div class="alert alert-warning bordered m-b-0"><strong>Создание новых Telegram invite-ссылок недоступно.</strong><br>'
 				+ escHtml(status.blocked_reason || 'Сначала подключите callback для этой компании.');
 			if (status.webhook_last_error) {
 				html += '<div class="m-t-10"><strong>Последняя ошибка Telegram API:</strong> ' + escHtml(status.webhook_last_error) + '</div>';
 			}
-			html += '<div class="m-t-10">Откройте «Настройки», проверьте имя бота и токен, затем подключите callback.</div></div>';
+			html += '<div class="m-t-10">Откройте «Настройки», проверьте имя бота и токен, затем подключите callback. Существующие мерчанты и их статус не затрагиваются.</div></div>';
 			return html;
 		}
 
-		var danger = '<div class="alert alert-danger bordered m-b-0"><strong>Инвайт в Telegram недоступен.</strong><br>'
+		var danger = '<div class="alert alert-danger bordered m-b-0"><strong>Создание Telegram invite-ссылок заблокировано.</strong><br>'
 			+ 'Для создания ссылки заполните настройки Telegram-бота: имя бота и токен. Перейдите в «Настройки».';
 		if (missingLabels.length) {
 			danger += '<div class="m-t-10"><strong>Не заполнено:</strong> ' + escHtml(missingLabels.join(', ')) + '.</div>';
@@ -1055,24 +1065,25 @@ add_action(
 
 	function changeMerchantStatus(id, status) {
 		var labels = { active: 'активировать', blocked: 'заблокировать', archived: 'архивировать' };
-		if (!confirm('Подтвердите: ' + (labels[status] || 'изменить статус') + ' мерчанта?')) {
-			return;
-		}
-
-		$.post(AJAX_URL, {
-			action:      'me_merchants_status',
-			_nonce:      NONCES.status,
-			merchant_id: id,
-			status:      status
-		}, function (res) {
-			if (!res || !res.success) {
-				showToast((res && res.data && res.data.message) || 'Не удалось изменить статус.', 'danger');
-				return;
-			}
-			showToast(res.data.message || 'Статус обновлён.', 'success');
-			loadMerchants(currentPage);
-		}, 'json').fail(function () {
-			showToast('Ошибка сервера при смене статуса.', 'danger');
+		showConfirm('Подтвердите: ' + (labels[status] || 'изменить статус') + ' мерчанта?', function () {
+			$.post(AJAX_URL, {
+				action:      'me_merchants_status',
+				_nonce:      NONCES.status,
+				merchant_id: id,
+				status:      status
+			}, function (res) {
+				if (!res || !res.success) {
+					showToast((res && res.data && res.data.message) || 'Не удалось изменить статус.', 'danger');
+					return;
+				}
+				showToast(res.data.message || 'Статус обновлён.', 'success');
+				loadMerchants(currentPage);
+			}, 'json').fail(function () {
+				showToast('Ошибка сервера при смене статуса.', 'danger');
+			});
+		}, {
+			btnClass: status === 'active' ? 'btn-success' : 'btn-warning',
+			btnText: labels[status] ? labels[status].charAt(0).toUpperCase() + labels[status].slice(1) : 'Подтвердить'
 		});
 	}
 
@@ -1192,7 +1203,7 @@ add_action(
 		var effective = getTelegramInviteEffectiveMeta(row);
 		var items = [];
 
-		if (row.invite_url) {
+		if (row.invite_url && effective.status === 'new') {
 			items.push('<li><a class="dropdown-item telegram-invite-action-item js-copy-invite" href="#" data-link="' + escHtml(row.invite_url) + '"><i class="pg-icon telegram-invite-action-icon">copy</i><span>Скопировать</span></a></li>');
 		}
 
@@ -1536,28 +1547,30 @@ add_action(
 			return;
 		}
 
-		if (!confirm('Физически удалить мерчанта «' + merchantName + '»? Удаление сработает только если у него нет ордеров, ledger и живых реферальных хвостов.')) {
-			return;
-		}
+		showConfirm('Физически удалить мерчанта «' + merchantName + '»? Удаление сработает только если у него нет ордеров, ledger и живых реферальных хвостов.', function () {
+			$.post(AJAX_URL, {
+				action: 'me_merchants_delete',
+				merchant_id: merchantId,
+				_nonce: NONCES.delete
+			}, function (res) {
+				if (!res || !res.success) {
+					showToast((res && res.data && res.data.message) || 'Не удалось удалить мерчанта.', 'danger');
+					return;
+				}
 
-		$.post(AJAX_URL, {
-			action: 'me_merchants_delete',
-			merchant_id: merchantId,
-			_nonce: NONCES.delete
-		}, function (res) {
-			if (!res || !res.success) {
-				showToast((res && res.data && res.data.message) || 'Не удалось удалить мерчанта.', 'danger');
-				return;
-			}
-
-			showToast(res.data.message || 'Мерчант удалён.', 'success');
-			loadMerchants(currentPage);
-		}, 'json').fail(function (xhr) {
-			var message = 'Ошибка сервера при удалении мерчанта.';
-			if (xhr && xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
-				message = xhr.responseJSON.data.message;
-			}
-			showToast(message, 'danger');
+				showToast(res.data.message || 'Мерчант удалён.', 'success');
+				loadMerchants(currentPage);
+			}, 'json').fail(function (xhr) {
+				var message = 'Ошибка сервера при удалении мерчанта.';
+				if (xhr && xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
+					message = xhr.responseJSON.data.message;
+				}
+				showToast(message, 'danger');
+			});
+		}, {
+			title: 'Удалить мерчанта',
+			btnClass: 'btn-danger',
+			btnText: 'Удалить'
 		});
 	});
 

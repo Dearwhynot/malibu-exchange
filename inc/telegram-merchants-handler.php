@@ -56,10 +56,18 @@ if ( ! function_exists( 'crm_telegram_sanitize_chat_id_value' ) ) {
 }
 
 if ( ! function_exists( 'tg_project_should_bypass_acl' ) ) {
-	function tg_project_should_bypass_acl( array $data ): bool {
+	function tg_project_should_bypass_acl( array $data, array $ctx = [] ): bool {
 		$company_id = crm_telegram_get_callback_company_id();
 		if ( $company_id <= 0 ) {
 			return false;
+		}
+
+		if (
+			function_exists( 'crm_telegram_get_callback_bot_context' )
+			&& crm_telegram_get_callback_bot_context() === 'operator'
+		) {
+			return function_exists( 'crm_operator_tg_should_bypass_acl' )
+				&& crm_operator_tg_should_bypass_acl( $data, $ctx );
 		}
 
 		$text = '';
@@ -78,6 +86,14 @@ if ( ! function_exists( 'tg_project_handle_start_command' ) ) {
 		$company_id = crm_telegram_get_callback_company_id();
 		if ( $company_id <= 0 ) {
 			return false;
+		}
+
+		if (
+			function_exists( 'crm_telegram_get_callback_bot_context' )
+			&& crm_telegram_get_callback_bot_context() === 'operator'
+		) {
+			return function_exists( 'crm_operator_tg_handle_start_command' )
+				&& crm_operator_tg_handle_start_command( $text, $ctx, $telegram, $data );
 		}
 
 		$payload = crm_telegram_extract_start_payload_from_text( $text );

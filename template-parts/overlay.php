@@ -1,11 +1,14 @@
-<?php $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img'; ?>
+<?php
+$theme_img_uri  = get_template_directory_uri() . '/assets/img';
+$vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
+?>
 <div class="overlay hide" data-pages="search">
     <!-- BEGIN Overlay Content !-->
     <div class="overlay-content has-results m-t-20">
         <!-- BEGIN Overlay Header !-->
         <div class="container-fluid">
             <!-- BEGIN Overlay Logo !-->
-            <img class="overlay-brand" src="<?php echo esc_url($vendor_img_uri . '/logo.png'); ?>" alt="logo" data-src="<?php echo esc_url($vendor_img_uri . '/logo.png'); ?>" data-src-retina="<?php echo esc_url($vendor_img_uri . '/logo_2x.png'); ?>" width="78" height="22">
+            <img class="overlay-brand malibu-brand-logo" src="<?php echo esc_url($theme_img_uri . '/malibu-exchange-sidebar-logo.png'); ?>" alt="Malibu Exchange" data-src="<?php echo esc_url($theme_img_uri . '/malibu-exchange-sidebar-logo.png'); ?>" data-src-retina="<?php echo esc_url($theme_img_uri . '/malibu-exchange-sidebar-logo.png'); ?>" width="39" height="22">
             <!-- END Overlay Logo !-->
             <!-- BEGIN Overlay Close !-->
             <a href="#" class="close-icon-light btn-link btn-rounded  overlay-close text-black">

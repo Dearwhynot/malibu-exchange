@@ -48,11 +48,31 @@ define( 'MALIBU_TOAST_HOST_LOADED', true );
 .malibu-toast.toast-success .tst-icon { background:#2e7d32; }
 .malibu-toast.toast-info    { border-left-color:#1565c0; }
 .malibu-toast.toast-info    .tst-icon { background:#1565c0; }
-.malibu-toast.toast-warning { border-left-color:#FF8F00; }
-.malibu-toast.toast-warning .tst-icon { background:#FF8F00; }
-.malibu-toast.toast-danger  { border-left-color:#c62828; }
-.malibu-toast.toast-danger  .tst-icon { background:#c62828; }
-</style>
+	.malibu-toast.toast-warning { border-left-color:#FF8F00; }
+	.malibu-toast.toast-warning .tst-icon { background:#FF8F00; }
+	.malibu-toast.toast-danger  { border-left-color:#c62828; }
+	.malibu-toast.toast-danger  .tst-icon { background:#c62828; }
+	</style>
+
+	<div class="modal fade" id="malibu-confirm-modal" tabindex="-1" role="dialog" aria-hidden="true">
+		<div class="modal-dialog modal-dialog-centered modal-sm">
+			<div class="modal-content">
+				<div class="modal-header clearfix text-left">
+					<button aria-label="Закрыть" type="button" class="close" data-bs-dismiss="modal" aria-hidden="true">
+						<i class="pg-icon">close</i>
+					</button>
+					<h5 class="modal-title" id="malibu-confirm-title">Подтвердите действие</h5>
+				</div>
+				<div class="modal-body">
+					<p class="no-margin" id="malibu-confirm-message"></p>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-default" data-bs-dismiss="modal" id="malibu-confirm-cancel">Отмена</button>
+					<button type="button" class="btn btn-primary" id="malibu-confirm-ok">Подтвердить</button>
+				</div>
+			</div>
+		</div>
+	</div>
 
 <?php
 add_action( 'wp_footer', function () {
@@ -61,13 +81,15 @@ add_action( 'wp_footer', function () {
 (function ($) {
 	'use strict';
 
-	var TITLES = {
-		success: 'Успешно',
-		info:    'Информация',
-		warning: 'Внимание',
-		danger:  'Ошибка'
-	};
-	var ICONS = { success:'✓', info:'i', warning:'!', danger:'×' };
+		var TITLES = {
+			success: 'Успешно',
+			info:    'Информация',
+			warning: 'Внимание',
+			danger:  'Ошибка'
+		};
+		var ICONS = { success:'✓', info:'i', warning:'!', danger:'×' };
+		var confirmCallback = null;
+		var confirmModal = null;
 
 	function esc(str) {
 		if (str === null || str === undefined) return '';
@@ -135,16 +157,69 @@ add_action( 'wp_footer', function () {
 		setTimeout(function () { $t.remove(); }, 3800);
 	}
 
-	function show(msg, type) {
-		if (msg === null || msg === undefined || msg === '') return;
-		if (showNative(msg, type)) return;
-		showFallback(msg, type);
-	}
+		function show(msg, type) {
+			if (msg === null || msg === undefined || msg === '') return;
+			if (showNative(msg, type)) return;
+			showFallback(msg, type);
+		}
 
-	window.MalibuToast = { show: show };
+		function getConfirmModal() {
+			var node = document.getElementById('malibu-confirm-modal');
+			if (!node) {
+				return null;
+			}
+			if (window.bootstrap && bootstrap.Modal) {
+				if (!confirmModal) {
+					confirmModal = new bootstrap.Modal(node);
+				}
+				return confirmModal;
+			}
+			return {
+				show: function () { $('#malibu-confirm-modal').modal('show'); },
+				hide: function () { $('#malibu-confirm-modal').modal('hide'); }
+			};
+		}
 
-}(jQuery));
-</script>
+		function showConfirm(message, callback, opts) {
+			opts = opts || {};
+			var modal = getConfirmModal();
+			if (!modal) {
+				show('Не удалось открыть окно подтверждения. Обновите страницу и повторите действие.', 'danger');
+				return;
+			}
+
+			confirmCallback = typeof callback === 'function' ? callback : null;
+			$('#malibu-confirm-title').text(opts.title || 'Подтвердите действие');
+			$('#malibu-confirm-message').text(message || '');
+			$('#malibu-confirm-ok')
+				.removeClass('btn-primary btn-success btn-warning btn-danger btn-complete')
+				.addClass(opts.btnClass || 'btn-primary')
+				.text(opts.btnText || 'Подтвердить');
+			$('#malibu-confirm-cancel').text(opts.cancelText || 'Отмена');
+			modal.show();
+		}
+
+		$(document).on('click', '#malibu-confirm-ok', function () {
+			var cb = confirmCallback;
+			confirmCallback = null;
+			var modal = getConfirmModal();
+			if (modal) {
+				modal.hide();
+			}
+			if (cb) {
+				cb();
+			}
+		});
+
+		$(document).on('hidden.bs.modal', '#malibu-confirm-modal', function () {
+			confirmCallback = null;
+		});
+
+		window.MalibuToast = { show: show };
+		window.MalibuConfirm = { show: showConfirm };
+
+	}(jQuery));
+	</script>
 <?php
 }, 98 );
 ?>

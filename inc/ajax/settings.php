@@ -11,16 +11,44 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 add_action( 'wp_ajax_me_settings_save', 'me_ajax_settings_save' );
 
-function _me_settings_telegram_status_payload( int $org_id ): array {
-	$status = crm_telegram_get_configuration_status( $org_id );
+function _me_settings_telegram_status_payload( int $org_id, string $context = 'merchant', bool $auto_lock_connected = false ): array {
+	$context = crm_telegram_normalize_bot_context( $context );
+	$labels  = crm_telegram_bot_context_labels();
+
+	if ( $org_id <= 0 ) {
+		return [
+			'context'              => $context,
+			'context_label'        => (string) ( $labels[ $context ] ?? '' ),
+			'is_configured'        => false,
+			'webhook_ready'        => false,
+			'invite_ready'         => false,
+			'operator_ready'       => false,
+			'blocked_reason'       => 'Telegram-настройки доступны только в контексте компании.',
+			'missing_fields'       => [],
+			'duplicate_fields'     => [],
+			'callback_url'         => '',
+			'legacy_callback_url'  => '',
+			'bot_handle'           => '',
+			'webhook_connected_at' => '',
+			'webhook_last_error'   => '',
+			'webhook_lock'         => false,
+		];
+	}
+
+	$status  = crm_telegram_get_configuration_status( $org_id, $context, $auto_lock_connected );
 
 	return [
+		'context'              => (string) ( $status['context'] ?? $context ),
+		'context_label'        => (string) ( $status['context_label'] ?? '' ),
 		'is_configured'        => ! empty( $status['is_configured'] ),
 		'webhook_ready'        => ! empty( $status['webhook_ready'] ),
 		'invite_ready'         => ! empty( $status['invite_ready'] ),
+		'operator_ready'       => ! empty( $status['operator_ready'] ),
 		'blocked_reason'       => (string) ( $status['blocked_reason'] ?? '' ),
 		'missing_fields'       => array_values( $status['missing_fields'] ?? [] ),
+		'duplicate_fields'     => array_values( $status['duplicate_fields'] ?? [] ),
 		'callback_url'         => (string) ( $status['callback_url'] ?? '' ),
+		'legacy_callback_url'  => (string) ( $status['legacy_callback_url'] ?? '' ),
 		'bot_handle'           => (string) ( $status['bot_handle'] ?? '' ),
 		'webhook_connected_at' => (string) ( $status['webhook_connected_at'] ?? '' ),
 		'webhook_last_error'   => (string) ( $status['webhook_last_error'] ?? '' ),
@@ -430,22 +458,48 @@ function me_ajax_settings_save(): void {
 	// Telegram
 	_me_settings_require_company_org_id( $org_id, 'Telegram-настройки доступны только в контексте компании.' );
 
+	$telegram_context = crm_telegram_normalize_bot_context(
+		isset( $_POST['telegram_context'] ) ? (string) wp_unslash( $_POST['telegram_context'] ) : 'merchant'
+	);
+	$token_key        = crm_telegram_setting_key( $telegram_context, 'bot_token' );
+	$username_key     = crm_telegram_setting_key( $telegram_context, 'bot_username' );
+	$context_label    = crm_telegram_bot_context_labels()[ $telegram_context ];
 	$token = isset( $_POST['telegram_bot_token'] )
 		? trim( (string) wp_unslash( $_POST['telegram_bot_token'] ) )
-		: '';
+		: trim( (string) wp_unslash( $_POST[ $token_key ] ?? '' ) );
 	$username = isset( $_POST['telegram_bot_username'] )
 		? crm_telegram_sanitize_bot_username( (string) wp_unslash( $_POST['telegram_bot_username'] ) )
-		: '';
-	$current_telegram = crm_telegram_collect_settings( $org_id );
+		: crm_telegram_sanitize_bot_username( (string) wp_unslash( $_POST[ $username_key ] ?? '' ) );
+	$current_telegram = crm_telegram_collect_settings( $org_id, $telegram_context );
 	$settings_changed = $current_telegram['bot_token'] !== $token || $current_telegram['bot_username'] !== $username;
+	$duplicate        = crm_telegram_find_duplicate_bot_setting( $org_id, $telegram_context, $username, $token );
 
-	$ok = crm_set_setting( 'telegram_bot_token', $token, $org_id );
-	$ok = crm_set_setting( 'telegram_bot_username', $username, $org_id ) && $ok;
+	if ( ! empty( $duplicate['has_duplicate'] ) ) {
+		wp_send_json_error( [
+			'message'          => (string) $duplicate['message'],
+			'duplicate_fields' => array_values( $duplicate['fields'] ?? [] ),
+			'telegram_status'  => _me_settings_telegram_status_payload( $org_id, $telegram_context ),
+			'telegram_context' => $telegram_context,
+		], 422 );
+	}
+
+	$ok = crm_set_setting( $token_key, $token, $org_id );
+	$ok = crm_set_setting( $username_key, $username, $org_id ) && $ok;
 	if ( $settings_changed ) {
-		$ok = crm_set_setting( 'telegram_webhook_url', '', $org_id ) && $ok;
-		$ok = crm_set_setting( 'telegram_webhook_connected_at', '', $org_id ) && $ok;
-		$ok = crm_set_setting( 'telegram_webhook_last_error', '', $org_id ) && $ok;
-		$ok = crm_set_setting( 'telegram_webhook_lock', '0', $org_id ) && $ok;
+		$ok = crm_set_setting( crm_telegram_setting_key( $telegram_context, 'webhook_url' ), '', $org_id ) && $ok;
+		$ok = crm_set_setting( crm_telegram_setting_key( $telegram_context, 'webhook_connected_at' ), '', $org_id ) && $ok;
+		$ok = crm_set_setting( crm_telegram_setting_key( $telegram_context, 'webhook_last_error' ), '', $org_id ) && $ok;
+		$ok = crm_set_setting( crm_telegram_setting_key( $telegram_context, 'webhook_lock' ), '0', $org_id ) && $ok;
+	} else {
+		$current_telegram_status = crm_telegram_get_configuration_status( $org_id, $telegram_context );
+		if ( ! empty( $current_telegram_status['webhook_ready'] ) ) {
+			$ok = crm_set_setting( crm_telegram_setting_key( $telegram_context, 'webhook_lock' ), '1', $org_id ) && $ok;
+		}
+	}
+
+	if ( $telegram_context === 'merchant' ) {
+		$ok = crm_set_setting( 'telegram_bot_token', $token, $org_id ) && $ok;
+		$ok = crm_set_setting( 'telegram_bot_username', $username, $org_id ) && $ok;
 	}
 
 	if ( ! $ok ) {
@@ -460,20 +514,22 @@ function me_ajax_settings_save(): void {
 			'org_id'  => $org_id,
 			'context' => [
 				'section'      => 'telegram',
+				'bot_context'  => $telegram_context,
 				'bot_username' => $username !== '' ? '@' . $username : '',
 			],
 		]
 	);
 
-	$telegram_status = _me_settings_telegram_status_payload( $org_id );
-	$message = 'Telegram-настройки сохранены.';
+	$telegram_status = _me_settings_telegram_status_payload( $org_id, $telegram_context );
+	$message = 'Telegram-настройки «' . $context_label . '» сохранены.';
 	if ( ! empty( $telegram_status['is_configured'] ) && empty( $telegram_status['webhook_ready'] ) ) {
-		$message .= ' Теперь нажмите «Подключить callback», чтобы включить Telegram-инвайты.';
+		$message .= ' Теперь нажмите «Подключить callback».';
 	}
 
 	wp_send_json_success( [
 		'message'         => $message,
 		'telegram_status' => $telegram_status,
+		'telegram_context' => $telegram_context,
 	] );
 }
 
@@ -490,15 +546,23 @@ function me_ajax_settings_telegram_connect(): void {
 	$org_id = crm_is_root( $current_uid ) ? 0 : crm_get_current_user_company_id( $current_uid );
 	_me_settings_require_company_org_id( $org_id, 'Telegram callback можно подключать только в контексте компании.' );
 
-	$token = isset( $_POST['telegram_bot_token'] )
-		? trim( (string) wp_unslash( $_POST['telegram_bot_token'] ) )
-		: '';
-	$username = isset( $_POST['telegram_bot_username'] )
-		? crm_telegram_sanitize_bot_username( (string) wp_unslash( $_POST['telegram_bot_username'] ) )
-		: '';
+	$telegram_context = crm_telegram_normalize_bot_context(
+		isset( $_POST['telegram_context'] ) ? (string) wp_unslash( $_POST['telegram_context'] ) : 'merchant'
+	);
+	$saved_settings = crm_telegram_collect_settings( $org_id, $telegram_context );
+	$token          = trim( (string) ( $saved_settings['bot_token'] ?? '' ) );
+	$username       = crm_telegram_sanitize_bot_username( (string) ( $saved_settings['bot_username'] ?? '' ) );
 
-	$result = crm_telegram_register_webhook( $org_id, $username, $token );
-	$telegram_status = _me_settings_telegram_status_payload( $org_id );
+	if ( $token === '' || $username === '' ) {
+		wp_send_json_error( [
+			'message'         => 'Сначала сохраните имя и токен Telegram-бота, затем подключите callback.',
+			'telegram_status' => _me_settings_telegram_status_payload( $org_id, $telegram_context ),
+			'telegram_context' => $telegram_context,
+		], 422 );
+	}
+
+	$result = crm_telegram_register_webhook( $org_id, $username, $token, $telegram_context );
+	$telegram_status = _me_settings_telegram_status_payload( $org_id, $telegram_context );
 
 	if ( empty( $result['success'] ) ) {
 		crm_log_entity(
@@ -511,6 +575,7 @@ function me_ajax_settings_telegram_connect(): void {
 			[
 				'org_id'  => $org_id,
 				'context' => [
+					'bot_context'  => $telegram_context,
 					'bot_username' => $username !== '' ? '@' . $username : '',
 					'error'        => (string) ( $result['message'] ?? '' ),
 				],
@@ -533,6 +598,7 @@ function me_ajax_settings_telegram_connect(): void {
 		[
 			'org_id'  => $org_id,
 			'context' => [
+				'bot_context'  => $telegram_context,
 				'bot_username' => $username !== '' ? '@' . $username : '',
 				'callback_url' => (string) ( $result['callback_url'] ?? '' ),
 			],
@@ -540,8 +606,11 @@ function me_ajax_settings_telegram_connect(): void {
 	);
 
 	wp_send_json_success( [
-		'message'         => 'Telegram callback подключён. Инвайты готовы к работе.',
+		'message'         => $telegram_context === 'merchant'
+			? 'Telegram callback подключён. Инвайты готовы к работе.'
+			: 'Telegram callback подключён. Операторский бот готов к работе.',
 		'telegram_status' => $telegram_status,
+		'telegram_context' => $telegram_context,
 	] );
 }
 
@@ -558,7 +627,11 @@ function me_ajax_settings_telegram_unlock(): void {
 	$org_id = crm_is_root( $current_uid ) ? 0 : crm_get_current_user_company_id( $current_uid );
 	_me_settings_require_company_org_id( $org_id, 'Telegram-настройки доступны только в контексте компании.' );
 
-	crm_telegram_set_config_lock( $org_id, false );
+	$telegram_context = crm_telegram_normalize_bot_context(
+		isset( $_POST['telegram_context'] ) ? (string) wp_unslash( $_POST['telegram_context'] ) : 'merchant'
+	);
+
+	crm_telegram_set_config_lock( $org_id, false, $telegram_context );
 
 	crm_log_entity(
 		'settings.telegram_unlocked',
@@ -570,14 +643,16 @@ function me_ajax_settings_telegram_unlock(): void {
 		[
 			'org_id'  => $org_id,
 			'context' => [
-				'section' => 'telegram',
+				'section'     => 'telegram',
+				'bot_context' => $telegram_context,
 			],
 		]
 	);
 
 	wp_send_json_success( [
 		'message'         => 'Редактирование Telegram-настроек разблокировано.',
-		'telegram_status' => _me_settings_telegram_status_payload( $org_id ),
+		'telegram_status' => _me_settings_telegram_status_payload( $org_id, $telegram_context ),
+		'telegram_context' => $telegram_context,
 	] );
 }
 

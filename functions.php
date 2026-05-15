@@ -52,6 +52,10 @@ require_once get_template_directory() . '/inc/merchants.php';
 require_once get_template_directory() . '/inc/telegram-merchant-menu.php';
 require_once get_template_directory() . '/inc/ajax/merchants.php';
 
+// Операторский Telegram-контур: привязка CRM-пользователей к operator bot
+require_once get_template_directory() . '/inc/operators.php';
+require_once get_template_directory() . '/inc/ajax/operators.php';
+
 // Курсы валют
 require_once get_template_directory() . '/inc/rates.php';
 require_once get_template_directory() . '/inc/ajax/rates.php';
@@ -79,6 +83,7 @@ require_once get_template_directory() . '/inc/fintech-cron.php';
 // Telegram: project-хуки для ордеров (должно быть до dispatch)
 require_once get_template_directory() . '/inc/telegram-orders-handler.php';
 require_once get_template_directory() . '/inc/telegram-merchants-handler.php';
+require_once get_template_directory() . '/inc/telegram-operators-handler.php';
 
 // require_once get_template_directory() . '/inc/menus.php';
 // require_once get_template_directory() . '/inc/enqueue.php';

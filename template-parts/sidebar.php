@@ -178,6 +178,14 @@ $root_fintech_providers_url = home_url('/root-fintech-providers/');
                 <span class="icon-thumbnail"><i class="pg-icon">user</i></span>
             </li>
             <?php endif; ?>
+            <?php if ( function_exists('crm_can_access') && crm_can_access('operators.telegram.view') ) : ?>
+            <li class="">
+                <a href="<?php echo esc_url(home_url('/operator-telegram/')); ?>">
+                    <span class="title">Операторы TG</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">send</i></span>
+            </li>
+            <?php endif; ?>
             <li class="">
                 <a href="<?php echo esc_url(home_url('/settings/')); ?>">
                     <span class="title">Настройки</span>

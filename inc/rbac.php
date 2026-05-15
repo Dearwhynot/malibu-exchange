@@ -113,6 +113,10 @@ function crm_rbac_permissions(): array {
 		'merchants.invite'   => [ 'module' => 'merchants', 'action' => 'invite',       'name' => 'Управление приглашениями мерчантов' ],
 		'merchants.ledger'   => [ 'module' => 'merchants', 'action' => 'ledger',       'name' => 'Просмотр ledger мерчантов' ],
 
+		// ── Operator Telegram ─────────────────────────────────────────────────
+		'operators.telegram.view'   => [ 'module' => 'operators', 'action' => 'telegram_view',   'name' => 'Просмотр Telegram-привязок операторов' ],
+		'operators.telegram.invite' => [ 'module' => 'operators', 'action' => 'telegram_invite', 'name' => 'Выдача Telegram-инвайтов операторам' ],
+
 		// ── Logs (операционный журнал событий) ───────────────────────────────
 		'logs.view'          => [ 'module' => 'logs',      'action' => 'view',         'name' => 'Просмотр журнала событий' ],
 

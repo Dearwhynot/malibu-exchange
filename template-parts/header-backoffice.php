@@ -7,16 +7,18 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+$theme_img_uri  = get_template_directory_uri() . '/assets/img';
 $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
 ?>
 <div class="header">
 	<a href="#" class="btn-link toggle-sidebar d-lg-none pg-icon btn-icon-link" data-toggle="sidebar">menu</a>
 	<div class="">
 		<div class="brand inline">
-			<img src="<?php echo esc_url( $vendor_img_uri . '/logo.png' ); ?>" alt="logo"
-			     data-src="<?php echo esc_url( $vendor_img_uri . '/logo.png' ); ?>"
-			     data-src-retina="<?php echo esc_url( $vendor_img_uri . '/logo_2x.png' ); ?>"
-			     width="78" height="22">
+			<img src="<?php echo esc_url( $theme_img_uri . '/malibu-exchange-sidebar-logo.png' ); ?>" alt="Malibu Exchange"
+			     class="malibu-brand-logo backoffice-header-logo"
+			     data-src="<?php echo esc_url( $theme_img_uri . '/malibu-exchange-sidebar-logo.png' ); ?>"
+			     data-src-retina="<?php echo esc_url( $theme_img_uri . '/malibu-exchange-sidebar-logo.png' ); ?>"
+			     width="39" height="22">
 		</div>
 	</div>
 	<div class="d-flex align-items-center">

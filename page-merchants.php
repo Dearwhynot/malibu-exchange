@@ -150,7 +150,7 @@ get_header();
 							Загрузка…
 						</div>
 						<?php if ( $can_invite && ! $is_root ) : ?>
-						<button type="button" id="btn-open-telegram-invite-modal" class="btn btn-primary">
+						<button type="button" id="btn-open-telegram-invite-modal" class="btn btn-primary" <?php echo empty( $telegram_invite_status['invite_ready'] ) ? 'disabled' : ''; ?>>
 							<i class="pg-icon m-r-5">link</i>Создать инвайт
 						</button>
 						<?php endif; ?>
@@ -296,38 +296,34 @@ get_header();
 				<div id="telegram-invite-alert" class="alert d-none m-b-15" role="alert"></div>
 				<div id="telegram-invite-modal-status-host" class="m-b-15"></div>
 
-				<div class="card card-default m-b-20">
+				<div class="card card-default m-b-20 merchant-invite-create-card">
 					<div class="card-header">
 						<div class="card-title">Создать Telegram-инвайт</div>
 					</div>
 					<div class="card-body">
 						<form id="telegram-invite-create-form">
-							<div class="row">
-								<div class="col-md-6">
-									<div class="form-group">
-										<label for="tg-invite-markup-type">Тип наценки</label>
-										<select id="tg-invite-markup-type" class="full-width" data-init-plugin="select2">
-											<?php foreach ( crm_merchant_markup_types() as $type_code => $label ) : ?>
-											<option value="<?php echo esc_attr( $type_code ); ?>"><?php echo esc_html( $label ); ?></option>
-											<?php endforeach; ?>
-										</select>
+							<div class="merchant-invite-create-grid">
+								<div class="merchant-invite-fields">
+									<div class="merchant-invite-markup-grid">
+										<div class="form-group">
+											<label for="tg-invite-markup-type">Тип наценки</label>
+											<select id="tg-invite-markup-type" class="full-width" data-init-plugin="select2">
+												<?php foreach ( crm_merchant_markup_types() as $type_code => $label ) : ?>
+												<option value="<?php echo esc_attr( $type_code ); ?>"><?php echo esc_html( $label ); ?></option>
+												<?php endforeach; ?>
+											</select>
+										</div>
+										<div class="form-group">
+											<label for="tg-invite-markup-value">Значение наценки</label>
+											<input type="number" class="form-control" id="tg-invite-markup-value" value="0" step="0.00000001" min="0">
+										</div>
 									</div>
-								</div>
-								<div class="col-md-6">
-									<div class="form-group">
-										<label for="tg-invite-markup-value">Значение наценки</label>
-										<input type="number" class="form-control" id="tg-invite-markup-value" value="0" step="0.00000001" min="0">
-									</div>
-								</div>
-							</div>
-							<div class="row">
-								<div class="col-md-8">
-									<div class="form-group">
+									<div class="form-group merchant-invite-note-field">
 										<label for="tg-invite-note">Заметка к будущему мерчанту</label>
 										<textarea id="tg-invite-note" class="form-control" rows="2" placeholder="Например: трафик с группы Phuket / VIP поток"></textarea>
 									</div>
 								</div>
-								<div class="col-md-4 d-flex align-items-end">
+								<div class="merchant-invite-submit-field">
 									<button type="button" id="btn-create-telegram-invite" class="btn btn-primary btn-block">
 										<i class="pg-icon m-r-5">link</i>Создать инвайт
 									</button>
@@ -337,16 +333,16 @@ get_header();
 					</div>
 				</div>
 
-				<div id="telegram-invite-preview" class="card card-default m-b-20 d-none">
+				<div id="telegram-invite-preview" class="card card-default m-b-20 merchant-invite-preview-card d-none">
 					<div class="card-header">
 						<div class="card-title">Последний созданный инвайт</div>
 					</div>
 					<div class="card-body">
-						<div class="row">
-							<div class="col-md-7">
+						<div class="merchant-invite-preview-grid">
+							<div class="merchant-invite-preview-main">
 								<div class="form-group">
 									<label for="tg-invite-link-preview">Ссылка</label>
-									<div class="input-group">
+									<div class="input-group merchant-invite-link-group">
 										<input type="text" id="tg-invite-link-preview" class="form-control" readonly>
 										<span class="input-group-btn">
 											<button type="button" id="btn-copy-telegram-invite-link" class="btn btn-default">Копировать</button>
@@ -355,8 +351,8 @@ get_header();
 									<p class="hint-text m-t-5" id="tg-invite-preview-meta">—</p>
 								</div>
 							</div>
-							<div class="col-md-5">
-								<div class="text-center p-15" style="background:#f7fafc;border-radius:12px;border:1px solid #e8edf2">
+							<div class="merchant-invite-qr-column">
+								<div class="merchant-invite-qr-panel text-center">
 									<div class="fs-12 semi-bold m-b-10 text-uppercase" style="letter-spacing:.08em;color:#3b5998">Telegram Invite QR</div>
 									<div id="tg-invite-qr-preview-wrap" class="m-b-10"></div>
 									<div class="hint-text fs-12">Покажите QR-код пользователю или отправьте готовую ссылку.</div>
@@ -623,6 +619,208 @@ add_action(
 	function () use ( $nonce_list, $nonce_save, $nonce_status, $nonce_invite, $nonce_ledger, $nonce_orders, $is_root, $can_create, $can_edit, $can_block, $can_invite, $can_ledger, $can_orders, $companies_payload, $referrers_by_company, $current_company_id, $telegram_invite_status ) {
 ?>
 <style>
+#merchant-telegram-invite-modal .modal-dialog {
+	max-width: 860px;
+	width: calc(100% - 32px);
+}
+#merchant-telegram-invite-modal .modal-content {
+	border: 0;
+	border-radius: 6px;
+	box-shadow: 0 18px 48px rgba(33, 33, 33, .22);
+}
+#merchant-telegram-invite-modal .modal-header {
+	padding: 28px 32px 8px;
+	border-bottom: 0;
+}
+#merchant-telegram-invite-modal .modal-title {
+	font-size: 24px;
+	line-height: 1.25;
+	font-weight: 500;
+}
+#merchant-telegram-invite-modal .modal-body {
+	padding: 0 32px 34px;
+}
+#merchant-telegram-invite-modal #telegram-invite-modal-status-host {
+	margin-bottom: 28px;
+}
+#merchant-telegram-invite-modal #telegram-invite-modal-status-host .alert {
+	margin-bottom: 0;
+}
+#merchant-telegram-invite-modal .merchant-invite-create-card,
+#merchant-telegram-invite-modal .merchant-invite-preview-card {
+	border: 0;
+	box-shadow: none;
+	background: transparent;
+	margin-bottom: 34px;
+}
+#merchant-telegram-invite-modal .merchant-invite-create-card .card-header,
+#merchant-telegram-invite-modal .merchant-invite-preview-card .card-header {
+	padding: 0 0 12px;
+	min-height: 0;
+	border-bottom: 0;
+	background: transparent;
+}
+#merchant-telegram-invite-modal .merchant-invite-create-card .card-title,
+#merchant-telegram-invite-modal .merchant-invite-preview-card .card-title {
+	float: none;
+	display: block;
+	margin: 0;
+	font-size: 12px;
+	line-height: 1.3;
+	font-weight: 600;
+	letter-spacing: .08em;
+	text-transform: uppercase;
+	color: #2f3438;
+}
+#merchant-telegram-invite-modal .merchant-invite-create-card .card-body,
+#merchant-telegram-invite-modal .merchant-invite-preview-card .card-body {
+	padding: 0;
+}
+#merchant-telegram-invite-modal label {
+	margin-bottom: 6px;
+	font-weight: 500;
+	color: #555;
+}
+#merchant-telegram-invite-modal .merchant-invite-create-grid {
+	display: grid;
+	grid-template-columns: minmax(460px, 1fr) 224px;
+	column-gap: 24px;
+	align-items: end;
+}
+#merchant-telegram-invite-modal .merchant-invite-fields {
+	min-width: 0;
+}
+#merchant-telegram-invite-modal .merchant-invite-markup-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 176px;
+	column-gap: 18px;
+	margin-bottom: 14px;
+}
+#merchant-telegram-invite-modal .merchant-invite-create-grid .form-group {
+	margin-bottom: 0;
+}
+#merchant-telegram-invite-modal #tg-invite-markup-value,
+#merchant-telegram-invite-modal #btn-create-telegram-invite {
+	height: 46px;
+}
+#merchant-telegram-invite-modal .select2-container .select2-selection--single {
+	min-height: 46px;
+}
+#merchant-telegram-invite-modal .select2-container .select2-selection--single .select2-selection__rendered {
+	line-height: 46px;
+}
+#merchant-telegram-invite-modal .select2-container .select2-selection--single .select2-selection__arrow {
+	height: 46px;
+}
+#merchant-telegram-invite-modal #tg-invite-note {
+	min-height: 76px;
+	resize: vertical;
+}
+#merchant-telegram-invite-modal #btn-create-telegram-invite {
+	width: 100%;
+	white-space: nowrap;
+}
+#merchant-telegram-invite-modal .merchant-invite-preview-grid {
+	display: grid;
+	grid-template-columns: minmax(390px, 1fr) 268px;
+	column-gap: 32px;
+	align-items: start;
+}
+#merchant-telegram-invite-modal .merchant-invite-preview-main {
+	min-width: 0;
+	padding-top: 1px;
+}
+#merchant-telegram-invite-modal .merchant-invite-preview-main .form-group {
+	margin-bottom: 0;
+}
+#merchant-telegram-invite-modal .merchant-invite-link-group {
+	display: grid !important;
+	grid-template-columns: minmax(0, 1fr) 132px;
+	width: 100%;
+	align-items: stretch;
+}
+#merchant-telegram-invite-modal .merchant-invite-link-group .form-control {
+	min-width: 0;
+	width: 100%;
+	height: 46px;
+}
+#merchant-telegram-invite-modal .merchant-invite-link-group .input-group-btn {
+	display: block;
+	width: 132px;
+	white-space: nowrap;
+}
+#merchant-telegram-invite-modal .merchant-invite-link-group .btn {
+	width: 100%;
+	height: 46px;
+	border-top-left-radius: 0;
+	border-bottom-left-radius: 0;
+}
+#merchant-telegram-invite-modal #tg-invite-preview-meta {
+	margin-top: 12px;
+	min-height: 44px;
+	line-height: 1.45;
+	word-break: break-word;
+}
+#merchant-telegram-invite-modal .merchant-invite-qr-column {
+	display: flex;
+	justify-content: flex-end;
+}
+#merchant-telegram-invite-modal .merchant-invite-qr-panel {
+	width: 268px;
+	min-height: 330px;
+	padding: 14px;
+	background: #f7fafc;
+	border: 1px solid #e8edf2;
+	border-radius: 12px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+}
+#merchant-telegram-invite-modal #tg-invite-qr-preview-wrap {
+	width: 232px;
+	height: 232px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+#merchant-telegram-invite-modal #tg-invite-qr-preview-wrap img {
+	width: 232px !important;
+	height: 232px !important;
+	object-fit: contain;
+	background: #fff;
+	border: 1px solid #e8edf2;
+	border-radius: 8px;
+	padding: 8px;
+}
+@media (max-width: 767px) {
+	#merchant-telegram-invite-modal .modal-dialog {
+		width: calc(100% - 20px);
+	}
+	#merchant-telegram-invite-modal .modal-header {
+		padding: 22px 22px 8px;
+	}
+	#merchant-telegram-invite-modal .modal-body {
+		padding: 0 22px 26px;
+	}
+	#merchant-telegram-invite-modal .merchant-invite-create-grid,
+	#merchant-telegram-invite-modal .merchant-invite-preview-grid,
+	#merchant-telegram-invite-modal .merchant-invite-markup-grid {
+		grid-template-columns: minmax(0, 1fr);
+		row-gap: 18px;
+	}
+	#merchant-telegram-invite-modal .merchant-invite-qr-column {
+		justify-content: flex-start;
+	}
+	#merchant-telegram-invite-modal .merchant-invite-qr-panel {
+		width: 100%;
+	}
+	#merchant-telegram-invite-modal .merchant-invite-link-group {
+		grid-template-columns: minmax(0, 1fr) 122px;
+	}
+	#merchant-telegram-invite-modal .merchant-invite-link-group .input-group-btn {
+		width: 122px;
+	}
+}
 .telegram-invite-actions .dropdown-item.telegram-invite-action-item {
 	display: flex;
 	align-items: center;
@@ -683,7 +881,17 @@ add_action(
 			window.MalibuToast.show(message, type || 'info');
 			return;
 		}
-		alert(message);
+		if (window.console && console.warn) {
+			console.warn(message);
+		}
+	}
+
+	function showConfirm(message, callback, options) {
+		if (window.MalibuConfirm && typeof window.MalibuConfirm.show === 'function') {
+			window.MalibuConfirm.show(message, callback, options || {});
+			return;
+		}
+		showToast('Не удалось открыть окно подтверждения. Обновите страницу и повторите действие.', 'danger');
 	}
 
 	function showInlineAlert($el, message, type) {
@@ -749,22 +957,22 @@ add_action(
 		});
 
 		if (status.invite_ready) {
-			return '<div class="alert alert-success bordered m-b-0"><strong>Telegram-инвайты готовы к работе.</strong><br>'
+			return '<div class="alert alert-success bordered m-b-0"><strong>Создание Telegram invite-ссылок доступно.</strong><br>'
 				+ (status.bot_handle ? 'Бот: ' + escHtml(status.bot_handle) + '. ' : '')
 				+ 'Можно создавать deep-link, показывать QR и ждать запуск /start от мерчанта.</div>';
 		}
 
 		if (status.is_configured) {
-			var html = '<div class="alert alert-warning bordered m-b-0"><strong>Инвайт в Telegram пока недоступен.</strong><br>'
+			var html = '<div class="alert alert-warning bordered m-b-0"><strong>Создание новых Telegram invite-ссылок недоступно.</strong><br>'
 				+ escHtml(status.blocked_reason || 'Сначала подключите callback для этой компании.');
 			if (status.webhook_last_error) {
 				html += '<div class="m-t-10"><strong>Последняя ошибка Telegram API:</strong> ' + escHtml(status.webhook_last_error) + '</div>';
 			}
-			html += '<div class="m-t-10">Откройте «Настройки», проверьте имя бота и токен, затем подключите callback.</div></div>';
+			html += '<div class="m-t-10">Откройте «Настройки», проверьте имя бота и токен, затем подключите callback. Существующие мерчанты и их статус не затрагиваются.</div></div>';
 			return html;
 		}
 
-		var danger = '<div class="alert alert-danger bordered m-b-0"><strong>Инвайт в Telegram недоступен.</strong><br>'
+		var danger = '<div class="alert alert-danger bordered m-b-0"><strong>Создание Telegram invite-ссылок заблокировано.</strong><br>'
 			+ 'Для создания ссылки заполните настройки Telegram-бота: имя бота и токен. Перейдите в «Настройки».';
 		if (missingLabels.length) {
 			danger += '<div class="m-t-10"><strong>Не заполнено:</strong> ' + escHtml(missingLabels.join(', ')) + '.</div>';
@@ -778,6 +986,9 @@ add_action(
 		var html = telegramInviteStatusHtml(TELEGRAM_INVITE_STATUS);
 		$('#telegram-invite-page-status-host, #telegram-invite-modal-status-host').html(html);
 		$('#btn-create-telegram-invite').prop('disabled', !TELEGRAM_INVITE_STATUS.invite_ready);
+		$('#btn-open-telegram-invite-modal')
+			.prop('disabled', !TELEGRAM_INVITE_STATUS.invite_ready)
+			.attr('title', TELEGRAM_INVITE_STATUS.invite_ready ? '' : (TELEGRAM_INVITE_STATUS.blocked_reason || 'Сначала подключите мерчантский Telegram callback в настройках.'));
 	}
 
 	function renderReferrerSelect(companyId, selectedReferrerId, currentMerchantId) {
@@ -1041,24 +1252,25 @@ add_action(
 
 	function changeMerchantStatus(id, status) {
 		var labels = { active: 'активировать', blocked: 'заблокировать', archived: 'архивировать' };
-		if (!confirm('Подтвердите: ' + (labels[status] || 'изменить статус') + ' мерчанта?')) {
-			return;
-		}
-
-		$.post(AJAX_URL, {
-			action:      'me_merchants_status',
-			_nonce:      NONCES.status,
-			merchant_id: id,
-			status:      status
-		}, function (res) {
-			if (!res || !res.success) {
-				showToast((res && res.data && res.data.message) || 'Не удалось изменить статус.', 'danger');
-				return;
-			}
-			showToast(res.data.message || 'Статус обновлён.', 'success');
-			loadMerchants(currentPage);
-		}, 'json').fail(function () {
-			showToast('Ошибка сервера при смене статуса.', 'danger');
+		showConfirm('Подтвердите: ' + (labels[status] || 'изменить статус') + ' мерчанта?', function () {
+			$.post(AJAX_URL, {
+				action:      'me_merchants_status',
+				_nonce:      NONCES.status,
+				merchant_id: id,
+				status:      status
+			}, function (res) {
+				if (!res || !res.success) {
+					showToast((res && res.data && res.data.message) || 'Не удалось изменить статус.', 'danger');
+					return;
+				}
+				showToast(res.data.message || 'Статус обновлён.', 'success');
+				loadMerchants(currentPage);
+			}, 'json').fail(function () {
+				showToast('Ошибка сервера при смене статуса.', 'danger');
+			});
+		}, {
+			btnClass: status === 'active' ? 'btn-success' : 'btn-warning',
+			btnText: labels[status] ? labels[status].charAt(0).toUpperCase() + labels[status].slice(1) : 'Подтвердить'
 		});
 	}
 
@@ -1082,7 +1294,7 @@ add_action(
 		$('#tg-invite-preview-meta').text('Payload: ' + (invite.telegram_start_payload || '—') + ' · Активен до: ' + (invite.expires_at || '—'));
 		$('#tg-invite-qr-preview-wrap').html(
 			invite.qr_url
-				? '<img src="' + escHtml(invite.qr_url) + '" alt="" style="width:220px;height:220px;object-fit:contain;background:#fff;border:1px solid #e8edf2;border-radius:8px;padding:8px">'
+				? '<img src="' + escHtml(invite.qr_url) + '" alt="">'
 				: '<div class="hint-text">QR ещё не готов.</div>'
 		);
 	}
@@ -1178,7 +1390,7 @@ add_action(
 		var effective = getTelegramInviteEffectiveMeta(row);
 		var items = [];
 
-		if (row.invite_url) {
+		if (row.invite_url && effective.status === 'new') {
 			items.push('<li><a class="dropdown-item telegram-invite-action-item js-copy-invite" href="#" data-link="' + escHtml(row.invite_url) + '"><i class="pg-icon telegram-invite-action-icon">copy</i><span>Скопировать</span></a></li>');
 		}
 
@@ -1298,6 +1510,14 @@ add_action(
 		hideInlineAlert($('#telegram-invite-alert'));
 		resetTelegramInvitePreview();
 		renderTelegramInviteStatus(TELEGRAM_INVITE_STATUS);
+		if (!TELEGRAM_INVITE_STATUS.invite_ready) {
+			showInlineAlert(
+				$('#telegram-invite-page-alert'),
+				TELEGRAM_INVITE_STATUS.blocked_reason || 'Создание инвайта недоступно: сначала подключите мерчантский Telegram callback в настройках.',
+				'warning'
+			);
+			return;
+		}
 		$('#merchant-telegram-invite-modal').modal('show');
 	}
 

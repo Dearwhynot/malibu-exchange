@@ -22,11 +22,6 @@
  * - Kanyon and Doverka adapters fail safely if integration functions are absent.
  */
 
-//? @PhuketCashExchangeBot
-//? 8245726806:AAGtA4dYraDcCngEKcd8_cvQnuB9DGfQQes
-//? https://malibu.exchange/wp-json/malibu-exchange/v1/telegram/callback-universal
-//? https://api.telegram.org/bot8245726806:AAGtA4dYraDcCngEKcd8_cvQnuB9DGfQQes/setWebhook?url=https://malibu.exchange/wp-json/malibu-exchange/v1/telegram/callback-universal
-
 if (!defined('TG_UNIVERSAL_CALLBACK_VERSION')) {
     define('TG_UNIVERSAL_CALLBACK_VERSION', '1.0.0');
 }
@@ -35,8 +30,8 @@ DEFINE('TG_UNIVERSAL_DEBUG', false);
 DEFINE('TG_UNDER_CONSTRUCTION_MODE', false);
 DEFINE('TG_UNDER_CONSTRUCTION_TEXT', 'Service is temporarily under maintenance.');
 DEFINE('TG_UNIVERSAL_TIMEZONE', 'Asia/Bangkok');
-DEFINE('TG_BOT_TOKEN', ( function_exists('crm_get_setting') && function_exists('crm_telegram_get_callback_company_id') && crm_telegram_get_callback_company_id() > 0 )
-	? (string) crm_get_setting( 'telegram_bot_token', crm_telegram_get_callback_company_id(), '' )
+DEFINE('TG_BOT_TOKEN', ( function_exists('crm_telegram_collect_settings') && function_exists('crm_telegram_get_callback_company_id') && crm_telegram_get_callback_company_id() > 0 )
+	? (string) ( crm_telegram_collect_settings( crm_telegram_get_callback_company_id(), function_exists('crm_telegram_get_callback_bot_context') ? crm_telegram_get_callback_bot_context() : 'merchant' )['bot_token'] ?? '' )
 	: ''
 );
 DEFINE('KANYON_CURRENCIES_URL', TG_BOT_TOKEN);
@@ -134,10 +129,12 @@ if (!function_exists('tg_resolve_bot_token')) {
     {
         $candidates = [];
 
-        if (function_exists('crm_telegram_get_callback_company_id') && function_exists('crm_get_setting')) {
+        if (function_exists('crm_telegram_get_callback_company_id') && function_exists('crm_telegram_collect_settings')) {
             $callback_company_id = crm_telegram_get_callback_company_id();
             if ($callback_company_id > 0) {
-                $candidates[] = crm_get_setting('telegram_bot_token', $callback_company_id, '');
+                $callback_context = function_exists('crm_telegram_get_callback_bot_context') ? crm_telegram_get_callback_bot_context() : 'merchant';
+                $callback_settings = crm_telegram_collect_settings($callback_company_id, $callback_context);
+                $candidates[] = $callback_settings['bot_token'] ?? '';
             }
         }
 
@@ -1464,7 +1461,21 @@ if (!function_exists('tg_route_command')) {
             return false;
         }
 
+        if (function_exists('crm_operator_tg_route_command')) {
+            $operator_handled = (bool) crm_operator_tg_route_command($command, $text, $ctx, $telegram, $data);
+            if ($operator_handled) {
+                return true;
+            }
+        }
+
         if ($command === '/start') {
+            if (function_exists('crm_operator_tg_route_command')) {
+                $operator_handled = (bool) crm_operator_tg_route_command($command, $text, $ctx, $telegram, $data);
+                if ($operator_handled) {
+                    return true;
+                }
+            }
+
             $project_start_handled = false;
             if (function_exists('tg_project_handle_start_command')) {
                 $project_start_handled = (bool) tg_call_project_handler(
@@ -1498,6 +1509,13 @@ if (!function_exists('tg_route_command')) {
         }
 
         if ($command === '/menu') {
+            if (function_exists('crm_operator_tg_route_command')) {
+                $operator_handled = (bool) crm_operator_tg_route_command($command, $text, $ctx, $telegram, $data);
+                if ($operator_handled) {
+                    return true;
+                }
+            }
+
             if (function_exists('crm_merchant_tg_route_command')) {
                 $merchant_handled = (bool) crm_merchant_tg_route_command($command, $text, $ctx, $telegram, $data);
                 if ($merchant_handled) {
@@ -1514,6 +1532,13 @@ if (!function_exists('tg_route_command')) {
         }
 
         if ($command === '/help') {
+            if (function_exists('crm_operator_tg_route_command')) {
+                $operator_handled = (bool) crm_operator_tg_route_command($command, $text, $ctx, $telegram, $data);
+                if ($operator_handled) {
+                    return true;
+                }
+            }
+
             if (function_exists('crm_merchant_tg_route_command')) {
                 $merchant_handled = (bool) crm_merchant_tg_route_command($command, $text, $ctx, $telegram, $data);
                 if ($merchant_handled) {
@@ -1531,6 +1556,13 @@ if (!function_exists('tg_route_command')) {
         }
 
         if ($command === '/chat_id') {
+            if (function_exists('crm_operator_tg_route_command')) {
+                $operator_handled = (bool) crm_operator_tg_route_command($command, $text, $ctx, $telegram, $data);
+                if ($operator_handled) {
+                    return true;
+                }
+            }
+
             bot_send_message($telegram, $chat_id, 'chat_id: ' . $chat_id . '; user_id: ' . ($actor_id !== null ? (string) $actor_id : 'n/a'));
             return true;
         }
