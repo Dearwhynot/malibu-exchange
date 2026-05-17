@@ -40,6 +40,7 @@ foreach ( $telegram_contexts as $telegram_context => $telegram_context_label ) {
 			'webhook_ready'        => false,
 			'invite_ready'         => false,
 			'operator_ready'       => false,
+			'service_ready'        => false,
 			'blocked_reason'       => 'Telegram-настройки доступны только в контексте компании.',
 			'missing_fields'       => [],
 			'callback_url'         => '',
@@ -69,8 +70,14 @@ $fintech_missing_ids     = array_values( array_filter( array_map(
 	$fintech_status['missing_fields'] ?? []
 ) ) );
 $fintech_provider_labels       = crm_fintech_provider_labels();
-$fintech_allowed_providers     = array_values( $fintech['allowed_providers'] ?? crm_fintech_default_allowed_providers() );
+$fintech_allowed_providers     = function_exists( 'crm_company_get_enabled_fintech_providers' )
+	? crm_company_get_enabled_fintech_providers( $org_id )
+	: array_values( $fintech['allowed_providers'] ?? crm_fintech_default_allowed_providers() );
 $fintech_active_provider_allowed = in_array( $fintech['active_provider'], $fintech_allowed_providers, true );
+$fintech_kanyon_order_currency_options = crm_fintech_kanyon_order_currency_options();
+$show_fintech_kanyon_rapira_markup = crm_fintech_normalize_kanyon_order_currency(
+	$fintech['pay2day_order_currency'] ?? ''
+) === 'RUB';
 $_root_company_context         = null;
 
 if ( ! function_exists( 'me_settings_render_fintech_status_html' ) ) {
@@ -136,6 +143,58 @@ if ( ! function_exists( 'me_settings_render_fintech_status_html' ) ) {
 	}
 }
 
+if ( ! function_exists( 'me_settings_telegram_context_meta' ) ) {
+	function me_settings_telegram_context_meta( string $context ): array {
+		$context = crm_telegram_normalize_bot_context( $context );
+
+		switch ( $context ) {
+			case 'operator':
+				return [
+					'ready_flag'      => 'operator_ready',
+					'ready_title'     => 'Операторский Telegram-бот готов к работе.',
+					'ready_text'      => 'Операторский контур может принимать команды через отдельный бот.',
+					'blocked_title'   => 'Операторский Telegram-бот сейчас заблокирован.',
+					'blocked_default' => 'Чтобы включить операторский контур, заполните имя и токен бота в этом разделе.',
+					'warning_title'   => 'Callback операторского бота не подключён.',
+					'placeholder'     => 'MalibuOperatorBot',
+					'callback_hint'   => 'Отдельный callback для операторского бота текущей компании.',
+					'connect_label'   => 'операторского бота',
+					'status_saved'    => '<strong>Операторский бот: данные сохранены.</strong> Осталось нажать «Подключить callback».',
+					'status_ready'    => '<strong>Операторский бот: callback зарегистрирован.</strong> Бот готов принимать команды.',
+				];
+			case 'service':
+				return [
+					'ready_flag'      => 'service_ready',
+					'ready_title'     => 'Сервисный Telegram-бот готов к работе.',
+					'ready_text'      => 'Сервисный контур компании подключён и может принимать будущие интеграционные события.',
+					'blocked_title'   => 'Сервисный Telegram-бот сейчас заблокирован.',
+					'blocked_default' => 'Чтобы включить сервисный контур, заполните имя и токен бота в этом разделе.',
+					'warning_title'   => 'Callback сервисного бота не подключён.',
+					'placeholder'     => 'MalibuServiceBot',
+					'callback_hint'   => 'Отдельный callback для сервисного Telegram-бота текущей компании.',
+					'connect_label'   => 'сервисного бота',
+					'status_saved'    => '<strong>Сервисный бот: данные сохранены.</strong> Осталось нажать «Подключить callback».',
+					'status_ready'    => '<strong>Сервисный бот: callback зарегистрирован.</strong> Контур готов к работе.',
+				];
+			case 'merchant':
+			default:
+				return [
+					'ready_flag'      => 'invite_ready',
+					'ready_title'     => 'Создание Telegram invite-ссылок доступно.',
+					'ready_text'      => 'Администраторы компаний могут создавать новые invite-ссылки и QR-коды для подключения мерчантов.',
+					'blocked_title'   => 'Создание Telegram invite-ссылок заблокировано.',
+					'blocked_default' => 'Чтобы включить приглашения мерчантов, заполните имя бота и токен бота в этом разделе.',
+					'warning_title'   => 'Callback мерчантского бота не подключён.',
+					'placeholder'     => 'PhuketCashExchangeBot',
+					'callback_hint'   => 'Отдельный callback для мерчантского бота текущей компании.',
+					'connect_label'   => 'мерчантского бота',
+					'status_saved'    => '<strong>Мерчантский бот: данные сохранены.</strong> Новые Telegram invite-ссылки станут доступны после подключения callback.',
+					'status_ready'    => '<strong>Мерчантский бот: callback зарегистрирован.</strong> Можно создавать новые Telegram invite-ссылки.',
+				];
+		}
+	}
+}
+
 if ( ! function_exists( 'me_settings_render_telegram_status_html' ) ) {
 	function me_settings_render_telegram_status_html( array $status ): string {
 		$missing_labels = array_values( array_filter( array_map(
@@ -145,19 +204,14 @@ if ( ! function_exists( 'me_settings_render_telegram_status_html' ) ) {
 		$blocked_reason = trim( (string) ( $status['blocked_reason'] ?? '' ) );
 		$bot_handle = trim( (string) ( $status['bot_handle'] ?? '' ) );
 		$last_error = trim( (string) ( $status['webhook_last_error'] ?? '' ) );
-		$is_operator = (string) ( $status['context'] ?? 'merchant' ) === 'operator';
-		$is_ready = $is_operator ? ! empty( $status['operator_ready'] ) : ! empty( $status['invite_ready'] );
-		$ready_title = $is_operator ? 'Операторский Telegram-бот готов к работе.' : 'Создание Telegram invite-ссылок доступно.';
-		$ready_text = $is_operator
-			? 'Операторский контур может принимать команды через отдельный бот.'
-			: 'Администраторы компаний могут создавать новые invite-ссылки и QR-коды для подключения мерчантов.';
-		$blocked_title = $is_operator ? 'Операторский Telegram-бот сейчас заблокирован.' : 'Создание Telegram invite-ссылок заблокировано.';
-		$blocked_default = $is_operator
-			? 'Чтобы включить операторский контур, заполните имя и токен бота в этом разделе.'
-			: 'Чтобы включить приглашения мерчантов, заполните имя бота и токен бота в этом разделе.';
-		$warning_title = $is_operator
-			? 'Callback операторского бота не подключён.'
-			: 'Callback мерчантского бота не подключён.';
+		$context = (string) ( $status['context'] ?? 'merchant' );
+		$meta = me_settings_telegram_context_meta( $context );
+		$is_ready = ! empty( $status[ $meta['ready_flag'] ] );
+		$ready_title = (string) $meta['ready_title'];
+		$ready_text = (string) $meta['ready_text'];
+		$blocked_title = (string) $meta['blocked_title'];
+		$blocked_default = (string) $meta['blocked_default'];
+		$warning_title = (string) $meta['warning_title'];
 
 		ob_start();
 		if ( $is_ready ) :
@@ -179,7 +233,7 @@ if ( ! function_exists( 'me_settings_render_telegram_status_html' ) ) {
 				<?php else : ?>
 					Нажмите «Подключить callback», чтобы зарегистрировать webhook для этой компании.
 				<?php endif; ?>
-				<?php if ( ! $is_operator ) : ?>
+				<?php if ( $context === 'merchant' ) : ?>
 					<div class="m-t-10">Это не статус мерчантов: уже созданные мерчанты и их активность в таблице не меняются. Ограничено только создание новых Telegram invite-ссылок.</div>
 				<?php endif; ?>
 				<?php if ( $last_error !== '' ) : ?>
@@ -210,44 +264,45 @@ if ( ! function_exists( 'me_settings_render_telegram_status_html' ) ) {
 
 $current_tz = $settings['timezone'] ?? 'UTC';
 
-$pair       = rates_get_pair( RATES_PAIR_CODE, $org_id );
-$coeff      = $pair ? rates_get_coefficient( (int) $pair->id, RATES_PROVIDER_EX24, RATES_PROVIDER_SOURCE ) : 0.05;
 $merchant_settings = $org_id > 0 ? crm_merchants_get_settings( $org_id ) : null;
 
-// Снимок состояния всех валютных пар для текущей компании.
+// Блоки курсов строятся только по реально включённым направлениям компании.
 $rates_pair_blocks      = [];
-$usdt_market_pair_codes = [ 'USDT_THB' ];
+$enabled_exchange_pairs = function_exists( 'crm_company_get_enabled_exchange_pairs' )
+	? crm_company_get_enabled_exchange_pairs( $org_id )
+	: [];
+$available_pair_map = [];
 if ( function_exists( 'crm_root_available_rate_pairs' ) ) {
 	foreach ( crm_root_available_rate_pairs() as $pair_def ) {
-		$existing = function_exists( 'rates_get_any_pair' ) ? rates_get_any_pair( $pair_def['code'], $org_id ) : null;
-
-		$coeff_value = null;
-		$coeff_type  = 'absolute';
-
-		if ( $existing && (int) $existing->is_active === 1 ) {
-			$state = 'active';
-		} elseif ( $existing ) {
-			$state = 'disabled';
-		} else {
-			$state = 'not_configured';
-		}
-
-		if ( $existing ) {
-			$full        = rates_get_coefficient_full( (int) $existing->id, RATES_PROVIDER_EX24, RATES_PROVIDER_SOURCE );
-			$coeff_value = (float) $full['value'];
-			$coeff_type  = (string) $full['type'];
-		}
-
-		$rates_pair_blocks[] = [
-			'pair_code'         => $pair_def['code'],
-			'pair_title'        => $pair_def['title'],
-			'state'             => $state,
-			'coefficient'       => $coeff_value,
-			'coefficient_type'  => $coeff_type,
-			'has_market_source' => in_array( $pair_def['code'], $usdt_market_pair_codes, true ),
-			'market_source'     => $existing ? (string) ( $existing->market_source ?? 'bitkub' ) : 'bitkub',
-		];
+		$available_pair_map[ (string) $pair_def['code'] ] = $pair_def;
 	}
+}
+foreach ( $enabled_exchange_pairs as $enabled_pair_code ) {
+	$pair_def = $available_pair_map[ $enabled_pair_code ] ?? ( function_exists( 'crm_root_get_pair_definition' ) ? crm_root_get_pair_definition( $enabled_pair_code ) : null );
+	if ( ! $pair_def ) {
+		continue;
+	}
+
+	$existing = function_exists( 'rates_get_any_pair' ) ? rates_get_any_pair( $pair_def['code'], $org_id ) : null;
+	if ( ! $existing || (int) $existing->is_active !== 1 ) {
+		continue;
+	}
+
+	$full = rates_get_coefficient_full( (int) $existing->id, RATES_PROVIDER_EX24, RATES_PROVIDER_SOURCE );
+
+	$rates_pair_blocks[] = [
+		'pair_code'         => $pair_def['code'],
+		'pair_title'        => $pair_def['title'],
+		'state'             => 'active',
+		'coefficient'       => (float) $full['value'],
+		'coefficient_type'  => (string) $full['type'],
+		'has_market_source' => function_exists( 'crm_company_pair_supports_market_source' )
+			? crm_company_pair_supports_market_source( $pair_def['code'] )
+			: false,
+		'market_source'     => $existing
+			? (string) ( $existing->market_source ?? ( $pair_def['default_market_source'] ?? 'bitkub' ) )
+			: (string) ( $pair_def['default_market_source'] ?? 'bitkub' ),
+	];
 }
 
 $nonce_save      = wp_create_nonce( 'me_settings_save' );
@@ -413,7 +468,7 @@ get_header();
 						static fn( $item ) => isset( $item['id'] ) ? (string) $item['id'] : '',
 						$telegram_status['missing_fields'] ?? []
 					) ) );
-					$telegram_is_operator = $telegram_context === 'operator';
+					$telegram_meta        = me_settings_telegram_context_meta( $telegram_context );
 					$telegram_id_prefix   = 'telegram_' . $telegram_context;
 					?>
 					<div class="card card-default m-b-30" data-telegram-context-card="<?php echo esc_attr( $telegram_context ); ?>">
@@ -439,7 +494,7 @@ get_header();
 											       id="<?php echo esc_attr( $telegram_id_prefix ); ?>_bot_username"
 											       name="telegram_bot_username"
 											       value="<?php echo esc_attr( $telegram_settings['bot_username'] ?? '' ); ?>"
-											       placeholder="<?php echo $telegram_is_operator ? 'MalibuOperatorBot' : 'PhuketCashExchangeBot'; ?>"
+											       placeholder="<?php echo esc_attr( (string) $telegram_meta['placeholder'] ); ?>"
 											       autocomplete="off"
 											       data-telegram-field="<?php echo esc_attr( crm_telegram_setting_key( $telegram_context, 'bot_username' ) ); ?>"
 											       data-telegram-context="<?php echo esc_attr( $telegram_context ); ?>"
@@ -478,11 +533,7 @@ get_header();
 											       value="<?php echo esc_attr( $telegram_status['callback_url'] ?? '' ); ?>"
 											       readonly>
 											<p class="hint-text m-t-5">
-												<?php if ( $telegram_is_operator ) : ?>
-													Отдельный callback для операторского бота текущей компании.
-												<?php else : ?>
-													Отдельный callback для мерчантского бота текущей компании.
-												<?php endif; ?>
+												<?php echo esc_html( (string) $telegram_meta['callback_hint'] ); ?>
 											</p>
 										</div>
 									</div>
@@ -504,21 +555,16 @@ get_header();
 				<?php endforeach; ?>
 
 				<!-- ─── Курсы (по парам) ─────────────────────────────────────────── -->
-				<?php if ( function_exists( 'crm_is_root' ) && crm_is_root( get_current_user_id() ) ) : ?>
-					<div class="alert alert-info m-b-20" role="alert">
-						<i class="pg-icon m-r-5">settings</i>
-						<strong>Root.</strong> Активация и деактивация валютных пар выполняется на отдельной странице
-						<a href="<?php echo esc_url( home_url( '/root-rate-pairs/' ) ); ?>"
-						   class="alert-link semi-bold m-l-5">
-							Курсы и пары
-						</a>.
-						Здесь, в настройках компании, задаются <strong>тип</strong> (сдвиг / процент) и <strong>значение</strong> наценки.
+				<?php if ( empty( $rates_pair_blocks ) ) : ?>
+					<div class="alert alert-info m-b-30" role="alert">
+						<strong>Направления обмена сейчас выключены.</strong>
+						Для этой компании root не включил ни одного exchange contour, поэтому блоки коэффициентов скрыты.
 					</div>
+				<?php else : ?>
+					<?php foreach ( $rates_pair_blocks as $rates_block ) : ?>
+						<?php get_template_part( 'template-parts/rates-coefficient-block', null, $rates_block ); ?>
+					<?php endforeach; ?>
 				<?php endif; ?>
-
-				<?php foreach ( $rates_pair_blocks as $rates_block ) : ?>
-					<?php get_template_part( 'template-parts/rates-coefficient-block', null, $rates_block ); ?>
-				<?php endforeach; ?>
 
 				<?php if ( $merchant_settings ) : ?>
 				<div class="card card-default m-b-30">
@@ -709,10 +755,48 @@ get_header();
 								<div class="col-md-2">
 									<div class="form-group">
 										<label for="fintech_pay2day_order_currency">Код валюты</label>
-										<input type="text" class="form-control<?php echo in_array( 'fintech_pay2day_order_currency', $fintech_missing_ids, true ) ? ' crm-fintech-missing' : ''; ?>" id="fintech_pay2day_order_currency" name="fintech_pay2day_order_currency" data-fintech-field="fintech_pay2day_order_currency"
-										       value="<?php echo esc_attr( $fintech['pay2day_order_currency'] ); ?>"
-										       placeholder="USDT" maxlength="8">
-										<p class="hint-text m-t-3">Например: USDT</p>
+										<select class="full-width<?php echo in_array( 'fintech_pay2day_order_currency', $fintech_missing_ids, true ) ? ' crm-fintech-missing' : ''; ?>" id="fintech_pay2day_order_currency" name="fintech_pay2day_order_currency" data-init-plugin="select2" data-fintech-field="fintech_pay2day_order_currency">
+											<option value="">Выберите валюту</option>
+											<?php foreach ( $fintech_kanyon_order_currency_options as $currency_code => $currency_label ) : ?>
+												<option value="<?php echo esc_attr( $currency_code ); ?>" <?php selected( $fintech['pay2day_order_currency'], $currency_code ); ?>>
+													<?php echo esc_html( $currency_label ); ?>
+												</option>
+											<?php endforeach; ?>
+										</select>
+										<p class="hint-text m-t-3">USDT оставляет старый контур через orderAmount, RUB включает новый RUB-ввод через paymentAmount.</p>
+									</div>
+								</div>
+							</div>
+							<?php if ( $org_id > 0 ) : ?>
+							<div class="row" id="kanyon-rapira-markup-row"<?php echo $show_fintech_kanyon_rapira_markup ? '' : ' style="display:none"'; ?>>
+								<div class="col-md-4">
+									<div class="form-group">
+										<label for="fintech_kanyon_rapira_markup_percent">Наценка ЭП к Rapira, %</label>
+										<input type="number"
+										       class="form-control"
+										       id="fintech_kanyon_rapira_markup_percent"
+										       name="fintech_kanyon_rapira_markup_percent"
+										       step="0.0001"
+										       min="0"
+										       value="<?php echo esc_attr( $fintech['kanyon_rapira_markup_percent'] ); ?>">
+										<p class="hint-text m-t-3">Наценка компании к курсу Rapira для нового RUB → USDT merchant-flow. Дефолт пилота: 6.</p>
+									</div>
+								</div>
+							</div>
+							<?php endif; ?>
+							<div class="row">
+								<div class="col-md-6">
+									<div class="form-group">
+										<label for="fintech_pay2day_default_payment_purpose">Назначение платежа по умолчанию</label>
+										<input type="text"
+										       class="form-control"
+										       id="fintech_pay2day_default_payment_purpose"
+										       name="fintech_pay2day_default_payment_purpose"
+										       data-fintech-field="fintech_pay2day_default_payment_purpose"
+										       value="<?php echo esc_attr( $fintech['pay2day_default_payment_purpose'] ?? '' ); ?>"
+										       maxlength="120"
+										       placeholder="например, Одежда">
+										<p class="hint-text m-t-3">Эта строка уходит в merchant invoice как назначение платежа. В боте мерчант сможет заменить её на своё значение перед выпуском счёта.</p>
 									</div>
 								</div>
 							</div>
@@ -873,15 +957,69 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 	}
 
 	function normalizeTelegramContext(context) {
-		return context === 'operator' ? 'operator' : 'merchant';
+		context = $.trim(String(context || '')).toLowerCase();
+		return TELEGRAM_STATUSES[context] ? context : 'merchant';
 	}
 
 	function telegramSelector(context, suffix) {
 		return '#telegram_' + normalizeTelegramContext(context) + '_' + suffix;
 	}
 
-	function oppositeTelegramContext(context) {
-		return normalizeTelegramContext(context) === 'operator' ? 'merchant' : 'operator';
+	function normalizePay2DayOrderCurrency(value) {
+		return $.trim(String(value || '')).toUpperCase();
+	}
+
+	function isRubPay2DayOrderCurrency() {
+		return normalizePay2DayOrderCurrency($('#fintech_pay2day_order_currency').val()) === 'RUB';
+	}
+
+	function syncKanyonRapiraMarkupVisibility() {
+		var shouldShow = isRubPay2DayOrderCurrency();
+		$('#kanyon-rapira-markup-row').toggle(shouldShow);
+	}
+
+	function telegramContextMeta(context) {
+		context = normalizeTelegramContext(context);
+		if (context === 'operator') {
+			return {
+				readyFlag: 'operator_ready',
+				label: 'Операторский бот',
+				connectLabel: 'операторского бота',
+				readyTitle: 'Операторский Telegram-бот готов к работе.',
+				readyText: 'Операторский контур может принимать команды через отдельный бот.',
+				blockedTitle: 'Операторский Telegram-бот сейчас заблокирован.',
+				blockedDefault: 'Чтобы включить операторский контур, заполните имя и токен бота в этом разделе.',
+				warningTitle: 'Callback операторского бота не подключён.',
+				statusReady: '<strong>Операторский бот: callback зарегистрирован.</strong> Бот готов принимать команды.',
+				statusSaved: '<strong>Операторский бот: данные сохранены.</strong> Осталось нажать «Подключить callback».'
+			};
+		}
+		if (context === 'service') {
+			return {
+				readyFlag: 'service_ready',
+				label: 'Сервисный бот',
+				connectLabel: 'сервисного бота',
+				readyTitle: 'Сервисный Telegram-бот готов к работе.',
+				readyText: 'Сервисный контур компании подключён и может принимать будущие интеграционные события.',
+				blockedTitle: 'Сервисный Telegram-бот сейчас заблокирован.',
+				blockedDefault: 'Чтобы включить сервисный контур, заполните имя и токен бота в этом разделе.',
+				warningTitle: 'Callback сервисного бота не подключён.',
+				statusReady: '<strong>Сервисный бот: callback зарегистрирован.</strong> Контур готов к работе.',
+				statusSaved: '<strong>Сервисный бот: данные сохранены.</strong> Осталось нажать «Подключить callback».'
+			};
+		}
+		return {
+			readyFlag: 'invite_ready',
+			label: 'Мерчантский бот',
+			connectLabel: 'мерчантского бота',
+			readyTitle: 'Создание Telegram invite-ссылок доступно.',
+			readyText: 'Администраторы компаний могут создавать новые invite-ссылки и QR-коды для подключения мерчантов.',
+			blockedTitle: 'Создание Telegram invite-ссылок заблокировано.',
+			blockedDefault: 'Чтобы включить приглашения мерчантов, заполните имя бота и токен бота в этом разделе.',
+			warningTitle: 'Callback мерчантского бота не подключён.',
+			statusReady: '<strong>Мерчантский бот: callback зарегистрирован.</strong> Можно создавать новые Telegram invite-ссылки.',
+			statusSaved: '<strong>Мерчантский бот: данные сохранены.</strong> Новые Telegram invite-ссылки станут доступны после подключения callback.'
+		};
 	}
 
 	function telegramForm(context) {
@@ -1164,35 +1302,25 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 
 	function buildTelegramAlertHtml(status) {
 		var missingLabels = labelsFromItems(status.missing_fields || []);
-		var isOperator = normalizeTelegramContext(status.context) === 'operator';
-		var ready = isOperator ? status.operator_ready : status.invite_ready;
-		var readyTitle = isOperator ? 'Операторский Telegram-бот готов к работе.' : 'Создание Telegram invite-ссылок доступно.';
-		var readyText = isOperator
-			? 'Операторский контур может принимать команды через отдельный бот.'
-			: 'Администраторы компаний могут создавать новые invite-ссылки и QR-коды для подключения мерчантов.';
-		var blockedTitle = isOperator ? 'Операторский Telegram-бот сейчас заблокирован.' : 'Создание Telegram invite-ссылок заблокировано.';
-		var blockedDefault = isOperator
-			? 'Чтобы включить операторский контур, заполните имя и токен бота в этом разделе.'
-			: 'Чтобы включить приглашения мерчантов, заполните имя бота и токен бота в этом разделе.';
+		var meta = telegramContextMeta(status.context);
+		var context = normalizeTelegramContext(status.context);
+		var ready = !!status[meta.readyFlag];
 
 		if (ready) {
 			return '' +
 				'<div class="alert alert-success bordered m-b-15">' +
-					'<strong>' + escapeHtml(readyTitle) + '</strong><br>' +
+					'<strong>' + escapeHtml(meta.readyTitle) + '</strong><br>' +
 					(status.bot_handle ? 'Бот: ' + escapeHtml(status.bot_handle) + '. ' : '') +
-					escapeHtml(readyText) +
+					escapeHtml(meta.readyText) +
 				'</div>';
 		}
 
 		if (status.is_configured) {
-			var warningTitle = isOperator
-				? 'Callback операторского бота не подключён.'
-				: 'Callback мерчантского бота не подключён.';
 			var warningHtml = '' +
 				'<div class="alert alert-warning bordered m-b-15">' +
-					'<strong>' + escapeHtml(warningTitle) + '</strong><br>' +
+					'<strong>' + escapeHtml(meta.warningTitle) + '</strong><br>' +
 					escapeHtml(status.blocked_reason || 'Нажмите «Подключить callback», чтобы зарегистрировать webhook для этой компании.');
-			if (!isOperator) {
+			if (context === 'merchant') {
 				warningHtml += '<div class="m-t-10">Это не статус мерчантов: уже созданные мерчанты и их активность в таблице не меняются. Ограничено только создание новых Telegram invite-ссылок.</div>';
 			}
 			if (status.webhook_last_error) {
@@ -1204,8 +1332,8 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 
 		var dangerHtml = '' +
 			'<div class="alert alert-danger bordered m-b-15">' +
-				'<strong>' + escapeHtml(blockedTitle) + '</strong><br>' +
-				escapeHtml(status.blocked_reason || blockedDefault);
+				'<strong>' + escapeHtml(meta.blockedTitle) + '</strong><br>' +
+				escapeHtml(status.blocked_reason || meta.blockedDefault);
 		if (missingLabels.length) {
 			dangerHtml += '<div class="m-t-10"><div class="bold fs-12">Что нужно исправить:</div><ul class="m-b-0 p-l-20"><li>' + escapeHtml(missingLabels.join(', ')) + '</li></ul></div>';
 		}
@@ -1215,15 +1343,14 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 
 	function renderTelegramStatusLine(status) {
 		var context = normalizeTelegramContext(status.context);
-		var ready = context === 'operator' ? status.operator_ready : status.invite_ready;
-		var label = context === 'operator' ? 'Операторский бот' : 'Мерчантский бот';
+		var meta = telegramContextMeta(context);
+		var ready = !!status[meta.readyFlag];
+		var label = meta.label;
 		var hasDuplicates = (status.duplicate_fields || []).length > 0;
 		var hasUnsaved = !!status.has_unsaved_changes;
 		var text = '';
 		if (ready) {
-			text = context === 'operator'
-				? '<strong>' + label + ': callback зарегистрирован.</strong> Бот готов принимать команды.'
-				: '<strong>' + label + ': callback зарегистрирован.</strong> Можно создавать новые Telegram invite-ссылки.';
+			text = meta.statusReady;
 			if (status.webhook_connected_at) {
 				text += ' Подключено: ' + escapeHtml(status.webhook_connected_at) + '.';
 			}
@@ -1234,9 +1361,7 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 		} else if (hasUnsaved) {
 			text = '<strong>' + label + ': есть несохранённые изменения.</strong> Сначала сохраните настройки, затем подключите callback.';
 		} else if (status.is_configured) {
-			text = context === 'operator'
-				? '<strong>' + label + ': данные сохранены.</strong> Осталось нажать «Подключить callback».'
-				: '<strong>' + label + ': данные сохранены.</strong> Новые Telegram invite-ссылки станут доступны после подключения callback.';
+			text = meta.statusSaved;
 		}
 		if (status.webhook_lock) {
 			text += ' Блок зафиксирован; для правок нажмите «Разблокировать редактирование».';
@@ -1252,26 +1377,42 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 
 	function collectTelegramDuplicate(context) {
 		context = normalizeTelegramContext(context);
-		var otherContext = oppositeTelegramContext(context);
 		var username = getCurrentTelegramUsername(context);
 		var token = getCurrentTelegramToken(context);
-		var otherUsername = getCurrentTelegramUsername(otherContext);
-		var otherToken = getCurrentTelegramToken(otherContext);
 		var fields = [];
-		var otherLabel = otherContext === 'operator' ? 'Операторский бот' : 'Мерчантский бот';
+		var fieldMap = {};
+		var matchingLabels = [];
 
-		if (token && otherToken && token === otherToken) {
-			fields.push({ id: 'telegram_' + context + '_bot_token', label: 'Токен бота' });
-		}
-		if (username && otherUsername && username.toLowerCase() === otherUsername.toLowerCase()) {
-			fields.push({ id: 'telegram_' + context + '_bot_username', label: 'Имя бота' });
-		}
+		$.each(TELEGRAM_STATUSES, function (otherContext) {
+			otherContext = normalizeTelegramContext(otherContext);
+			if (otherContext === context) {
+				return;
+			}
+			var otherUsername = getCurrentTelegramUsername(otherContext);
+			var otherToken = getCurrentTelegramToken(otherContext);
+			var matchedHere = false;
+
+			if (token && otherToken && token === otherToken) {
+				fieldMap.bot_token = { id: 'telegram_' + context + '_bot_token', label: 'Токен бота' };
+				matchedHere = true;
+			}
+			if (username && otherUsername && username.toLowerCase() === otherUsername.toLowerCase()) {
+				fieldMap.bot_username = { id: 'telegram_' + context + '_bot_username', label: 'Имя бота' };
+				matchedHere = true;
+			}
+
+			if (matchedHere) {
+				matchingLabels.push(telegramContextMeta(otherContext).label);
+			}
+		});
+
+		fields = $.map(fieldMap, function (item) { return item; });
 
 		return {
 			has_duplicate: fields.length > 0,
 			fields: fields,
 			message: fields.length
-				? 'Нельзя использовать одного Telegram-бота в двух контурах. Измените токен или username: совпадение найдено в блоке «' + otherLabel + '».'
+				? 'Нельзя использовать одного Telegram-бота в двух контурах. Измените токен или username: совпадение найдено в блоке ' + $.map(matchingLabels, function (label) { return '«' + label + '»'; }).join(', ') + '.'
 				: ''
 		};
 	}
@@ -1301,32 +1442,22 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 		status.has_unsaved_changes = hasUnsaved;
 		status.is_configured = !missing.length;
 		status.bot_handle = username ? '@' + username : '';
+		status.invite_ready = false;
+		status.operator_ready = false;
+		status.service_ready = false;
+		var meta = telegramContextMeta(context);
 
 		if (duplicate.has_duplicate) {
-			status.invite_ready = false;
-			status.operator_ready = false;
 			status.blocked_reason = duplicate.message;
 		} else if (!status.is_configured) {
-			status.invite_ready = false;
-			status.operator_ready = false;
-			status.blocked_reason = context === 'operator'
-				? 'Чтобы включить операторский бот, заполните имя и токен операторского бота.'
-				: 'Чтобы включить приглашения мерчантов, заполните имя бота и токен бота.';
+			status.blocked_reason = meta.blockedDefault;
 		} else if (hasUnsaved) {
-			status.invite_ready = false;
-			status.operator_ready = false;
 			status.blocked_reason = 'Сначала сохраните изменения, затем подключите callback.';
 		} else if (!status.webhook_ready) {
-			status.invite_ready = false;
-			status.operator_ready = false;
 			status.blocked_reason = 'Бот ещё не подключён к callback. Сначала нажмите «Подключить callback».';
 		} else {
 			status.blocked_reason = '';
-			if (context === 'operator') {
-				status.operator_ready = true;
-			} else {
-				status.invite_ready = true;
-			}
+			status[meta.readyFlag] = true;
 		}
 
 		return status;
@@ -1542,15 +1673,20 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 		$('#fintech-kanyon-form'),
 		$('#settings-alert'),
 		function () {
-			return {
+			var payload = {
 				section:                         'fintech_kanyon',
 				fintech_pay2day_login:           $('#fintech_pay2day_login').val(),
 				fintech_pay2day_password:        $('#fintech_pay2day_password').val(),
 				fintech_pay2day_tsp_id:          $('#fintech_pay2day_tsp_id').val(),
 				fintech_pay2day_order_currency:  $('#fintech_pay2day_order_currency').val(),
+				fintech_pay2day_default_payment_purpose: $('#fintech_pay2day_default_payment_purpose').val(),
 				fintech_kanyon_verify_signature: $('#fintech_kanyon_verify_signature').is(':checked') ? '1' : '0',
 				fintech_kanyon_public_key_pem:   $('#fintech_kanyon_public_key_pem').val(),
 			};
+			if (isRubPay2DayOrderCurrency() && $('#fintech_kanyon_rapira_markup_percent').length) {
+				payload.fintech_kanyon_rapira_markup_percent = $('#fintech_kanyon_rapira_markup_percent').val();
+			}
+			return payload;
 		},
 		'Сохранить Kanyon'
 	);
@@ -1575,6 +1711,11 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 		$('#kanyon-pubkey-row').toggle(this.checked);
 		renderFintechStatus(collectFintechStatus());
 	});
+
+	$('#fintech_pay2day_order_currency').on('input change', function () {
+		syncKanyonRapiraMarkupVisibility();
+	});
+	syncKanyonRapiraMarkupVisibility();
 
 	function executeTelegramCallbackConnect($btn, telegramContext) {
 		$btn.prop('disabled', true).text('Подключаем…');
@@ -1625,7 +1766,7 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 		}
 		var savedUsername = getSavedTelegramUsername(telegramContext);
 		var savedToken = getSavedTelegramToken(telegramContext);
-		var label = telegramContext === 'operator' ? 'операторского бота' : 'мерчантского бота';
+		var label = telegramContextMeta(telegramContext).connectLabel;
 		if (!savedUsername || !savedToken) {
 			var missingSavedMessage = 'Сначала сохраните имя и токен Telegram-бота, затем подключите callback.';
 			renderTelegramStatus(collectTelegramDraftStatus(telegramContext));

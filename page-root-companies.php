@@ -22,47 +22,29 @@ if ( ! crm_can_manage_users() ) {
 	exit;
 }
 
-$all_companies_full         = crm_get_all_companies_full();
-$company_fintech_access_map = [];
+$all_companies_full          = crm_get_all_companies_full();
+$company_fintech_access_map  = [];
+$company_exchange_pairs_map  = [];
+$company_rub_usdt_fixation_map = [];
 foreach ( $all_companies_full as $company ) {
 	$company_id = (int) $company->id;
-	$company_fintech_access_map[ $company_id ] = crm_fintech_get_allowed_providers( $company_id );
+	$company_fintech_access_map[ $company_id ] = crm_company_get_enabled_fintech_providers( $company_id );
+	$company_exchange_pairs_map[ $company_id ] = crm_company_get_enabled_exchange_pairs( $company_id );
+	$company_rub_usdt_fixation_map[ $company_id ] = function_exists( 'crm_company_get_rub_usdt_fixation_mode' )
+		? crm_company_get_rub_usdt_fixation_mode( $company_id )
+		: 'rapira_manual';
 }
 
 $nonce_create_company   = wp_create_nonce( 'me_create_company' );
-$nonce_company_settings = wp_create_nonce( 'me_company_fintech_access_save' );
+$nonce_company_settings = wp_create_nonce( 'me_company_contours_save' );
 $nonce_company_status   = wp_create_nonce( 'me_company_status' );
-
-if ( ! function_exists( 'me_users_render_company_provider_badges_html' ) ) {
-	function me_users_render_company_provider_badges_html( array $providers ): string {
-		$providers = crm_fintech_normalize_allowed_providers( $providers );
-
-		ob_start();
-		if ( empty( $providers ) ) :
-			?>
-			<span class="badge badge-secondary m-r-2">Контуры отключены</span>
-			<?php
-		else :
-			foreach ( $providers as $provider ) :
-				$badge_class = $provider === 'doverka' ? 'badge-info' : 'badge-primary';
-				?>
-				<span class="badge <?php echo esc_attr( $badge_class ); ?> m-r-2">
-					<?php echo esc_html( crm_fintech_provider_label( $provider ) ); ?>
-				</span>
-				<?php
-			endforeach;
-		endif;
-
-		return (string) ob_get_clean();
-	}
-}
 
 get_template_part(
 	'template-parts/root-page-start',
 	null,
 	[
 		'title'       => 'Компании',
-		'description' => 'Root-only контур компаний, создание новых компаний и управление доступными платёжными провайдерами.',
+		'description' => 'Root-only контур компаний: создание новых компаний и управление направлениями обмена и платёжными контурами.',
 		'breadcrumbs' => [
 			[
 				'label'  => 'Компании',
@@ -125,7 +107,9 @@ get_template_part(
 						<?php foreach ( $all_companies_full as $company ) : ?>
 							<?php
 							$company_id        = (int) $company->id;
-							$allowed_providers = $company_fintech_access_map[ $company_id ] ?? crm_fintech_default_allowed_providers();
+							$enabled_pairs     = $company_exchange_pairs_map[ $company_id ] ?? [];
+							$allowed_providers = $company_fintech_access_map[ $company_id ] ?? crm_company_get_enabled_fintech_providers( $company_id );
+							$rub_usdt_fixation_mode = $company_rub_usdt_fixation_map[ $company_id ] ?? 'rapira_manual';
 							$company_status    = (string) $company->status;
 							$status_label      = crm_company_status_label( $company_status );
 							$status_badge      = crm_company_status_badge_class( $company_status );
@@ -140,8 +124,13 @@ get_template_part(
 										<span class="semi-bold"><?php echo esc_html( $company->name ); ?></span>
 										<small class="hint-text m-l-5 fs-11"><?php echo esc_html( $company->code ); ?></small>
 									</div>
+									<div class="m-t-5" id="company-exchange-pairs-<?php echo $company_id; ?>">
+										<span class="hint-text fs-11 m-r-5">Обмен:</span>
+										<?php echo crm_company_render_exchange_pair_badges_html( $enabled_pairs ); ?>
+									</div>
 									<div class="m-t-5" id="company-providers-<?php echo $company_id; ?>">
-										<?php echo me_users_render_company_provider_badges_html( $allowed_providers ); ?>
+										<span class="hint-text fs-11 m-r-5">Платежи:</span>
+										<?php echo crm_company_render_fintech_provider_badges_html( $allowed_providers ); ?>
 									</div>
 								</td>
 								<td class="v-align-middle" id="company-status-<?php echo $company_id; ?>">
@@ -177,7 +166,9 @@ get_template_part(
 												   data-company-name="<?php echo esc_attr( $company->name ); ?>"
 												   data-company-code="<?php echo esc_attr( $company->code ); ?>"
 												   data-company-status="<?php echo esc_attr( $company_status ); ?>"
+												   data-enabled-exchange-pairs="<?php echo esc_attr( implode( ',', $enabled_pairs ) ); ?>"
 												   data-allowed-providers="<?php echo esc_attr( implode( ',', $allowed_providers ) ); ?>"
+												   data-rub-usdt-fixation-mode="<?php echo esc_attr( $rub_usdt_fixation_mode ); ?>"
 												   data-bs-toggle="modal"
 												   data-bs-target="#modal-company-settings">
 													<i class="pg-icon m-r-5">settings</i> Настройки
@@ -265,91 +256,7 @@ get_template_part(
 	</div>
 </div>
 
-<div class="modal fade" id="modal-company-settings" tabindex="-1"
-     aria-labelledby="modal-company-settings-title" aria-hidden="true">
-	<div class="modal-dialog modal-lg">
-		<div class="modal-content">
-			<div class="modal-header clearfix text-left">
-				<button aria-label="Закрыть" type="button" class="close" data-bs-dismiss="modal" aria-hidden="true">
-					<i class="pg-icon">close</i>
-				</button>
-				<h5 class="modal-title" id="modal-company-settings-title">Настройки компании</h5>
-				<p class="p-b-10 m-b-0">
-					Root определяет, какие платёжные контуры компания видит в настройках и через какие ей разрешено создавать новые ордера.
-				</p>
-			</div>
-			<div class="modal-body">
-				<form id="form-company-settings" novalidate>
-					<input type="hidden" id="cfs-company-id" value="0">
-
-					<div class="form-group-attached">
-						<div class="row">
-							<div class="col-md-8">
-								<div class="form-group form-group-default">
-									<label>Компания</label>
-									<input type="text" class="form-control" id="cfs-company-name" value="" readonly>
-								</div>
-							</div>
-							<div class="col-md-4">
-								<div class="form-group form-group-default">
-									<label>ID / код</label>
-									<input type="text" class="form-control" id="cfs-company-code" value="" readonly>
-								</div>
-							</div>
-						</div>
-
-						<div class="row">
-							<div class="col-12">
-								<div class="form-group form-group-default">
-									<label>Доступные платёжные контуры</label>
-									<p class="hint-text small m-b-0">
-										Секция сделана расширяемой: позже сюда можно будет добавить и другие настройки компании.
-									</p>
-								</div>
-							</div>
-						</div>
-
-						<div class="row">
-							<div class="col-md-6">
-								<div class="form-group form-group-default">
-									<label>Kanyon (Pay2Day)</label>
-									<div class="form-check complete m-t-5">
-										<input type="checkbox" id="cfs-provider-kanyon" class="js-company-provider" value="kanyon">
-										<label for="cfs-provider-kanyon">Разрешить компании</label>
-									</div>
-									<p class="hint-text small m-b-0">
-										Логин, пароль и создание новых ордеров через Kanyon / Pay2Day.
-									</p>
-								</div>
-							</div>
-							<div class="col-md-6">
-								<div class="form-group form-group-default">
-									<label>Doverka</label>
-									<div class="form-check complete m-t-5">
-										<input type="checkbox" id="cfs-provider-doverka" class="js-company-provider" value="doverka">
-										<label for="cfs-provider-doverka">Разрешить компании</label>
-									</div>
-									<p class="hint-text small m-b-0">
-										API-ключ Doverka, выбор Doverka как активного провайдера и создание новых ордеров.
-									</p>
-								</div>
-							</div>
-						</div>
-					</div>
-
-					<div class="alert alert-danger d-none m-t-10" id="cfs-error"></div>
-				</form>
-			</div>
-			<div class="modal-footer">
-				<button type="button" class="btn btn-default" data-bs-dismiss="modal">Отмена</button>
-				<button type="button" class="btn btn-primary" id="btn-save-company-settings">
-					<span class="btn-label">Сохранить</span>
-					<i class="pg-icon spin d-none" id="btn-company-settings-spinner">refresh</i>
-				</button>
-			</div>
-		</div>
-	</div>
-</div>
+<?php get_template_part( 'template-parts/root-company-settings-modal' ); ?>
 
 <div class="modal fade" id="modal-company-status" tabindex="-1"
      aria-labelledby="modal-company-status-title" aria-hidden="true">
@@ -425,6 +332,7 @@ add_action(
 		companyStatus: '<?php echo esc_js( $nonce_company_status ); ?>'
 	};
 	var FINTECH_PROVIDER_LABELS = <?php echo crm_json_for_inline_js( crm_fintech_provider_labels() ); ?>;
+	var EXCHANGE_PAIR_TITLES = <?php echo crm_json_for_inline_js( array_column( crm_company_exchange_pair_definitions(), 'title', 'code' ) ); ?>;
 	var $companySettingsModal = $('#modal-company-settings');
 	var $createCompanyModal = $('#modal-create-company');
 	var $companyStatusModal = $('#modal-company-status');
@@ -459,12 +367,46 @@ add_action(
 		return normalized;
 	}
 
+	function normalizePairCodes(pairs) {
+		var seen = {};
+		var normalized = [];
+
+		$.each(pairs || [], function (_, pair) {
+			var code = $.trim(String(pair || '')).toUpperCase();
+			if (code === 'THB_RUB') {
+				code = 'RUB_THB';
+			}
+			if (!code || seen[code] || !EXCHANGE_PAIR_TITLES[code]) {
+				return;
+			}
+			seen[code] = true;
+			normalized.push(code);
+		});
+
+		return normalized;
+	}
+
+	function renderCompanyExchangePairBadges(pairs) {
+		var normalized = normalizePairCodes(pairs);
+		var html = '';
+
+		if (!normalized.length) {
+			return '<span class="badge badge-secondary m-r-2">Направления выключены</span>';
+		}
+
+		$.each(normalized, function (_, code) {
+			html += '<span class="badge badge-success m-r-2">' + escapeHtml(EXCHANGE_PAIR_TITLES[code] || code) + '</span>';
+		});
+
+		return html;
+	}
+
 	function renderCompanyProviderBadges(providers) {
 		var normalized = normalizeProviderCodes(providers);
 		var html = '';
 
 		if (!normalized.length) {
-			return '<span class="badge badge-secondary m-r-2">Контуры отключены</span>';
+			return '<span class="badge badge-secondary m-r-2">Платёжные контуры отключены</span>';
 		}
 
 		$.each(normalized, function (_, provider) {
@@ -537,7 +479,9 @@ add_action(
 			+ ' data-company-name="' + escapeHtml(company.name) + '"'
 			+ ' data-company-code="' + escapeHtml(company.code) + '"'
 			+ ' data-company-status="' + escapeHtml(status) + '"'
+			+ ' data-enabled-exchange-pairs="' + escapeHtml((company.enabled_exchange_pairs || []).join(',')) + '"'
 			+ ' data-allowed-providers="' + escapeHtml((company.allowed_providers || []).join(',')) + '"'
+			+ ' data-rub-usdt-fixation-mode="' + escapeHtml(company.rub_usdt_fixation_mode || 'rapira_manual') + '"'
 			+ ' data-bs-toggle="modal"'
 			+ ' data-bs-target="#modal-company-settings">'
 			+ '<i class="pg-icon m-r-5">settings</i> Настройки'
@@ -564,6 +508,13 @@ add_action(
 		return normalizeProviderCodes(String(rawValue).split(','));
 	}
 
+	function parseCompanyPairsAttr(rawValue) {
+		if (!rawValue) {
+			return [];
+		}
+		return normalizePairCodes(String(rawValue).split(','));
+	}
+
 	function getCompanyFromRow(companyId) {
 		var $settings = $('#corow-' + companyId).find('.js-company-settings');
 
@@ -572,7 +523,9 @@ add_action(
 			name: $settings.attr('data-company-name') || '',
 			code: $settings.attr('data-company-code') || '',
 			status: $settings.attr('data-company-status') || 'active',
+			enabled_exchange_pairs: parseCompanyPairsAttr($settings.attr('data-enabled-exchange-pairs')),
 			allowed_providers: parseCompanyProvidersAttr($settings.attr('data-allowed-providers')),
+			rub_usdt_fixation_mode: $settings.attr('data-rub-usdt-fixation-mode') || 'rapira_manual',
 			block_reason: ''
 		};
 	}
@@ -607,7 +560,9 @@ add_action(
 		$('#cfs-company-name').val('');
 		$('#cfs-company-code').val('');
 		$('#cfs-error').addClass('d-none').text('');
+		$('.js-company-pair').prop('checked', false);
 		$('.js-company-provider').prop('checked', false);
+		$('#cfs-rub-usdt-fixation-mode').val('rapira_manual');
 		$('#btn-save-company-settings').prop('disabled', false)
 			.find('.btn-label').show()
 			.end().find('#btn-company-settings-spinner').addClass('d-none');
@@ -635,22 +590,34 @@ add_action(
 		var companyId = parseInt($trigger.attr('data-company-id'), 10) || 0;
 		var companyName = $trigger.attr('data-company-name') || '—';
 		var companyCode = $trigger.attr('data-company-code') || '—';
+		var pairs = parseCompanyPairsAttr($trigger.attr('data-enabled-exchange-pairs'));
 		var providers = parseCompanyProvidersAttr($trigger.attr('data-allowed-providers'));
+		var rubUsdtFixationMode = $trigger.attr('data-rub-usdt-fixation-mode') || 'rapira_manual';
 
 		$('#cfs-company-id').val(companyId);
 		$('#modal-company-settings-title').text('Настройки: ' + companyName);
 		$('#cfs-company-name').val(companyName);
 		$('#cfs-company-code').val('#' + companyId + ' · ' + companyCode);
+		$('.js-company-pair').each(function () {
+			$(this).prop('checked', pairs.indexOf($(this).val()) !== -1);
+		});
 		$('.js-company-provider').each(function () {
 			$(this).prop('checked', providers.indexOf($(this).val()) !== -1);
 		});
+		$('#cfs-rub-usdt-fixation-mode').val(rubUsdtFixationMode);
 		$('#cfs-error').addClass('d-none').text('');
 	});
 
 	$('#btn-save-company-settings').on('click', function () {
 		var $btn = $(this);
 		var companyId = parseInt($('#cfs-company-id').val(), 10) || 0;
+		var pairs = [];
 		var providers = [];
+		var rubUsdtFixationMode = $('#cfs-rub-usdt-fixation-mode').val() || 'rapira_manual';
+
+		$('.js-company-pair:checked').each(function () {
+			pairs.push($(this).val());
+		});
 
 		$('.js-company-provider:checked').each(function () {
 			providers.push($(this).val());
@@ -662,10 +629,12 @@ add_action(
 			.end().find('#btn-company-settings-spinner').removeClass('d-none');
 
 		$.post(AJAX_URL, {
-			action: 'me_company_fintech_access_save',
+			action: 'me_company_contours_save',
 			nonce: NONCES.companySettings,
 			company_id: companyId,
-			providers: providers
+			exchange_pairs: pairs,
+			providers: providers,
+			rub_usdt_fixation_mode: rubUsdtFixationMode
 		})
 		.done(function (res) {
 			if (!res || !res.success) {
@@ -676,11 +645,16 @@ add_action(
 				return;
 			}
 
+			var pairList = normalizePairCodes(res.data.enabled_exchange_pairs || []);
 			var providerList = normalizeProviderCodes(res.data.allowed_providers || []);
+			var pairAttr = pairList.join(',');
 			var providerAttr = providerList.join(',');
 			var $row = $('#corow-' + companyId);
+			$row.find('.js-company-settings').attr('data-enabled-exchange-pairs', pairAttr);
 			$row.find('.js-company-settings').attr('data-allowed-providers', providerAttr);
-			$('#company-providers-' + companyId).html(renderCompanyProviderBadges(providerList));
+			$row.find('.js-company-settings').attr('data-rub-usdt-fixation-mode', res.data.rub_usdt_fixation_mode || 'rapira_manual');
+			$('#company-exchange-pairs-' + companyId).html('<span class="hint-text fs-11 m-r-5">Обмен:</span>' + renderCompanyExchangePairBadges(pairList));
+			$('#company-providers-' + companyId).html('<span class="hint-text fs-11 m-r-5">Платежи:</span>' + renderCompanyProviderBadges(providerList));
 			showToast(res.data.message || 'Настройки компании сохранены.', 'success');
 			bootstrap.Modal.getInstance($companySettingsModal[0]).hide();
 		})
@@ -810,11 +784,12 @@ add_action(
 
 			var company = res.data.company || {};
 			var $tbody = $('#companies-tbody');
+			var exchangeBadges = renderCompanyExchangePairBadges(company.enabled_exchange_pairs || []);
 			var providerBadges = renderCompanyProviderBadges(company.allowed_providers || []);
 			var rowHtml = ''
 				+ '<tr id="corow-' + company.id + '">'
 				+ '<td class="v-align-middle"><span class="hint-text fs-12">#' + company.id + '</span></td>'
-				+ '<td class="v-align-middle"><div><span class="semi-bold">' + escapeHtml(company.name) + '</span> <small class="hint-text m-l-5 fs-11">' + escapeHtml(company.code) + '</small></div><div class="m-t-5" id="company-providers-' + company.id + '">' + providerBadges + '</div></td>'
+				+ '<td class="v-align-middle"><div><span class="semi-bold">' + escapeHtml(company.name) + '</span> <small class="hint-text m-l-5 fs-11">' + escapeHtml(company.code) + '</small></div><div class="m-t-5" id="company-exchange-pairs-' + company.id + '"><span class="hint-text fs-11 m-r-5">Обмен:</span>' + exchangeBadges + '</div><div class="m-t-5" id="company-providers-' + company.id + '"><span class="hint-text fs-11 m-r-5">Платежи:</span>' + providerBadges + '</div></td>'
 				+ '<td class="v-align-middle" id="company-status-' + company.id + '">' + renderCompanyStatusCell(company) + '</td>'
 				+ '<td class="v-align-middle hint-text fs-12">0</td>'
 				+ '<td class="v-align-middle hint-text fs-12">' + escapeHtml(company.phone || '—') + '</td>'

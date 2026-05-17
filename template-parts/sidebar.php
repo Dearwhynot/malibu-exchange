@@ -164,6 +164,22 @@ $root_fintech_providers_url = home_url('/root-fintech-providers/');
                 <span class="icon-thumbnail"><i class="pg-icon">card</i></span>
             </li>
             <?php endif; ?>
+            <?php if ( function_exists('crm_can_access') && crm_can_access('merchant_payouts.view') ) : ?>
+            <li class="">
+                <a href="<?php echo esc_url(home_url('/merchant-payouts/')); ?>">
+                    <span class="title">Выплаты мерчантам</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">card</i></span>
+            </li>
+            <?php endif; ?>
+            <?php if ( function_exists('crm_can_access') && crm_can_access('company_withdrawals.view') ) : ?>
+            <li class="">
+                <a href="<?php echo esc_url(home_url('/company-withdrawals/')); ?>">
+                    <span class="title">Выводы компании</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">card</i></span>
+            </li>
+            <?php endif; ?>
             <li class="">
                 <a href="<?php echo esc_url(home_url('/users/')); ?>">
                     <span class="title">Пользователи</span>

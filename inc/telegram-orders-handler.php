@@ -4,12 +4,12 @@
  *
  * Реализует project-хуки для telegram-callback-universal.php:
  *   tg_project_handle_orders_action() — кнопки меню: orders_new, orders_open, etc.
- *   tg_project_handle_message()       — приём суммы USDT при создании ордера
+ *   tg_project_handle_message()       — приём суммы при создании ордера
  *   kanyon_handle_paid()              — кнопка «Оплачено» под чеком
  *   kanyon_handle_cancel()            — кнопка «Отмена» под чеком
  *
  * Состояния хранятся в WP-транзиентах: tg_order_state_{chat_id}
- * Структура: [ 'step' => 'waiting_amount' ]
+ * Структура: [ 'step' => 'waiting_amount', 'amount_mode' => 'usdt|rub', 'payment_purpose' => '...' ]
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -29,6 +29,71 @@ function _tg_orders_get_state( string $chat_id ): ?array {
 
 function _tg_orders_clear_state( string $chat_id ): void {
 	delete_transient( 'tg_order_state_' . $chat_id );
+}
+
+function _tg_orders_runtime_context(): array {
+	$company_id = function_exists( 'crm_telegram_get_callback_company_id' )
+		? (int) crm_telegram_get_callback_company_id()
+		: 0;
+
+	$bot_context = function_exists( 'crm_telegram_get_callback_bot_context' )
+		? (string) crm_telegram_get_callback_bot_context()
+		: 'merchant';
+
+	$source_map = [
+		'merchant' => 'telegram_merchant',
+		'operator' => 'telegram_operator',
+		'service'  => 'telegram_service',
+	];
+
+	return [
+		'company_id'     => $company_id,
+		'bot_context'    => $bot_context,
+		'source_channel' => $source_map[ $bot_context ] ?? 'telegram',
+	];
+}
+
+function _tg_orders_company_input_mode( int $company_id ): string {
+	if ( $company_id <= 0 || ! function_exists( 'crm_fintech_company_create_order_input_mode' ) ) {
+		return 'usdt';
+	}
+
+	$mode = (string) crm_fintech_company_create_order_input_mode( $company_id );
+
+	return $mode === 'rub' ? 'rub' : 'usdt';
+}
+
+function _tg_orders_default_payment_purpose( int $company_id ): string {
+	if ( $company_id <= 0 || ! function_exists( 'crm_fintech_get_pay2day_default_payment_purpose' ) ) {
+		return '';
+	}
+
+	return crm_fintech_get_pay2day_default_payment_purpose( $company_id );
+}
+
+function _tg_orders_waiting_amount_prompt( array $state ): string {
+	$amount_mode      = (string) ( $state['amount_mode'] ?? 'usdt' );
+	$payment_purpose  = function_exists( 'crm_fintech_normalize_payment_purpose' )
+		? crm_fintech_normalize_payment_purpose( (string) ( $state['payment_purpose'] ?? '' ) )
+		: sanitize_text_field( (string) ( $state['payment_purpose'] ?? '' ) );
+	$is_rub_mode      = $amount_mode === 'rub';
+	$amount_currency  = $is_rub_mode ? 'RUB' : 'USDT';
+	$amount_example   = $is_rub_mode ? '30000' : '150.50';
+	$calculation_hint = $is_rub_mode
+		? "Сумма к оплате вводится в RUB.\nИтоговая сумма в USDT будет рассчитана провайдером."
+		: "Сумма ордера вводится в USDT.\nКонвертация в RUB производится провайдером.";
+
+	$text  = "💰 <b>Новый ордер</b>\n\n";
+	$text .= $calculation_hint . "\n\n";
+	$text .= 'Введите сумму в ' . $amount_currency . ":\n";
+	$text .= '<i>Например: ' . $amount_example . '</i>';
+
+	if ( $payment_purpose !== '' ) {
+		$text .= "\n\n📝 <b>Назначение платежа</b>\n";
+		$text .= '<code>' . htmlspecialchars( $payment_purpose, ENT_QUOTES ) . '</code>';
+	}
+
+	return $text;
 }
 
 // ─── QR photo sending ─────────────────────────────────────────────────────────
@@ -72,33 +137,61 @@ function _tg_orders_format_rub( float $amount ): string {
  * Только RUB, без USDT и провайдера.
  */
 function _tg_orders_success_message( array $result ): string {
-	$e   = "\n";
-	$rub = $result['payment_amount_rub'] !== null
-		? '<b>' . _tg_orders_format_rub( (float) $result['payment_amount_rub'] ) . '</b>'
-		: '<b>—</b>';
+	$amount_usdt   = isset( $result['amount_usdt'] ) ? (float) $result['amount_usdt'] : 0.0;
+	$payment_rub   = isset( $result['payment_amount_rub'] ) ? (float) $result['payment_amount_rub'] : 0.0;
+	$order_db_id   = isset( $result['order_db_id'] ) ? (int) $result['order_db_id'] : 0;
+	$receipt_id    = $order_db_id > 0 ? '#' . $order_db_id : (string) ( $result['merchant_order_id'] ?? '—' );
+	$rate_value    = ( $amount_usdt > 0 && $payment_rub > 0 ) ? round( $payment_rub / $amount_usdt, 4 ) : 0.0;
+	$payment_purpose = trim( (string) ( $result['payment_purpose'] ?? '' ) );
 
-	$merchant_id = htmlspecialchars( $result['merchant_order_id'] ?? '', ENT_QUOTES );
-	$date        = date_i18n( 'd.m.Y' );
+	$text = crm_tg_receipt_block(
+		[
+			[
+				'label' => 'FROM:',
+				'value' => $payment_rub > 0 ? crm_tg_receipt_format_amount( $payment_rub, 'RUB', 2, true ) : '—',
+			],
+			[
+				'label' => 'RATE:',
+				'value' => $rate_value > 0 ? crm_tg_receipt_format_number( $rate_value, 4, true ) : '—',
+			],
+			[
+				'label' => 'TO:',
+				'value' => $amount_usdt > 0 ? crm_tg_receipt_format_amount( $amount_usdt, 'USDT', 2, true ) : '—',
+			],
+		],
+		[
+			[
+				'label' => 'TIME:',
+				'value' => current_time( 'd.m.Y H:i' ),
+			],
+			[
+				'label' => 'ID:',
+				'value' => $receipt_id !== '' ? $receipt_id : '—',
+			],
+			[
+				'label' => 'STATUS:',
+				'value' => 'Calculated',
+			],
+			[
+				'label' => 'FEE:',
+				'value' => 'included',
+			],
+		],
+		[
+			'Thank you for choosing us',
+			'Always available for your operations',
+		]
+	);
 
-	$txt  = '🧾 <b>Счёт на оплату</b>' . $e . $e;
-	$txt .= 'К оплате:' . $e;
-	$txt .= $rub . $e . $e;
-	if ( ! empty( $result['qr_url'] ) ) {
-		$txt .= 'Отсканируйте QR-код камерой телефона' . $e;
-		$txt .= 'и переведите <b>точную сумму</b> по реквизитам.' . $e . $e;
-	} elseif ( ! empty( $result['payment_link'] ) ) {
-		$txt .= 'Перейдите по ссылке оплаты и переведите' . $e;
-		$txt .= '<b>точную сумму</b> по реквизитам.' . $e . $e;
-		$txt .= '<code>' . htmlspecialchars( (string) $result['payment_link'], ENT_QUOTES ) . '</code>' . $e . $e;
-	} else {
-		$txt .= 'Счёт уже создан у провайдера, но QR ещё готовится.' . $e;
-		$txt .= 'Проверьте статус повторно через несколько секунд.' . $e . $e;
+	if ( ! empty( $result['payment_link'] ) ) {
+		$text .= "\n\nPayment link:\n<code>" . htmlspecialchars( (string) $result['payment_link'], ENT_QUOTES ) . '</code>';
 	}
-	$txt .= '<code>───────────────────</code>' . $e;
-	$txt .= '📋 Заказ: <code>' . $merchant_id . '</code>' . $e;
-	$txt .= '📅 Дата: ' . $date . $e;
 
-	return $txt;
+	if ( $payment_purpose !== '' ) {
+		$text .= "\n\nPayment purpose:\n<code>" . htmlspecialchars( $payment_purpose, ENT_QUOTES ) . '</code>';
+	}
+
+	return $text;
 }
 
 // ─── Order list helpers ───────────────────────────────────────────────────────
@@ -106,16 +199,28 @@ function _tg_orders_success_message( array $result ): string {
 function _tg_orders_list_message( array $statuses, string $title ): string {
 	global $wpdb;
 
+	$runtime          = _tg_orders_runtime_context();
+	$company_id       = (int) ( $runtime['company_id'] ?? 0 );
+	$bot_context      = (string) ( $runtime['bot_context'] ?? 'merchant' );
+	$created_for_type = $bot_context === 'merchant' ? 'merchant' : 'company';
+
+	if ( $company_id <= 0 ) {
+		return $title . "\n\nКонтур бота не привязан к компании.";
+	}
+
 	$placeholders = implode( ', ', array_fill( 0, count( $statuses ), '%s' ) );
+	$params       = array_merge( [ $company_id, $created_for_type ], $statuses );
 
 	// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
 	$rows = $wpdb->get_results(
 		$wpdb->prepare(
 			"SELECT id, merchant_order_id, amount_asset_value, amount_asset_code, payment_amount_value, payment_currency_code, status_code, provider_code, created_at
 			 FROM crm_fintech_payment_orders
-			 WHERE status_code IN ($placeholders)
+			 WHERE company_id = %d
+			   AND created_for_type = %s
+			   AND status_code IN ($placeholders)
 			 ORDER BY id DESC LIMIT 15",
-			$statuses
+			$params
 		)
 	);
 	// phpcs:enable
@@ -157,15 +262,26 @@ function _tg_orders_list_message( array $statuses, string $title ): string {
 function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, string $intent ): void {
 	global $wpdb;
 
+	$runtime          = _tg_orders_runtime_context();
+	$company_id       = (int) ( $runtime['company_id'] ?? 0 );
+	$bot_context      = (string) ( $runtime['bot_context'] ?? 'merchant' );
+	$created_for_type = $bot_context === 'merchant' ? 'merchant' : 'company';
 	$order_db_id = (int) $db_id;
 	if ( $order_db_id <= 0 ) {
 		bot_send_message( $telegram, $chat_id, '⚠️ Неверный ID ордера.' );
 		return;
 	}
 
+	if ( $company_id <= 0 ) {
+		bot_send_message( $telegram, $chat_id, '⚠️ Бот не привязан к компании. Проверьте webhook компании.' );
+		return;
+	}
+
 	$order = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-		'SELECT * FROM `crm_fintech_payment_orders` WHERE `id` = %d',
-		$order_db_id
+		'SELECT * FROM `crm_fintech_payment_orders` WHERE `id` = %d AND `company_id` = %d AND `created_for_type` = %s',
+		$order_db_id,
+		$company_id,
+		$created_for_type
 	) );
 
 	if ( ! $order ) {
@@ -251,7 +367,6 @@ function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, str
 	];
 	bot_send_message( $telegram, $chat_id,
 		'⏳ Оплата ещё не поступила.' . $e
-		. '🔄 Статус: ' . strtoupper( $new_status ) . $e
 		. '📋 Заказ: <code>' . htmlspecialchars( $order->merchant_order_id, ENT_QUOTES ) . '</code>',
 		$keyboard
 	);
@@ -287,13 +402,32 @@ if ( ! function_exists( 'tg_project_handle_orders_action' ) ) {
 	function tg_project_handle_orders_action( string $callback_data, array $ctx, $telegram, array $data ): bool {
 		$chat_id  = $ctx['chat_id']  ?? '';
 		$actor_id = $ctx['actor_id'] ?? null;
+		$runtime  = _tg_orders_runtime_context();
+		$company_id = (int) ( $runtime['company_id'] ?? 0 );
+		$bot_context = (string) ( $runtime['bot_context'] ?? 'merchant' );
 
 		if ( ! $chat_id ) {
 			return false;
 		}
 
 		if ( $callback_data === 'orders_new' ) {
-			_tg_orders_set_state( $chat_id, [ 'step' => 'waiting_amount' ] );
+			if ( $company_id <= 0 ) {
+				bot_send_message( $telegram, $chat_id, '⚠️ Бот не привязан к компании. Проверьте webhook компании.' );
+				return true;
+			}
+
+			if ( $bot_context !== 'operator' ) {
+				bot_send_message( $telegram, $chat_id, '⚠️ Этот Telegram-контур не использует legacy-создание ордеров.' );
+				return true;
+			}
+
+			$state = [
+				'step'            => 'waiting_amount',
+				'amount_mode'     => _tg_orders_company_input_mode( $company_id ),
+				'payment_purpose' => _tg_orders_default_payment_purpose( $company_id ),
+			];
+
+			_tg_orders_set_state( $chat_id, $state );
 
 			$keyboard = [
 				'inline_keyboard' => [
@@ -301,10 +435,7 @@ if ( ! function_exists( 'tg_project_handle_orders_action' ) ) {
 				],
 			];
 
-			bot_send_message( $telegram, $chat_id,
-				"💰 <b>Новый ордер</b>\n\nВведите сумму в USDT:\n<i>Например: 150.50</i>",
-				$keyboard
-			);
+			bot_send_message( $telegram, $chat_id, _tg_orders_waiting_amount_prompt( $state ), $keyboard );
 
 			return true;
 		}
@@ -353,6 +484,10 @@ if ( ! function_exists( 'tg_project_handle_message' ) ) {
 	function tg_project_handle_message( string $text, array $ctx, $telegram, array $data ): bool {
 		$chat_id  = $ctx['chat_id']  ?? '';
 		$actor_id = $ctx['actor_id'] ?? null;
+		$runtime  = _tg_orders_runtime_context();
+		$company_id = (int) ( $runtime['company_id'] ?? 0 );
+		$bot_context = (string) ( $runtime['bot_context'] ?? 'merchant' );
+		$source_channel = (string) ( $runtime['source_channel'] ?? 'telegram' );
 
 		if ( ! $chat_id ) {
 			return false;
@@ -364,28 +499,60 @@ if ( ! function_exists( 'tg_project_handle_message' ) ) {
 			return false; // no state — let universal handle it
 		}
 
+		$amount_mode     = (string) ( $state['amount_mode'] ?? 'usdt' );
+		$payment_purpose = function_exists( 'crm_fintech_normalize_payment_purpose' )
+			? crm_fintech_normalize_payment_purpose( (string) ( $state['payment_purpose'] ?? '' ) )
+			: sanitize_text_field( (string) ( $state['payment_purpose'] ?? '' ) );
+
 		// Parse amount
 		$cleaned = trim( str_replace( ',', '.', $text ) );
 		$amount  = filter_var( $cleaned, FILTER_VALIDATE_FLOAT );
 
 		if ( $amount === false || $amount <= 0 ) {
 			bot_send_message( $telegram, $chat_id,
-				'⚠️ Некорректная сумма. Введите положительное число, например <code>150.50</code>'
+				$amount_mode === 'rub'
+					? '⚠️ Некорректная сумма. Введите положительное число в RUB, например <code>30000</code>.'
+					: '⚠️ Некорректная сумма. Введите положительное число в USDT, например <code>150.50</code>.'
 			);
 			return true; // handled (bad input)
+		}
+
+		if ( $company_id <= 0 ) {
+			_tg_orders_clear_state( $chat_id );
+			bot_send_message( $telegram, $chat_id, '❌ Бот не привязан к компании. Проверьте webhook компании.' );
+			return true;
+		}
+
+		if ( $bot_context !== 'operator' ) {
+			_tg_orders_clear_state( $chat_id );
+			bot_send_message( $telegram, $chat_id, '❌ Этот Telegram-контур пока не поддерживает legacy-создание ордеров.' );
+			return true;
 		}
 
 		_tg_orders_clear_state( $chat_id );
 
 		bot_send_message( $telegram, $chat_id, '⏳ Создаём ордер…' );
 
-		$result = crm_fintech_create_order(
-			$amount,
-			0,           // company_id — default
-			'telegram',
-			null,        // no WP user in bot context
-			'Telegram bot order'
-		);
+		$description = $payment_purpose !== '' ? $payment_purpose : 'Telegram bot order';
+
+		if ( $amount_mode === 'rub' ) {
+			$result = crm_fintech_create_order_by_payment_amount(
+				$amount,
+				'RUB',
+				$company_id,
+				$source_channel,
+				null,
+				$description
+			);
+		} else {
+			$result = crm_fintech_create_order(
+				$amount,
+				$company_id,
+				$source_channel,
+				null,        // no WP user in bot context
+				$description
+			);
+		}
 
 		if ( empty( $result['success'] ) ) {
 			$keyboard = [
@@ -403,6 +570,8 @@ if ( ! function_exists( 'tg_project_handle_message' ) ) {
 			return true;
 		}
 
+		$result['payment_purpose'] = $payment_purpose;
+
 		// Сохраняем tg_chat_id в meta_json ордера — нужно для cron-уведомлений
 		$order_db_id = (int) ( $result['order_db_id'] ?? 0 );
 		if ( $order_db_id > 0 ) {
@@ -411,8 +580,11 @@ if ( ! function_exists( 'tg_project_handle_message' ) ) {
 				'SELECT meta_json FROM `crm_fintech_payment_orders` WHERE id = %d',
 				$order_db_id
 			) );
-			$meta              = ( $raw_meta && $raw_meta !== 'null' ) ? (array) json_decode( $raw_meta, true ) : [];
-			$meta['tg_chat_id'] = $chat_id;
+			$meta                    = ( $raw_meta && $raw_meta !== 'null' ) ? (array) json_decode( $raw_meta, true ) : [];
+			$meta['tg_chat_id']      = $chat_id;
+			$meta['tg_bot_context']  = $bot_context;
+			$meta['tg_company_id']   = $company_id;
+			$meta['tg_source_channel'] = $source_channel;
 			$wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 				'crm_fintech_payment_orders',
 				[ 'meta_json' => wp_json_encode( $meta, JSON_UNESCAPED_UNICODE ) ],

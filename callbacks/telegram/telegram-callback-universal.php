@@ -293,6 +293,19 @@ if (!function_exists('tg_universal_is_user_authorized_for_start_menu')) {
         $actor_id = ($actor_id === null || $actor_id === '') ? null : strval($actor_id);
         $chat_id = ($chat_id === null || $chat_id === '') ? null : strval($chat_id);
 
+        if (
+            $chat_id !== null
+            && function_exists('crm_operator_tg_is_operator_context')
+            && function_exists('crm_operator_tg_is_linked_chat')
+            && function_exists('crm_telegram_get_callback_company_id')
+            && crm_operator_tg_is_operator_context()
+        ) {
+            $callback_company_id = (int) crm_telegram_get_callback_company_id();
+            if ($callback_company_id > 0 && crm_operator_tg_is_linked_chat($callback_company_id, $chat_id)) {
+                return true;
+            }
+        }
+
         if (defined('TG_DEBUG_ADMIN_CHAT_ID')) {
             $debug_admin_id = trim((string) TG_DEBUG_ADMIN_CHAT_ID);
             if (
@@ -1464,6 +1477,13 @@ if (!function_exists('tg_route_command')) {
         if (function_exists('crm_operator_tg_route_command')) {
             $operator_handled = (bool) crm_operator_tg_route_command($command, $text, $ctx, $telegram, $data);
             if ($operator_handled) {
+                return true;
+            }
+        }
+
+        if ($command !== '/start' && function_exists('crm_merchant_tg_route_command')) {
+            $merchant_handled = (bool) crm_merchant_tg_route_command($command, $text, $ctx, $telegram, $data);
+            if ($merchant_handled) {
                 return true;
             }
         }

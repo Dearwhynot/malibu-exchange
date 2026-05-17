@@ -41,6 +41,57 @@ function _me_merchants_validate_company( int $company_id ): ?object {
 	);
 }
 
+function _me_merchants_format_dt( ?string $dt, int $company_id ): string {
+	if ( $dt === null || $dt === '' ) {
+		return '';
+	}
+
+	$formatted = function_exists( 'crm_format_dt' )
+		? crm_format_dt( $dt, max( 0, $company_id ) )
+		: $dt;
+
+	return is_string( $formatted ) ? $formatted : '';
+}
+
+function _me_merchants_local_day_to_utc( string $date, bool $end_of_day, int $company_id ): ?string {
+	$date = trim( $date );
+	if ( $date === '' || ! strtotime( $date ) ) {
+		return null;
+	}
+
+	$time = $end_of_day ? '23:59:59' : '00:00:00';
+	$tz   = $company_id > 0 ? crm_get_timezone( $company_id ) : new DateTimeZone( 'UTC' );
+
+	try {
+		$dt = new DateTime( $date . ' ' . $time, $tz );
+		$dt->setTimezone( new DateTimeZone( 'UTC' ) );
+
+		return $dt->format( 'Y-m-d H:i:s' );
+	} catch ( Exception $e ) {
+		return null;
+	}
+}
+
+function _me_merchants_status_success_message( string $old_status, string $new_status ): string {
+	if ( $new_status === CRM_MERCHANT_STATUS_ACTIVE ) {
+		return 'Мерчант активирован.';
+	}
+
+	if ( $new_status === CRM_MERCHANT_STATUS_BLOCKED ) {
+		return 'Мерчант заблокирован.';
+	}
+
+	if ( $new_status === CRM_MERCHANT_STATUS_ARCHIVED ) {
+		if ( $old_status === CRM_MERCHANT_STATUS_PENDING ) {
+			return 'Запрос на активацию отменён.';
+		}
+
+		return 'Мерчант архивирован.';
+	}
+
+	return 'Статус обновлён.';
+}
+
 /**
  * Root может смотреть все компании на отдельной aggregate-странице merchants.
  * Обычный пользователь всегда ограничен своей компанией.
@@ -184,9 +235,11 @@ function _me_merchants_decode_prefill_json( $raw_value ): array {
 }
 
 function _me_merchants_prepare_invite_prefill_from_request(): array {
-	$markup_type = sanitize_key( wp_unslash( $_POST['base_markup_type'] ?? 'percent' ) );
+	$markup_type  = sanitize_key( wp_unslash( $_POST['base_markup_type'] ?? 'percent' ) );
+	$markup_basis = crm_merchant_normalize_markup_basis( sanitize_key( wp_unslash( $_POST['base_markup_basis'] ?? 'acquirer_cost' ) ) );
+	$rub_invoice_markup_mode = crm_merchant_normalize_rub_invoice_markup_mode( sanitize_key( wp_unslash( $_POST['rub_invoice_markup_mode'] ?? 'none' ) ) );
 	$markup_value = trim( (string) wp_unslash( $_POST['base_markup_value'] ?? '0' ) );
-	$note = sanitize_textarea_field( wp_unslash( $_POST['note'] ?? '' ) );
+	$note         = sanitize_textarea_field( wp_unslash( $_POST['note'] ?? '' ) );
 
 	if ( ! isset( crm_merchant_markup_types()[ $markup_type ] ) ) {
 		$markup_type = 'percent';
@@ -197,6 +250,8 @@ function _me_merchants_prepare_invite_prefill_from_request(): array {
 
 	return [
 		'base_markup_type'  => $markup_type,
+		'base_markup_basis' => $markup_basis,
+		'rub_invoice_markup_mode' => $rub_invoice_markup_mode,
 		'base_markup_value' => number_format( (float) $markup_value, 8, '.', '' ),
 		'note'              => $note !== '' ? $note : '',
 	];
@@ -204,6 +259,7 @@ function _me_merchants_prepare_invite_prefill_from_request(): array {
 
 function _me_merchants_format_invite_row( object $row ): array {
 	$status       = (string) $row->status;
+	$company_id   = (int) ( $row->company_id ?? 0 );
 	$prefill      = _me_merchants_decode_prefill_json( $row->prefill_json ?? '' );
 	$invite_url   = crm_build_merchant_invite_url_from_row( $row );
 	$qr_url       = $invite_url !== ''
@@ -224,6 +280,12 @@ function _me_merchants_format_invite_row( object $row ): array {
 		$ttl_minutes = max( 0, (int) round( ( $expires_at_ts - $created_at_ts ) / MINUTE_IN_SECONDS ) );
 	}
 
+	$markup_type   = (string) ( $prefill['base_markup_type'] ?? 'percent' );
+	$markup_basis  = crm_merchant_normalize_markup_basis( (string) ( $prefill['base_markup_basis'] ?? 'acquirer_cost' ) );
+	$rub_invoice_markup_mode = crm_merchant_normalize_rub_invoice_markup_mode( (string) ( $prefill['rub_invoice_markup_mode'] ?? 'none' ) );
+	$markup_value  = isset( $prefill['base_markup_value'] ) ? (float) $prefill['base_markup_value'] : 0.0;
+	$markup_label  = crm_merchant_markup_display_label( $markup_type, $markup_value, $markup_basis );
+
 	return [
 		'id'                    => (int) $row->id,
 		'merchant_id'           => ! empty( $row->merchant_id ) ? (int) $row->merchant_id : null,
@@ -238,38 +300,40 @@ function _me_merchants_format_invite_row( object $row ): array {
 		'status'                => $status,
 		'status_label'          => crm_merchant_invite_statuses()[ $status ] ?? $status,
 		'status_badge'          => crm_merchant_invite_badge_class( $status ),
-		'expires_at'            => (string) ( $row->expires_at ?? '' ),
+		'expires_at'            => _me_merchants_format_dt( (string) ( $row->expires_at ?? '' ), $company_id ),
 		'expires_at_ts'         => false !== $expires_at_ts ? (int) $expires_at_ts : null,
-		'used_at'               => (string) ( $row->used_at ?? '' ),
+		'used_at'               => _me_merchants_format_dt( (string) ( $row->used_at ?? '' ), $company_id ),
 		'used_at_ts'            => false !== $used_at_ts ? (int) $used_at_ts : null,
 		'used_by_chat_id'       => isset( $row->used_by_chat_id ) ? (string) $row->used_by_chat_id : '',
-		'created_at'            => (string) ( $row->created_at ?? '' ),
+		'created_at'            => _me_merchants_format_dt( (string) ( $row->created_at ?? '' ), $company_id ),
 		'created_at_ts'         => false !== $created_at_ts ? (int) $created_at_ts : null,
 		'created_by_user_id'    => ! empty( $row->created_by_user_id ) ? (int) $row->created_by_user_id : null,
 		'created_by_name'       => $creator_name,
 		'bot_username_snapshot' => (string) ( $row->bot_username_snapshot ?? '' ),
 		'ttl_minutes'           => $ttl_minutes,
-		'base_markup_type'      => (string) ( $prefill['base_markup_type'] ?? 'percent' ),
-		'base_markup_value'     => (string) ( $prefill['base_markup_value'] ?? '0' ),
+		'base_markup_type'      => $markup_type,
+		'base_markup_basis'     => $markup_basis,
+		'base_markup_basis_label' => crm_merchant_markup_basis_label( $markup_basis ),
+		'rub_invoice_markup_mode' => $rub_invoice_markup_mode,
+		'rub_invoice_markup_mode_label' => crm_merchant_rub_invoice_markup_mode_label( $rub_invoice_markup_mode ),
+		'base_markup_value'     => number_format( $markup_value, 8, '.', '' ),
+		'base_markup_label'     => $markup_label,
 		'note'                  => (string) ( $prefill['note'] ?? '' ),
 	];
 }
 
 function _me_merchants_format_row( object $row, array $balance = [] ): array {
+	$company_id         = (int) ( $row->company_id ?? 0 );
 	$status             = (string) $row->status;
+	$main_balance       = (float) ( $balance['main_balance'] ?? 0 );
 	$bonus_balance      = (float) ( $balance['bonus_balance'] ?? 0 );
 	$referral_balance   = (float) ( $balance['referral_balance'] ?? 0 );
 	$total_balance      = (float) ( $balance['total_balance'] ?? 0 );
 	$markup_value       = (float) ( $row->base_markup_value ?? 0 );
 	$markup_type        = (string) ( $row->base_markup_type ?? 'percent' );
-	$markup_value_label = number_format( $markup_value, 8, '.', '' );
-	$markup_value_label = rtrim( rtrim( $markup_value_label, '0' ), '.' );
-	if ( $markup_value_label === '' ) {
-		$markup_value_label = '0';
-	}
-	if ( $markup_type === 'percent' ) {
-		$markup_value_label .= '%';
-	}
+	$markup_basis       = crm_merchant_normalize_markup_basis( (string) ( $row->base_markup_basis ?? 'acquirer_cost' ) );
+	$rub_invoice_markup_mode = crm_merchant_normalize_rub_invoice_markup_mode( (string) ( $row->rub_invoice_markup_mode ?? 'none' ) );
+	$markup_value_label = crm_merchant_markup_display_label( $markup_type, $markup_value, $markup_basis );
 
 	return [
 		'id'                    => (int) $row->id,
@@ -288,6 +352,10 @@ function _me_merchants_format_row( object $row, array $balance = [] ): array {
 		'status_badge'          => crm_merchant_status_badge_class( $status ),
 		'base_markup_type'      => $markup_type,
 		'base_markup_type_label'=> crm_merchant_markup_type_label( $markup_type ),
+		'base_markup_basis'     => $markup_basis,
+		'base_markup_basis_label' => crm_merchant_markup_basis_label( $markup_basis ),
+		'rub_invoice_markup_mode' => $rub_invoice_markup_mode,
+		'rub_invoice_markup_mode_label' => crm_merchant_rub_invoice_markup_mode_label( $rub_invoice_markup_mode ),
 		'base_markup_value'     => number_format( $markup_value, 8, '.', '' ),
 		'base_markup_label'     => $markup_value_label,
 		'ref_code'              => (string) ( $row->ref_code ?? '' ),
@@ -295,11 +363,13 @@ function _me_merchants_format_row( object $row, array $balance = [] ): array {
 		'referred_by_name'      => (string) ( $row->referred_by_name ?? '' ),
 		'referred_by_chat_id'   => isset( $row->referred_by_chat_id ) ? (string) $row->referred_by_chat_id : '',
 		'note'                  => (string) ( $row->note ?? '' ),
-		'created_at'            => (string) ( $row->created_at ?? '' ),
-		'updated_at'            => (string) ( $row->updated_at ?? '' ),
+		'created_at'            => _me_merchants_format_dt( (string) ( $row->created_at ?? '' ), $company_id ),
+		'updated_at'            => _me_merchants_format_dt( (string) ( $row->updated_at ?? '' ), $company_id ),
 		'invited_via_invite_id' => ! empty( $row->invited_via_invite_id ) ? (int) $row->invited_via_invite_id : null,
-		'invited_at'            => (string) ( $row->invited_at ?? '' ),
-		'activated_at'          => (string) ( $row->activated_at ?? '' ),
+		'invited_at'            => _me_merchants_format_dt( (string) ( $row->invited_at ?? '' ), $company_id ),
+		'activated_at'          => _me_merchants_format_dt( (string) ( $row->activated_at ?? '' ), $company_id ),
+		'main_balance'          => $main_balance,
+		'main_balance_label'    => crm_merchant_format_amount( $main_balance ),
 		'bonus_balance'         => $bonus_balance,
 		'bonus_balance_label'   => crm_merchant_format_amount( $bonus_balance ),
 		'referral_balance'      => $referral_balance,
@@ -464,7 +534,6 @@ function me_ajax_merchants_save(): void {
 
 	$current_uid   = get_current_user_id();
 	$merchant_id   = (int) ( $_POST['merchant_id'] ?? 0 );
-	$is_new        = $merchant_id <= 0;
 	$chat_id       = _me_merchants_sanitize_chat_id( $_POST['chat_id'] ?? '' );
 	$username      = ltrim( sanitize_text_field( wp_unslash( $_POST['telegram_username'] ?? '' ) ), '@' );
 	$first_name    = sanitize_text_field( wp_unslash( $_POST['telegram_first_name'] ?? '' ) );
@@ -473,15 +542,18 @@ function me_ajax_merchants_save(): void {
 	$name          = sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) );
 	$status        = sanitize_key( $_POST['status'] ?? CRM_MERCHANT_STATUS_ACTIVE );
 	$markup_type   = sanitize_key( $_POST['base_markup_type'] ?? 'percent' );
+	$markup_basis  = crm_merchant_normalize_markup_basis( sanitize_key( wp_unslash( $_POST['base_markup_basis'] ?? 'acquirer_cost' ) ) );
+	$rub_invoice_markup_mode = crm_merchant_normalize_rub_invoice_markup_mode( sanitize_key( wp_unslash( $_POST['rub_invoice_markup_mode'] ?? 'none' ) ) );
 	$markup_value  = trim( (string) wp_unslash( $_POST['base_markup_value'] ?? '0' ) );
 	$ref_code      = sanitize_text_field( wp_unslash( $_POST['ref_code'] ?? '' ) );
 	$note          = sanitize_textarea_field( wp_unslash( $_POST['note'] ?? '' ) );
 	$referred_by   = (int) ( $_POST['referred_by_merchant_id'] ?? 0 );
 
-	if ( $is_new && ! crm_can_access( 'merchants.create' ) ) {
-		_me_merchants_error( 'Недостаточно прав на создание мерчантов.', 403 );
+	if ( $merchant_id <= 0 ) {
+		_me_merchants_error( 'Прямое создание мерчанта отключено. Новый мерчант может появиться только через Telegram invite и запуск бота по персональной ссылке.', 422 );
 	}
-	if ( ! $is_new && ! crm_can_access( 'merchants.edit' ) ) {
+
+	if ( ! crm_can_access( 'merchants.edit' ) ) {
 		_me_merchants_error( 'Недостаточно прав на редактирование мерчантов.', 403 );
 	}
 
@@ -502,23 +574,12 @@ function me_ajax_merchants_save(): void {
 	}
 	$markup_value = number_format( (float) $markup_value, 8, '.', '' );
 
-	if ( $is_new ) {
-		$company_id = crm_is_root( $current_uid )
-			? (int) ( $_POST['company_id'] ?? 0 )
-			: crm_get_current_user_company_id( $current_uid );
-
-		$company = _me_merchants_validate_company( $company_id );
-		if ( ! $company || $company_id <= 0 || $company->status === 'archived' ) {
-			_me_merchants_error( 'Компания не найдена.', 422 );
-		}
-	} else {
-		$existing = _me_merchants_fetch_row( $merchant_id );
-		if ( ! $existing ) {
-			_me_merchants_error( 'Мерчант не найден.', 404 );
-		}
-		_me_merchants_require_row_scope( $existing );
-		$company_id = (int) $existing->company_id;
+	$existing = _me_merchants_fetch_row( $merchant_id );
+	if ( ! $existing ) {
+		_me_merchants_error( 'Мерчант не найден.', 404 );
 	}
+	_me_merchants_require_row_scope( $existing );
+	$company_id = (int) $existing->company_id;
 
 	$referred_by = _me_merchants_validate_referred_by( $company_id, $merchant_id, $referred_by );
 
@@ -549,6 +610,8 @@ function me_ajax_merchants_save(): void {
 		'name'                   => $name !== '' ? $name : null,
 		'status'                 => $status,
 		'base_markup_type'       => $markup_type,
+		'base_markup_basis'      => $markup_basis,
+		'rub_invoice_markup_mode'=> $rub_invoice_markup_mode,
 		'base_markup_value'      => $markup_value,
 		'ref_code'               => $ref_code !== '' ? $ref_code : null,
 		'referred_by_merchant_id'=> $referred_by,
@@ -556,80 +619,45 @@ function me_ajax_merchants_save(): void {
 		'updated_by_user_id'     => $current_uid,
 	];
 
-	if ( $is_new ) {
-		$data['created_by_user_id'] = $current_uid;
-		$wpdb->insert(
-			'crm_merchants',
-			$data,
-			[ '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%d', '%d' ]
-		);
+	$wpdb->update(
+		'crm_merchants',
+		$data,
+		[ 'id' => $merchant_id ],
+		[ '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%d' ],
+		[ '%d' ]
+	);
 
-		$merchant_id = (int) $wpdb->insert_id;
-		if ( $merchant_id <= 0 ) {
-			_me_merchants_error( 'Не удалось создать мерчанта.', 500 );
-		}
+	crm_sync_merchant_referral_link( $company_id, $merchant_id, (int) $referred_by );
 
-		crm_sync_merchant_referral_link( $company_id, $merchant_id, (int) $referred_by );
-
-		crm_log_entity(
-			'merchant.created',
-			'users',
-			'create',
-			'Создан новый мерчант',
-			'merchant',
-			$merchant_id,
-			[
-				'org_id'  => $company_id,
-				'context' => [
-					'chat_id'            => $chat_id,
-					'telegram_username'  => $username !== '' ? $username : null,
-					'telegram_first_name'=> $first_name !== '' ? $first_name : null,
-					'telegram_last_name' => $last_name !== '' ? $last_name : null,
-					'base_markup_type'   => $markup_type,
-					'base_markup_value'  => $markup_value,
-					'referred_by_id'     => $referred_by ?: null,
-				],
-			]
-		);
-	} else {
-		$wpdb->update(
-			'crm_merchants',
-			$data,
-			[ 'id' => $merchant_id ],
-			[ '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%d' ],
-			[ '%d' ]
-		);
-
-		crm_sync_merchant_referral_link( $company_id, $merchant_id, (int) $referred_by );
-
-		crm_log_entity(
-			'merchant.updated',
-			'users',
-			'update',
-			'Обновлён мерчант',
-			'merchant',
-			$merchant_id,
-			[
-				'org_id'  => $company_id,
-				'context' => [
-					'chat_id'            => $chat_id,
-					'telegram_username'  => $username !== '' ? $username : null,
-					'telegram_first_name'=> $first_name !== '' ? $first_name : null,
-					'telegram_last_name' => $last_name !== '' ? $last_name : null,
-					'status'             => $status,
-					'base_markup_type'   => $markup_type,
-					'base_markup_value'  => $markup_value,
-					'referred_by_id'     => $referred_by ?: null,
-				],
-			]
-		);
-	}
+	crm_log_entity(
+		'merchant.updated',
+		'users',
+		'update',
+		'Обновлён мерчант',
+		'merchant',
+		$merchant_id,
+		[
+			'org_id'  => $company_id,
+			'context' => [
+				'chat_id'            => $chat_id,
+				'telegram_username'  => $username !== '' ? $username : null,
+				'telegram_first_name'=> $first_name !== '' ? $first_name : null,
+				'telegram_last_name' => $last_name !== '' ? $last_name : null,
+				'status'             => $status,
+				'base_markup_type'   => $markup_type,
+				'base_markup_basis'  => $markup_basis,
+				'rub_invoice_markup_mode' => $rub_invoice_markup_mode,
+				'base_markup_value'  => $markup_value,
+				'referred_by_id'     => $referred_by ?: null,
+			],
+		]
+	);
 
 	$row      = _me_merchants_fetch_row( $merchant_id );
 	$balances = crm_get_merchant_balance_summary_map( [ $merchant_id ] );
 
 	wp_send_json_success( [
-		'message'  => $is_new ? 'Мерчант создан.' : 'Мерчант обновлён.',
+		'message'  => 'Мерчант обновлён.',
 		'merchant' => _me_merchants_format_row( $row, $balances[ $merchant_id ] ?? [] ),
 	] );
 }
@@ -667,6 +695,7 @@ function me_ajax_merchants_status(): void {
 	_me_merchants_require_row_scope( $row );
 
 	$activation_transition = $status === CRM_MERCHANT_STATUS_ACTIVE && (string) $row->status !== CRM_MERCHANT_STATUS_ACTIVE;
+	$request_cancel_transition = $status === CRM_MERCHANT_STATUS_ARCHIVED && (string) $row->status === CRM_MERCHANT_STATUS_PENDING;
 	$update_data = [
 		'status'             => $status,
 		'updated_by_user_id' => get_current_user_id(),
@@ -707,9 +736,12 @@ function me_ajax_merchants_status(): void {
 	if ( $activation_transition && $fresh && function_exists( 'crm_merchant_tg_notify_activation' ) ) {
 		crm_merchant_tg_notify_activation( $fresh );
 	}
+	if ( $request_cancel_transition && $fresh && function_exists( 'crm_merchant_tg_notify_activation_request_cancelled' ) ) {
+		crm_merchant_tg_notify_activation_request_cancelled( $fresh );
+	}
 
 wp_send_json_success( [
-		'message'  => 'Статус обновлён.',
+		'message'  => _me_merchants_status_success_message( (string) $row->status, $status ),
 		'merchant' => _me_merchants_format_row( $fresh, $balances[ $merchant_id ] ?? [] ),
 	] );
 }
@@ -883,6 +915,8 @@ function me_ajax_merchants_telegram_invite_create(): void {
 			'context' => [
 				'ttl_minutes'       => $ttl,
 				'base_markup_type'  => $prefill['base_markup_type'] ?? 'percent',
+				'base_markup_basis' => $prefill['base_markup_basis'] ?? 'acquirer_cost',
+				'rub_invoice_markup_mode' => $prefill['rub_invoice_markup_mode'] ?? 'none',
 				'base_markup_value' => $prefill['base_markup_value'] ?? '0',
 			],
 		]
@@ -977,13 +1011,15 @@ function me_ajax_merchants_telegram_invites_history(): void {
 		$params[] = $status;
 	}
 
-	if ( $date_from !== '' && strtotime( $date_from ) ) {
+	$created_from_utc = _me_merchants_local_day_to_utc( $date_from, false, $company_id );
+	if ( $created_from_utc !== null ) {
 		$where .= ' AND i.created_at >= %s';
-		$params[] = gmdate( 'Y-m-d 00:00:00', strtotime( $date_from ) );
+		$params[] = $created_from_utc;
 	}
-	if ( $date_to !== '' && strtotime( $date_to ) ) {
+	$created_to_utc = _me_merchants_local_day_to_utc( $date_to, true, $company_id );
+	if ( $created_to_utc !== null ) {
 		$where .= ' AND i.created_at <= %s';
-		$params[] = gmdate( 'Y-m-d 23:59:59', strtotime( $date_to ) );
+		$params[] = $created_to_utc;
 	}
 
 	$from_sql = "
@@ -1122,6 +1158,8 @@ function me_ajax_merchants_invite_create(): void {
 	$prefill_json = wp_json_encode(
 		[
 			'base_markup_type'  => (string) ( $merchant->base_markup_type ?? 'percent' ),
+			'base_markup_basis' => crm_merchant_normalize_markup_basis( (string) ( $merchant->base_markup_basis ?? 'acquirer_cost' ) ),
+			'rub_invoice_markup_mode' => crm_merchant_normalize_rub_invoice_markup_mode( (string) ( $merchant->rub_invoice_markup_mode ?? 'none' ) ),
 			'base_markup_value' => number_format( (float) ( $merchant->base_markup_value ?? 0 ), 8, '.', '' ),
 			'note'              => (string) ( $merchant->note ?? '' ),
 		],
@@ -1161,9 +1199,13 @@ function me_ajax_merchants_invite_create(): void {
 		[
 			'org_id'  => $company_id,
 			'context' => [
-				'merchant_id' => $merchant_id,
-				'expires_at'  => $expires_at,
-				'ttl_minutes' => $ttl,
+				'merchant_id'        => $merchant_id,
+				'expires_at'         => $expires_at,
+				'ttl_minutes'        => $ttl,
+				'base_markup_type'   => (string) ( $merchant->base_markup_type ?? 'percent' ),
+				'base_markup_basis'  => crm_merchant_normalize_markup_basis( (string) ( $merchant->base_markup_basis ?? 'acquirer_cost' ) ),
+				'rub_invoice_markup_mode' => crm_merchant_normalize_rub_invoice_markup_mode( (string) ( $merchant->rub_invoice_markup_mode ?? 'none' ) ),
+				'base_markup_value'  => number_format( (float) ( $merchant->base_markup_value ?? 0 ), 8, '.', '' ),
 			],
 		]
 	);
@@ -1322,12 +1364,13 @@ function me_ajax_merchants_ledger(): void {
 			 LEFT JOIN crm_merchants src ON src.id = l.source_merchant_id
 			 WHERE l.merchant_id = %d
 			 ORDER BY l.id DESC
-			 LIMIT 200",
+			 LIMIT 30",
 			$merchant_id
 		)
 	) ?: [];
 
 	$items = [];
+	$merchant_company_id = (int) $merchant->company_id;
 	foreach ( $rows as $row ) {
 		$items[] = [
 			'id'                       => (int) $row->id,
@@ -1343,12 +1386,13 @@ function me_ajax_merchants_ledger(): void {
 			'source_merchant_name'     => (string) ( $row->source_merchant_name ?? '' ),
 			'source_merchant_chat_id'  => isset( $row->source_merchant_chat_id ) ? (string) $row->source_merchant_chat_id : '',
 			'comment'                  => (string) ( $row->comment ?? '' ),
-			'created_at'               => (string) $row->created_at,
+			'created_at'               => _me_merchants_format_dt( (string) $row->created_at, $merchant_company_id ),
 		];
 	}
 
 	$summary_map = crm_get_merchant_balance_summary_map( [ $merchant_id ] );
 	$summary     = $summary_map[ $merchant_id ] ?? [
+		'main_balance'     => 0.0,
 		'bonus_balance'    => 0.0,
 		'referral_balance' => 0.0,
 		'total_balance'    => 0.0,
@@ -1356,6 +1400,8 @@ function me_ajax_merchants_ledger(): void {
 
 	wp_send_json_success( [
 		'summary' => [
+			'main_balance'            => $summary['main_balance'],
+			'main_balance_label'      => crm_merchant_format_amount( $summary['main_balance'] ),
 			'bonus_balance'           => $summary['bonus_balance'],
 			'bonus_balance_label'     => crm_merchant_format_amount( $summary['bonus_balance'] ),
 			'referral_balance'        => $summary['referral_balance'],
@@ -1400,7 +1446,8 @@ function me_ajax_merchants_orders(): void {
 		$wpdb->prepare(
 			"SELECT id, company_id, provider_code, source_channel, merchant_order_id, provider_order_id,
 			        status_code, amount_asset_code, amount_asset_value, payment_currency_code, payment_amount_value,
-			        created_for_type, merchant_markup_value, platform_fee_value, merchant_profit_value,
+			        merchant_requested_rub_value, merchant_payable_value, created_for_type,
+			        merchant_markup_value, platform_fee_value, merchant_profit_value,
 			        referral_reward_value, created_at, paid_at
 			 FROM crm_fintech_payment_orders
 			 WHERE merchant_id = %d
@@ -1421,6 +1468,10 @@ function me_ajax_merchants_orders(): void {
 			'status_code'            => (string) $row->status_code,
 			'created_for_type'       => (string) ( $row->created_for_type ?? 'company' ),
 			'amount_asset_label'     => crm_merchant_format_amount( $row->amount_asset_value, (string) $row->amount_asset_code ),
+			'merchant_payable_label' => crm_merchant_format_amount(
+				crm_merchant_order_payable_amount( $row ),
+				(string) $row->amount_asset_code
+			),
 			'payment_amount_label'   => $row->payment_amount_value !== null
 				? crm_merchant_format_amount( $row->payment_amount_value, (string) $row->payment_currency_code )
 				: '—',
@@ -1436,8 +1487,8 @@ function me_ajax_merchants_orders(): void {
 			'referral_reward_label'  => $row->referral_reward_value !== null
 				? crm_merchant_format_amount( $row->referral_reward_value, (string) $row->amount_asset_code )
 				: '—',
-			'created_at'             => (string) $row->created_at,
-			'paid_at'                => (string) ( $row->paid_at ?? '' ),
+			'created_at'             => _me_merchants_format_dt( (string) $row->created_at, (int) $merchant->company_id ),
+			'paid_at'                => _me_merchants_format_dt( (string) ( $row->paid_at ?? '' ), (int) $merchant->company_id ),
 		];
 	}
 

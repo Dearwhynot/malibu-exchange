@@ -135,6 +135,79 @@ $_root_recent_payouts = $wpdb->get_results(
 	ORDER BY p.created_at DESC
 	LIMIT 8"
 ) ?: [];
+
+$_root_has_merchant_payouts_table = function_exists( 'malibu_migrations_table_exists' )
+	? malibu_migrations_table_exists( 'crm_merchant_payouts' )
+	: (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', 'crm_merchant_payouts' ) );
+$_root_has_company_withdrawals_table = function_exists( 'malibu_migrations_table_exists' )
+	? malibu_migrations_table_exists( 'crm_company_withdrawals' )
+	: (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', 'crm_company_withdrawals' ) );
+
+$_root_payment_contour_rows = $wpdb->get_results(
+	"SELECT
+		company_id,
+		COALESCE(SUM(CASE WHEN status_code = 'paid' AND created_for_type = 'merchant' THEN amount_asset_value ELSE 0 END), 0) AS merchant_paid_sum,
+		COALESCE(SUM(CASE WHEN status_code = 'paid' AND created_for_type = 'company' THEN amount_asset_value ELSE 0 END), 0) AS company_paid_sum,
+		COALESCE(SUM(CASE WHEN status_code = 'paid' AND source_channel = 'telegram_operator' THEN amount_asset_value ELSE 0 END), 0) AS operator_tg_paid_sum,
+		COALESCE(SUM(CASE WHEN status_code = 'paid' AND source_channel = 'web' AND created_for_type = 'company' THEN amount_asset_value ELSE 0 END), 0) AS company_web_paid_sum,
+		COALESCE(SUM(CASE WHEN status_code = 'paid' AND created_for_type = 'merchant' THEN COALESCE(platform_fee_value, merchant_markup_value, 0) ELSE 0 END), 0) AS platform_fee_sum
+	 FROM crm_fintech_payment_orders
+	 WHERE company_id > 0
+	 GROUP BY company_id"
+) ?: [];
+
+$_root_merchant_balance_rows = $wpdb->get_results(
+	"SELECT
+		company_id,
+		COALESCE(SUM(CASE
+			WHEN entry_type IN ('merchant_accrual', 'manual_credit', 'bonus_accrual', 'bonus_adjustment', 'referral_accrual', 'referral_adjustment')
+				THEN amount
+			WHEN entry_type IN ('merchant_payout', 'manual_debit', 'bonus_withdrawal')
+				THEN -ABS(amount)
+			ELSE 0
+		END), 0) AS merchant_payable_sum
+	 FROM crm_merchant_wallet_ledger
+	 WHERE company_id > 0
+	 GROUP BY company_id"
+) ?: [];
+
+$_root_merchant_payout_rows = $_root_has_merchant_payouts_table
+	? ( $wpdb->get_results(
+		"SELECT company_id, COALESCE(SUM(amount), 0) AS merchant_payouts_sum
+		 FROM crm_merchant_payouts
+		 WHERE company_id > 0
+		 GROUP BY company_id"
+	) ?: [] )
+	: [];
+
+$_root_company_withdrawal_rows = $_root_has_company_withdrawals_table
+	? ( $wpdb->get_results(
+		"SELECT company_id, COALESCE(SUM(amount_usdt), 0) AS withdrawals_sum
+		 FROM crm_company_withdrawals
+		 WHERE company_id > 0
+		 GROUP BY company_id"
+	) ?: [] )
+	: [];
+
+$_root_provider_paid_rows = $wpdb->get_results(
+	"SELECT
+		COALESCE(NULLIF(provider_code, ''), 'unknown') AS provider_code,
+		COUNT(*) AS orders_cnt,
+		COALESCE(SUM(amount_asset_value), 0) AS paid_sum
+	 FROM crm_fintech_payment_orders
+	 WHERE company_id > 0
+	   AND status_code = 'paid'
+	 GROUP BY COALESCE(NULLIF(provider_code, ''), 'unknown')"
+) ?: [];
+
+$_root_provider_payout_rows = $wpdb->get_results(
+	"SELECT
+		COALESCE(NULLIF(provider_code, ''), 'unknown') AS provider_code,
+		COALESCE(SUM(amount), 0) AS payouts_sum
+	 FROM crm_acquirer_payouts
+	 WHERE company_id > 0
+	 GROUP BY COALESCE(NULLIF(provider_code, ''), 'unknown')"
+) ?: [];
 // phpcs:enable
 
 $_root_company_total        = count( $_root_companies );
@@ -143,16 +216,90 @@ $_root_users_total          = 0;
 $_root_orders_total         = 0;
 $_root_paid_total           = 0.0;
 $_root_payout_total         = 0.0;
+$_root_merchant_paid_total  = 0.0;
+$_root_company_paid_total   = 0.0;
+$_root_merchant_payable_total = 0.0;
+$_root_merchant_payout_total  = 0.0;
+$_root_platform_fee_total     = 0.0;
+$_root_company_withdrawal_total = 0.0;
+$_root_profit_balance_total     = 0.0;
+
+$_root_payment_contour_map = [];
+foreach ( $_root_payment_contour_rows as $_row ) {
+	$_root_payment_contour_map[ (int) $_row->company_id ] = $_row;
+}
+
+$_root_merchant_payable_map = [];
+foreach ( $_root_merchant_balance_rows as $_row ) {
+	$_root_merchant_payable_map[ (int) $_row->company_id ] = (float) $_row->merchant_payable_sum;
+}
+
+$_root_merchant_payout_map = [];
+foreach ( $_root_merchant_payout_rows as $_row ) {
+	$_root_merchant_payout_map[ (int) $_row->company_id ] = (float) $_row->merchant_payouts_sum;
+}
+
+$_root_company_withdrawal_map = [];
+foreach ( $_root_company_withdrawal_rows as $_row ) {
+	$_root_company_withdrawal_map[ (int) $_row->company_id ] = (float) $_row->withdrawals_sum;
+}
+
+$_root_provider_labels = function_exists( 'crm_fintech_provider_labels' ) ? crm_fintech_provider_labels() : [
+	'kanyon'  => 'Kanyon (Pay2Day)',
+	'doverka' => 'Doverka',
+];
+$_root_provider_map = [];
+foreach ( $_root_provider_paid_rows as $_row ) {
+	$_provider_code = (string) $_row->provider_code;
+	$_root_provider_map[ $_provider_code ] = [
+		'provider_code' => $_provider_code,
+		'orders_cnt'    => (int) $_row->orders_cnt,
+		'paid_sum'      => (float) $_row->paid_sum,
+		'payouts_sum'   => 0.0,
+	];
+}
+foreach ( $_root_provider_payout_rows as $_row ) {
+	$_provider_code = (string) $_row->provider_code;
+	if ( ! isset( $_root_provider_map[ $_provider_code ] ) ) {
+		$_root_provider_map[ $_provider_code ] = [
+			'provider_code' => $_provider_code,
+			'orders_cnt'    => 0,
+			'paid_sum'      => 0.0,
+			'payouts_sum'   => 0.0,
+		];
+	}
+	$_root_provider_map[ $_provider_code ]['payouts_sum'] = (float) $_row->payouts_sum;
+}
+ksort( $_root_provider_map );
 
 foreach ( $_root_companies as $_root_company ) {
 	if ( $_root_company->status === 'active' ) {
 		$_root_company_active_count++;
 	}
 
+	$_company_id = (int) $_root_company->id;
+	$_contour    = $_root_payment_contour_map[ $_company_id ] ?? null;
+	$_root_company->merchant_paid_sum     = $contour_merchant_paid = (float) ( $_contour->merchant_paid_sum ?? 0 );
+	$_root_company->company_paid_sum      = $contour_company_paid = (float) ( $_contour->company_paid_sum ?? 0 );
+	$_root_company->operator_tg_paid_sum  = (float) ( $_contour->operator_tg_paid_sum ?? 0 );
+	$_root_company->company_web_paid_sum  = (float) ( $_contour->company_web_paid_sum ?? 0 );
+	$_root_company->platform_fee_sum      = $platform_fee_sum = (float) ( $_contour->platform_fee_sum ?? 0 );
+	$_root_company->merchant_payable_sum  = $merchant_payable_sum = max( 0.0, (float) ( $_root_merchant_payable_map[ $_company_id ] ?? 0 ) );
+	$_root_company->merchant_payouts_sum  = $merchant_payouts_sum = (float) ( $_root_merchant_payout_map[ $_company_id ] ?? 0 );
+	$_root_company->withdrawals_sum       = $withdrawals_sum = (float) ( $_root_company_withdrawal_map[ $_company_id ] ?? 0 );
+	$_root_company->profit_balance_sum    = $platform_fee_sum - $withdrawals_sum;
+
 	$_root_users_total  += (int) $_root_company->users_cnt;
 	$_root_orders_total += (int) $_root_company->orders_cnt;
 	$_root_paid_total   += (float) $_root_company->paid_sum;
 	$_root_payout_total += (float) $_root_company->payouts_sum;
+	$_root_merchant_paid_total      += $contour_merchant_paid;
+	$_root_company_paid_total       += $contour_company_paid;
+	$_root_merchant_payable_total   += $merchant_payable_sum;
+	$_root_merchant_payout_total    += $merchant_payouts_sum;
+	$_root_platform_fee_total       += $platform_fee_sum;
+	$_root_company_withdrawal_total += $withdrawals_sum;
+	$_root_profit_balance_total     += (float) $_root_company->profit_balance_sum;
 }
 
 $_root_debt_total = $_root_paid_total - $_root_payout_total;
@@ -298,6 +445,49 @@ get_header();
 				</div>
 
 				<div class="row m-b-20">
+					<div class="col-xl-3 col-lg-6 col-md-6 col-sm-12 m-b-15">
+						<div class="card card-default no-margin">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase">Merchant paid</p>
+								<h3 class="no-margin bold text-complete font-montserrat"><?php echo esc_html( _root_dash_fmt_usdt( $_root_merchant_paid_total ) ); ?></h3>
+								<p class="hint-text fs-11 no-margin">gross paid-объём мерчантов</p>
+							</div>
+						</div>
+					</div>
+					<div class="col-xl-3 col-lg-6 col-md-6 col-sm-12 m-b-15">
+						<div class="card card-default no-margin">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase">Operator / company paid</p>
+								<h3 class="no-margin bold text-primary font-montserrat"><?php echo esc_html( _root_dash_fmt_usdt( $_root_company_paid_total ) ); ?></h3>
+								<p class="hint-text fs-11 no-margin">ордера без мерчантского контура</p>
+							</div>
+						</div>
+					</div>
+					<div class="col-xl-3 col-lg-6 col-md-6 col-sm-12 m-b-15">
+						<div class="card card-default no-margin">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase">Долг мерчантам</p>
+								<h3 class="no-margin bold text-warning font-montserrat"><?php echo esc_html( _root_dash_fmt_usdt( $_root_merchant_payable_total ) ); ?></h3>
+								<p class="hint-text fs-11 no-margin">основной + бонус + рефка</p>
+							</div>
+						</div>
+					</div>
+					<div class="col-xl-3 col-lg-6 col-md-6 col-sm-12 m-b-15">
+						<div class="card card-default no-margin">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase">Profit / wallet</p>
+								<h3 class="no-margin bold font-montserrat <?php echo $_root_profit_balance_total < 0 ? 'text-danger' : 'text-success'; ?>">
+									<?php echo esc_html( _root_dash_fmt_usdt( $_root_profit_balance_total ) ); ?>
+								</h3>
+								<p class="hint-text fs-11 no-margin">
+									fee: <?php echo esc_html( _root_dash_fmt_usdt( $_root_platform_fee_total ) ); ?> · выводы: <?php echo esc_html( _root_dash_fmt_usdt( $_root_company_withdrawal_total ) ); ?>
+								</p>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="row m-b-20">
 					<div class="col-xl-4 col-lg-4 col-md-4 col-sm-12 m-b-15">
 						<div class="card card-default no-margin">
 							<div class="card-body p-3">
@@ -332,6 +522,115 @@ get_header();
 								<h4 class="no-margin bold text-danger font-montserrat"><?php echo esc_html( _root_dash_fmt_usdt( $_root_cancel_sum ) ); ?></h4>
 								<p class="hint-text fs-11 no-margin">declined + cancelled + expired + error · <?php echo esc_html( $_root_cancel_cnt ); ?> шт.</p>
 							</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="row m-b-20">
+					<div class="col-lg-12 col-md-12 m-b-15">
+						<div class="card card-default no-margin">
+							<div class="card-header">
+								<div class="card-title">Провайдеры</div>
+							</div>
+							<div class="card-body">
+								<div class="table-responsive">
+									<table class="table table-hover m-b-0">
+										<thead>
+											<tr>
+												<th>Провайдер</th>
+												<th>Paid-ордеры</th>
+												<th>Paid сумма</th>
+												<th>Выплаты ЭП</th>
+												<th>Долг ЭП</th>
+											</tr>
+										</thead>
+										<tbody>
+											<?php if ( empty( $_root_provider_map ) ) : ?>
+											<tr>
+												<td colspan="5" class="text-center hint-text p-t-20 p-b-20">Paid-ордеров по провайдерам пока нет.</td>
+											</tr>
+											<?php else : ?>
+												<?php foreach ( $_root_provider_map as $_root_provider ) : ?>
+													<?php
+													$_provider_code  = (string) $_root_provider['provider_code'];
+													$_provider_label = $_root_provider_labels[ $_provider_code ] ?? ( $_provider_code === 'unknown' ? 'Не указан' : $_provider_code );
+													$_provider_debt  = (float) $_root_provider['paid_sum'] - (float) $_root_provider['payouts_sum'];
+													?>
+													<tr>
+														<td>
+															<div class="bold"><?php echo esc_html( $_provider_label ); ?></div>
+															<div class="hint-text fs-11"><?php echo esc_html( $_provider_code ); ?></div>
+														</td>
+														<td><?php echo esc_html( (int) $_root_provider['orders_cnt'] ); ?></td>
+														<td class="text-success"><?php echo esc_html( _root_dash_fmt_usdt( (float) $_root_provider['paid_sum'] ) ); ?></td>
+														<td class="text-complete"><?php echo esc_html( _root_dash_fmt_usdt( (float) $_root_provider['payouts_sum'] ) ); ?></td>
+														<td class="<?php echo esc_attr( $_provider_debt >= 0 ? 'text-warning' : 'text-success' ); ?>">
+															<?php echo esc_html( _root_dash_fmt_usdt( $_provider_debt ) ); ?>
+														</td>
+													</tr>
+												<?php endforeach; ?>
+											<?php endif; ?>
+										</tbody>
+									</table>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="card card-default m-b-20">
+					<div class="card-header">
+						<div class="card-title">Финансовая картина компаний</div>
+					</div>
+					<div class="card-body">
+						<div class="table-responsive">
+							<table class="table table-hover m-b-0">
+								<thead>
+									<tr>
+										<th>Компания</th>
+										<th>Merchant paid</th>
+										<th>Operator / company paid</th>
+										<th>Долг ЭП</th>
+										<th>Долг мерчантам</th>
+										<th>Выплачено мерчантам</th>
+										<th>Profit / wallet</th>
+										<th>Выведено</th>
+									</tr>
+								</thead>
+								<tbody>
+									<?php if ( empty( $_root_companies ) ) : ?>
+									<tr>
+										<td colspan="8" class="text-center hint-text p-t-20 p-b-20">Бизнес-компаний пока нет.</td>
+									</tr>
+									<?php else : ?>
+										<?php foreach ( $_root_companies as $_root_company ) : ?>
+											<?php
+											$_company_debt   = (float) $_root_company->paid_sum - (float) $_root_company->payouts_sum;
+											$_company_profit = (float) $_root_company->profit_balance_sum;
+											?>
+											<tr>
+												<td>
+													<div class="bold"><?php echo esc_html( $_root_company->name ); ?></div>
+													<div class="hint-text fs-11">#<?php echo esc_html( (int) $_root_company->id ); ?> · <?php echo esc_html( $_root_company->code ); ?></div>
+												</td>
+												<td class="text-complete"><?php echo esc_html( _root_dash_fmt_usdt( (float) $_root_company->merchant_paid_sum ) ); ?></td>
+												<td class="text-primary">
+													<?php echo esc_html( _root_dash_fmt_usdt( (float) $_root_company->company_paid_sum ) ); ?>
+													<div class="hint-text fs-11">TG: <?php echo esc_html( _root_dash_fmt_usdt( (float) $_root_company->operator_tg_paid_sum ) ); ?></div>
+												</td>
+												<td class="<?php echo esc_attr( $_company_debt >= 0 ? 'text-warning' : 'text-success' ); ?>"><?php echo esc_html( _root_dash_fmt_usdt( $_company_debt ) ); ?></td>
+												<td class="text-warning"><?php echo esc_html( _root_dash_fmt_usdt( (float) $_root_company->merchant_payable_sum ) ); ?></td>
+												<td class="text-complete"><?php echo esc_html( _root_dash_fmt_usdt( (float) $_root_company->merchant_payouts_sum ) ); ?></td>
+												<td class="<?php echo esc_attr( $_company_profit < 0 ? 'text-danger' : 'text-success' ); ?>">
+													<?php echo esc_html( _root_dash_fmt_usdt( $_company_profit ) ); ?>
+													<div class="hint-text fs-11">fee: <?php echo esc_html( _root_dash_fmt_usdt( (float) $_root_company->platform_fee_sum ) ); ?></div>
+												</td>
+												<td class="text-complete"><?php echo esc_html( _root_dash_fmt_usdt( (float) $_root_company->withdrawals_sum ) ); ?></td>
+											</tr>
+										<?php endforeach; ?>
+									<?php endif; ?>
+								</tbody>
+							</table>
 						</div>
 					</div>
 				</div>

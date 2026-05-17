@@ -77,6 +77,18 @@ function _me_orders_require_row_scope( object $row ): void {
 	wp_send_json_error( [ 'message' => 'Доступ к данным другой компании запрещён.' ], 403 );
 }
 
+function _me_orders_allowed_providers( int $company_id ): array {
+	if ( $company_id <= 0 ) {
+		return [];
+	}
+
+	if ( function_exists( 'crm_fintech_get_allowed_providers' ) ) {
+		return array_values( array_filter( array_map( 'sanitize_key', crm_fintech_get_allowed_providers( $company_id ) ) ) );
+	}
+
+	return [];
+}
+
 // ─── 1. Список ордеров ────────────────────────────────────────────────────────
 
 add_action( 'wp_ajax_me_orders_list', 'me_ajax_orders_list' );
@@ -101,57 +113,90 @@ function me_ajax_orders_list(): void {
 	$search     = sanitize_text_field( wp_unslash( $_POST['search']    ?? '' ) );
 	$status     = sanitize_key( $_POST['status']     ?? '' );
 	$provider   = sanitize_key( $_POST['provider']   ?? '' );
+	$merchant_id = max( 0, (int) ( $_POST['merchant_id'] ?? 0 ) );
+	$contour    = sanitize_key( $_POST['contour']    ?? '' );
+	$source_channel = sanitize_key( $_POST['source_channel'] ?? '' );
 	$date_from  = sanitize_text_field( wp_unslash( $_POST['date_from'] ?? '' ) );
 	$date_to    = sanitize_text_field( wp_unslash( $_POST['date_to']   ?? '' ) );
 
 	$company_id = _me_orders_require_current_company();
 	$_tz_org    = $company_id;
+	$allowed_providers = _me_orders_allowed_providers( $company_id );
+
+	if ( $provider !== '' && ! in_array( $provider, $allowed_providers, true ) ) {
+		$provider = '';
+	}
 
 	// ── WHERE ─────────────────────────────────────────────────────────────────
-	$where  = "WHERE (`source_channel` IS NULL OR `source_channel` <> 'rate_check')";
+	$where  = "WHERE (o.`source_channel` IS NULL OR o.`source_channel` <> 'rate_check')";
 	$params = [];
 
 	if ( $search !== '' ) {
 		$like     = '%' . $wpdb->esc_like( $search ) . '%';
-		$where   .= ' AND (`merchant_order_id` LIKE %s OR `provider_order_id` LIKE %s OR `local_order_ref` LIKE %s OR `notes` LIKE %s)';
+		$where   .= ' AND (o.`merchant_order_id` LIKE %s OR o.`provider_order_id` LIKE %s OR o.`local_order_ref` LIKE %s OR o.`notes` LIKE %s OR o.`meta_json` LIKE %s OR m.`name` LIKE %s OR CAST(m.`chat_id` AS CHAR) LIKE %s OR m.`telegram_username` LIKE %s)';
+		$params[] = $like;
+		$params[] = $like;
+		$params[] = $like;
+		$params[] = $like;
 		$params[] = $like;
 		$params[] = $like;
 		$params[] = $like;
 		$params[] = $like;
 	}
 	if ( $status !== '' ) {
-		$where   .= ' AND `status_code` = %s';
+		$where   .= ' AND o.`status_code` = %s';
 		$params[] = $status;
 	}
 	if ( $provider !== '' ) {
-		$where   .= ' AND `provider_code` = %s';
+		$where   .= ' AND o.`provider_code` = %s';
 		$params[] = $provider;
 	}
-	$where   .= ' AND `company_id` = %d';
+	if ( in_array( $contour, [ 'company', 'merchant' ], true ) ) {
+		$where   .= ' AND o.`created_for_type` = %s';
+		$params[] = $contour;
+	}
+	if ( $source_channel !== '' ) {
+		if ( $source_channel === 'telegram_operator' ) {
+			$where   .= " AND (o.`source_channel` = %s OR (o.`source_channel` = 'telegram' AND o.`created_for_type` = 'company'))";
+			$params[] = $source_channel;
+		} elseif ( $source_channel === 'telegram_merchant' ) {
+			$where   .= " AND (o.`source_channel` = %s OR (o.`source_channel` = 'telegram' AND o.`created_for_type` = 'merchant'))";
+			$params[] = $source_channel;
+		} else {
+			$where   .= ' AND o.`source_channel` = %s';
+			$params[] = $source_channel;
+		}
+	}
+	if ( $merchant_id > 0 ) {
+		$where   .= ' AND o.`merchant_id` = %d';
+		$params[] = $merchant_id;
+	}
+	$where   .= ' AND o.`company_id` = %d';
 	$params[] = $company_id;
 	// Фильтр по дате: пользователь вводит дату в настроенной таймзоне — конвертируем в UTC для запроса
 	$tz = crm_get_timezone( $_tz_org );
 	if ( $date_from !== '' && strtotime( $date_from ) ) {
 		$dt_from  = new DateTime( $date_from . ' 00:00:00', $tz );
 		$dt_from->setTimezone( new DateTimeZone( 'UTC' ) );
-		$where   .= ' AND `created_at` >= %s';
+		$where   .= ' AND o.`created_at` >= %s';
 		$params[] = $dt_from->format( 'Y-m-d H:i:s' );
 	}
 	if ( $date_to !== '' && strtotime( $date_to ) ) {
 		$dt_to    = new DateTime( $date_to . ' 23:59:59', $tz );
 		$dt_to->setTimezone( new DateTimeZone( 'UTC' ) );
-		$where   .= ' AND `created_at` <= %s';
+		$where   .= ' AND o.`created_at` <= %s';
 		$params[] = $dt_to->format( 'Y-m-d H:i:s' );
 	}
 
 	// ── Подсчёт ───────────────────────────────────────────────────────────────
 	// phpcs:disable WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-	$count_sql = "SELECT COUNT(*) FROM `crm_fintech_payment_orders` {$where}";
+	$from_sql  = 'FROM `crm_fintech_payment_orders` o LEFT JOIN `crm_merchants` m ON m.`id` = o.`merchant_id` AND m.`company_id` = o.`company_id`';
+	$count_sql = "SELECT COUNT(*) {$from_sql} {$where}";
 	$total     = empty( $params )
 		? (int) $wpdb->get_var( $count_sql )
 		: (int) $wpdb->get_var( $wpdb->prepare( $count_sql, $params ) );
 
-	$data_sql   = "SELECT * FROM `crm_fintech_payment_orders` {$where} ORDER BY `id` DESC LIMIT %d OFFSET %d";
+	$data_sql   = "SELECT o.*, m.`name` AS merchant_name, CAST(m.`chat_id` AS CHAR) AS merchant_chat_id, m.`telegram_username` AS merchant_telegram_username {$from_sql} {$where} ORDER BY o.`id` DESC LIMIT %d OFFSET %d";
 	$all_params = array_merge( $params, [ $per_page, $offset ] );
 	$rows       = $wpdb->get_results( $wpdb->prepare( $data_sql, $all_params ) );
 	// phpcs:enable
@@ -188,7 +233,10 @@ function me_ajax_orders_get(): void {
 	}
 
 	$row = $wpdb->get_row( $wpdb->prepare(
-		'SELECT * FROM `crm_fintech_payment_orders` WHERE `id` = %d',
+		"SELECT o.*, m.`name` AS merchant_name, CAST(m.`chat_id` AS CHAR) AS merchant_chat_id, m.`telegram_username` AS merchant_telegram_username
+		 FROM `crm_fintech_payment_orders` o
+		 LEFT JOIN `crm_merchants` m ON m.`id` = o.`merchant_id` AND m.`company_id` = o.`company_id`
+		 WHERE o.`id` = %d",
 		$id
 	) );
 
@@ -213,17 +261,32 @@ function me_ajax_orders_create(): void {
 		wp_send_json_error( [ 'message' => 'Нарушена безопасность запроса.' ], 403 );
 	}
 
-	$amount_usdt = isset( $_POST['amount_usdt'] ) ? (float) $_POST['amount_usdt'] : 0;
-	if ( $amount_usdt <= 0 ) {
-		wp_send_json_error( [ 'message' => 'Укажите корректную сумму USDT (больше нуля).' ] );
+	$_create_uid        = get_current_user_id();
+	$_create_company_id = _me_orders_require_current_company();
+	$_create_input_mode = function_exists( 'crm_fintech_company_create_order_input_mode' )
+		? crm_fintech_company_create_order_input_mode( $_create_company_id )
+		: 'usdt';
+
+	$posted_input_mode = sanitize_key( (string) wp_unslash( $_POST['amount_mode'] ?? '' ) );
+	if ( $posted_input_mode !== '' && $posted_input_mode !== $_create_input_mode ) {
+		wp_send_json_error( [
+			'message' => 'Настройки компании изменились. Обновите страницу и попробуйте снова.',
+		], 409 );
+	}
+
+	$amount_value = isset( $_POST['amount_value'] ) ? (float) wp_unslash( $_POST['amount_value'] ) : 0;
+	if ( $amount_value <= 0 ) {
+		wp_send_json_error( [
+			'message' => $_create_input_mode === 'rub'
+				? 'Укажите корректную сумму RUB (больше нуля).'
+				: 'Укажите корректную сумму USDT (больше нуля).',
+		] );
 	}
 
 	$description = isset( $_POST['description'] )
 		? sanitize_text_field( wp_unslash( $_POST['description'] ) )
 		: '';
 
-	$_create_uid        = get_current_user_id();
-	$_create_company_id = _me_orders_require_current_company();
 	$_active_provider   = crm_fintech_normalize_provider_code(
 		(string) crm_get_setting( 'fintech_active_provider', $_create_company_id, '' )
 	);
@@ -237,13 +300,24 @@ function me_ajax_orders_create(): void {
 		], 403 );
 	}
 
-	$result = crm_fintech_create_order(
-		$amount_usdt,
-		$_create_company_id,
-		'web',                      // source_channel
-		$_create_uid,
-		$description
-	);
+	if ( $_create_input_mode === 'rub' ) {
+		$result = crm_fintech_create_order_by_payment_amount(
+			$amount_value,
+			'RUB',
+			$_create_company_id,
+			'web',
+			$_create_uid,
+			$description
+		);
+	} else {
+		$result = crm_fintech_create_order(
+			$amount_value,
+			$_create_company_id,
+			'web',                      // source_channel
+			$_create_uid,
+			$description
+		);
+	}
 
 	if ( empty( $result['success'] ) ) {
 		wp_send_json_error( [ 'message' => $result['error'] ?? 'Ошибка создания ордера.' ] );
@@ -257,6 +331,8 @@ function me_ajax_orders_create(): void {
 		'qrc_id'             => $result['qrc_id'],
 		'qr_url'             => $result['qr_url'],
 		'provider'           => $result['provider'],
+		'amount_mode'        => $_create_input_mode,
+		'amount_usdt'        => $result['amount_usdt'] ?? null,
 		'payment_amount_rub' => $result['payment_amount_rub'],
 		'warning'            => $result['warning'] ?? null,
 	] );
@@ -499,6 +575,11 @@ function _me_orders_format_row( object $row, bool $full = false ): array {
 		'id'                    => (int) $row->id,
 		'company_id'            => (int) $row->company_id,
 		'office_id'             => $row->office_id ? (int) $row->office_id : null,
+		'merchant_id'           => $row->merchant_id ? (int) $row->merchant_id : null,
+		'merchant_name'         => isset( $row->merchant_name ) ? (string) $row->merchant_name : '',
+		'merchant_chat_id'      => isset( $row->merchant_chat_id ) ? (string) $row->merchant_chat_id : '',
+		'merchant_telegram_username' => isset( $row->merchant_telegram_username ) ? (string) $row->merchant_telegram_username : '',
+		'created_for_type'      => isset( $row->created_for_type ) && $row->created_for_type === 'merchant' ? 'merchant' : 'company',
 		'provider_code'         => $row->provider_code,
 		'source_channel'        => $row->source_channel,
 		'merchant_order_id'     => $row->merchant_order_id,

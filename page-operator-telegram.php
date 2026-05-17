@@ -645,6 +645,9 @@ get_header();
 	min-height: 32px;
 	font-weight: 600;
 }
+#operator-users-table .row-action-menu .dropdown-menu {
+	margin-top: 6px;
+}
 #operator-users-table .dropdown-menu {
 	min-width: 268px;
 	padding: 8px 0;
@@ -695,6 +698,7 @@ add_action(
 	'use strict';
 
 	var AJAX_URL = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
+	var ORDERS_PAGE_URL = '<?php echo esc_js( home_url( '/orders/' ) ); ?>';
 	var NONCE = '<?php echo esc_js( $nonce_invite ); ?>';
 	var CAN_INVITE = <?php echo $can_invite ? 'true' : 'false'; ?>;
 	var OPERATOR_INVITE_STATUS = <?php echo crm_json_for_inline_js( $telegram_status ); ?> || {};
@@ -844,22 +848,23 @@ add_action(
 		var title = OPERATOR_INVITE_STATUS.operator_ready ? '' : (OPERATOR_INVITE_STATUS.blocked_reason || 'Сначала подключите операторский Telegram callback в настройках.');
 		var userName = row.name || row.user_login || ('User #' + row.user_id);
 		var isLinked = row.telegram_status && row.telegram_status !== 'not_linked';
-		var primary = isLinked
-			? '<button type="button" class="btn btn-default js-focus-operator-invite-history" data-user-id="' + escHtml(row.user_id) + '" data-user-name="' + escHtml(userName) + '">История</button>'
-			: '<button type="button" class="btn btn-default js-open-operator-invite-modal" data-user-id="' + escHtml(row.user_id) + '" data-user-name="' + escHtml(userName) + '" title="' + escHtml(title) + '"' + disabled + '>Инвайт</button>';
 		var menu = '';
 		if (isLinked && row.chat_id) {
-			menu += '<a href="#" class="dropdown-item operator-action-item js-copy-operator-chat-id" data-chat-id="' + escHtml(row.chat_id) + '"><i class="pg-icon operator-action-icon">copy</i><span>Скопировать chat_id</span></a>';
-			menu += '<a href="#" class="dropdown-item operator-action-item js-refresh-operator-profile" data-user-id="' + escHtml(row.user_id) + '"><i class="pg-icon operator-action-icon">refresh</i><span>Обновить аватар</span></a>';
-			menu += '<div class="dropdown-divider"></div>';
+			menu += '<a href="#" class="dropdown-item operator-action-item js-open-operator-orders" data-chat-id="' + escHtml(row.chat_id) + '"><i class="pg-icon operator-action-icon">menu</i><span>Ордера</span></a>';
 		}
 		menu += '<a href="#" class="dropdown-item operator-action-item js-focus-operator-invite-history" data-user-id="' + escHtml(row.user_id) + '" data-user-name="' + escHtml(userName) + '"><i class="pg-icon operator-action-icon">time</i><span>История инвайтов</span></a>';
 		menu += '<a href="#" class="dropdown-item operator-action-item js-open-operator-invite-modal' + (OPERATOR_INVITE_STATUS.operator_ready ? '' : ' disabled') + '" data-user-id="' + escHtml(row.user_id) + '" data-user-name="' + escHtml(userName) + '" title="' + escHtml(title) + '"><i class="pg-icon operator-action-icon">link</i><span>Создать новый инвайт</span></a>';
+		if (isLinked && row.chat_id) {
+			menu += '<div class="dropdown-divider"></div>';
+			menu += '<a href="#" class="dropdown-item operator-action-item js-copy-operator-chat-id" data-chat-id="' + escHtml(row.chat_id) + '"><i class="pg-icon operator-action-icon">copy</i><span>Скопировать chat_id</span></a>';
+			menu += '<a href="#" class="dropdown-item operator-action-item js-refresh-operator-profile" data-user-id="' + escHtml(row.user_id) + '"><i class="pg-icon operator-action-icon">refresh</i><span>Обновить аватар</span></a>';
+		}
 
 		return ''
-			+ '<div class="btn-group btn-group-sm">'
-			+ primary
-			+ '<button type="button" class="btn btn-default dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false"></button>'
+			+ '<div class="btn-group btn-group-sm row-action-menu">'
+			+ '<button type="button" class="btn btn-default btn-xs dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Действия оператора">'
+			+ '<i class="pg-icon">more_vertical</i>'
+			+ '</button>'
 			+ '<div class="dropdown-menu dropdown-menu-right">'
 			+ menu
 			+ '</div></div>';
@@ -1291,6 +1296,20 @@ add_action(
 		});
 	}
 
+	function openOperatorOrdersPage(chatId) {
+		chatId = $.trim(String(chatId || ''));
+		if (!chatId) {
+			showToast('У оператора нет привязанного chat_id для перехода к ордерам.', 'warning');
+			return;
+		}
+
+		window.location.assign(ORDERS_PAGE_URL + '?' + $.param({
+			contour: 'company',
+			source_channel: 'telegram_operator',
+			search: chatId
+		}));
+	}
+
 	function refreshOperatorInviteHistoryUiState() {
 		renderOperatorInviteHistoryRows(Object.keys(operatorInviteHistoryMap).map(function(key) {
 			return operatorInviteHistoryMap[key];
@@ -1307,6 +1326,11 @@ add_action(
 	$(document).on('click', '.js-copy-operator-chat-id', function(e) {
 		e.preventDefault();
 		copyText($(this).data('chat-id'), 'chat_id оператора скопирован.');
+	});
+
+	$(document).on('click', '.js-open-operator-orders', function(e) {
+		e.preventDefault();
+		openOperatorOrdersPage($(this).data('chat-id'));
 	});
 
 	$(document).on('click', '.js-refresh-operator-profile', function(e) {

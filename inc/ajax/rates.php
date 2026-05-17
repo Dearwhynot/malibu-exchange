@@ -54,6 +54,21 @@ function me_ajax_rates_save(): void {
 	}
 
 	$org_id = _me_rates_require_current_company();
+	if ( function_exists( 'crm_company_contour_is_enabled' ) && ! crm_company_contour_is_enabled( $org_id, RATES_PAIR_CODE ) ) {
+		$pair_def = function_exists( 'crm_root_get_pair_definition' ) ? crm_root_get_pair_definition( RATES_PAIR_CODE ) : null;
+		_me_rates_fail(
+			sprintf(
+				'Направление %s отключено root\'ом и недоступно для сохранения.',
+				is_array( $pair_def ) ? (string) $pair_def['title'] : RATES_PAIR_CODE
+			),
+			403,
+			[
+				'pair_code' => RATES_PAIR_CODE,
+				'org_id'    => $org_id,
+				'reason'    => 'contour_disabled',
+			]
+		);
+	}
 
 	$result = rates_refresh_ex24_snapshot( $org_id, 'web', RATES_PAIR_CODE, RATES_PROVIDER_SOURCE );
 	if ( empty( $result['ok'] ) ) {
@@ -110,6 +125,40 @@ function me_ajax_market_snapshot_save(): void {
 
 	if ( ! in_array( $source, MARKET_SNAPSHOT_SOURCES, true ) ) {
 		_me_rates_fail( 'Неизвестный источник: ' . $source, 400, [ 'source' => $source ] );
+	}
+
+	if ( $source === 'bitkub' || $source === 'binance_th' ) {
+		if ( function_exists( 'crm_company_contour_is_enabled' ) && ! crm_company_contour_is_enabled( $org_id, 'USDT_THB' ) ) {
+			_me_rates_fail(
+				'Контур USDT/THB отключён root\'ом и недоступен для сохранения.',
+				403,
+				[
+					'source'    => $source,
+					'pair_code' => 'USDT_THB',
+					'org_id'    => $org_id,
+					'reason'    => 'contour_disabled',
+				]
+			);
+		}
+	}
+
+	if ( $source === 'rapira' ) {
+		$fixation_mode = function_exists( 'crm_company_get_rub_usdt_fixation_mode' )
+			? crm_company_get_rub_usdt_fixation_mode( $org_id )
+			: 'rapira_manual';
+
+		if ( $fixation_mode !== 'rapira_manual' ) {
+			_me_rates_fail(
+				'Прямая фиксация Rapira для RUB/USDT отключена: используйте сервисный Telegram-контур.',
+				403,
+				[
+					'source'         => $source,
+					'org_id'         => $org_id,
+					'fixation_mode'  => $fixation_mode,
+					'reason'         => 'manual_fixation_disabled',
+				]
+			);
+		}
 	}
 
 	// Получаем свежие данные (не кэш — сохраняем актуальный срез)

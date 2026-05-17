@@ -64,6 +64,13 @@ if ( ! function_exists( 'tg_project_should_bypass_acl' ) ) {
 
 		if (
 			function_exists( 'crm_telegram_get_callback_bot_context' )
+			&& crm_telegram_get_callback_bot_context() === 'service'
+		) {
+			return false;
+		}
+
+		if (
+			function_exists( 'crm_telegram_get_callback_bot_context' )
 			&& crm_telegram_get_callback_bot_context() === 'operator'
 		) {
 			return function_exists( 'crm_operator_tg_should_bypass_acl' )
@@ -85,6 +92,13 @@ if ( ! function_exists( 'tg_project_handle_start_command' ) ) {
 
 		$company_id = crm_telegram_get_callback_company_id();
 		if ( $company_id <= 0 ) {
+			return false;
+		}
+
+		if (
+			function_exists( 'crm_telegram_get_callback_bot_context' )
+			&& crm_telegram_get_callback_bot_context() === 'service'
+		) {
 			return false;
 		}
 
@@ -189,6 +203,8 @@ if ( ! function_exists( 'tg_project_handle_start_command' ) ) {
 		if ( ! isset( crm_merchant_markup_types()[ $markup_type ] ) ) {
 			$markup_type = 'percent';
 		}
+		$markup_basis = crm_merchant_normalize_markup_basis( (string) ( $prefill['base_markup_basis'] ?? 'acquirer_cost' ) );
+		$rub_invoice_markup_mode = crm_merchant_normalize_rub_invoice_markup_mode( (string) ( $prefill['rub_invoice_markup_mode'] ?? 'none' ) );
 
 		$markup_value = trim( (string) ( $prefill['base_markup_value'] ?? '0' ) );
 		if ( $markup_value === '' || ! is_numeric( $markup_value ) ) {
@@ -378,6 +394,8 @@ if ( ! function_exists( 'tg_project_handle_start_command' ) ) {
 				'name'                   => $display_name !== '' ? $display_name : null,
 				'status'                 => CRM_MERCHANT_STATUS_PENDING,
 				'base_markup_type'       => $markup_type,
+				'base_markup_basis'      => $markup_basis,
+				'rub_invoice_markup_mode'=> $rub_invoice_markup_mode,
 				'base_markup_value'      => $markup_value,
 				'note'                   => ! empty( $prefill['note'] ) ? sanitize_textarea_field( (string) $prefill['note'] ) : null,
 				'created_by_user_id'     => ! empty( $invite->created_by_user_id ) ? (int) $invite->created_by_user_id : null,
@@ -388,7 +406,7 @@ if ( ! function_exists( 'tg_project_handle_start_command' ) ) {
 			],
 			[
 				'%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s',
-				'%s', '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s',
+				'%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s',
 			]
 		);
 

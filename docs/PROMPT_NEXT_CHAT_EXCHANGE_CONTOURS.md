@@ -30,6 +30,13 @@
 - Не хранить новые project settings в `wp_options`.
 - Не делать новый master JSON setting вида `enabled_contours`, который дублирует текущие storage-слои.
 - `orders` и `create-order` не привязывать автоматически к выключению направления `RUB/THB`. Они пока остаются fintech contour.
+- Если компания работает по Kanyon c `fintech_pay2day_order_currency = RUB`, web `create-order` и operator bot должны использовать один и тот же RUB-input contour через `paymentAmount`.
+- Если `fintech_pay2day_order_currency = USDT`, и web, и operator bot должны оставаться на legacy USDT-input contour через `orderAmount`.
+- Не заводить для operator bot отдельную трактовку суммы, отличную от `create-order`.
+- Точно так же не разводить web и operator bot по `Ext Order ID` / payment purpose:
+  - источник по умолчанию один: `fintech_pay2day_default_payment_purpose`;
+  - если появится ручной override перед выпуском счёта, он должен проектироваться одинаково в обоих контурах;
+  - нельзя светить в одном контуре company payment purpose, а в другом оставлять технический order token.
 - Для root company settings UI использовать чекбоксы в текущем визуальном стиле темы, не multiselect.
 
 Что считать правильной архитектурой:
@@ -62,4 +69,3 @@
 - Проведи локальную проверку, насколько это возможно.
 - Если изменения meaningful, следуй проектному правилу и задеплой измененные файлы на test server.
 - В финале дай короткое summary и обязательный QA block в формате из `AGENTS.md`.
-

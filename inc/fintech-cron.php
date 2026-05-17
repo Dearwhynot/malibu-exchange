@@ -107,7 +107,8 @@ function crm_fintech_cron_poll_orders(): void {
  * Возвращает true если уведомление успешно отправлено.
  */
 function crm_fintech_cron_notify_telegram( object $order ): bool {
-	if ( ( $order->source_channel ?? '' ) !== 'telegram' ) {
+	$telegram_sources = [ 'telegram', 'telegram_operator', 'telegram_merchant', 'telegram_service' ];
+	if ( ! in_array( (string) ( $order->source_channel ?? '' ), $telegram_sources, true ) ) {
 		return false;
 	}
 
@@ -149,7 +150,22 @@ function crm_fintech_cron_notify_telegram( object $order ): bool {
 		return false;
 	}
 
-	$token = crm_get_setting( 'telegram_bot_token', $company_id, '' );
+	$source_channel = (string) ( $order->source_channel ?? '' );
+	$bot_context = 'merchant';
+	if ( $source_channel === 'telegram_operator' ) {
+		$bot_context = 'operator';
+	} elseif ( $source_channel === 'telegram_service' ) {
+		$bot_context = 'service';
+	}
+
+	$telegram_settings = function_exists( 'crm_telegram_collect_settings' )
+		? crm_telegram_collect_settings( $company_id, $bot_context )
+		: [];
+
+	$token = trim( (string) ( $telegram_settings['bot_token'] ?? '' ) );
+	if ( $token === '' && $bot_context === 'merchant' ) {
+		$token = crm_get_setting( 'telegram_bot_token', $company_id, '' );
+	}
 	if ( $token === '' ) {
 		return false;
 	}

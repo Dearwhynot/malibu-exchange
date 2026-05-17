@@ -103,7 +103,8 @@ function crm_fintech_save_order(
 	array $invoice,
 	int $company_id = 0,
 	string $source_channel = 'web',
-	?int $created_by_user_id = null
+	?int $created_by_user_id = null,
+	array $overrides = []
 ): ?int {
 	global $wpdb;
 
@@ -121,31 +122,34 @@ function crm_fintech_save_order(
 	$payment_rub     = isset( $invoice['paymentAmountRub'] ) ? round( $invoice['paymentAmountRub'] / 100, 2 ) : null;
 	$now             = current_time( 'mysql' );
 
-	$wpdb->insert(
-		'crm_fintech_payment_orders',
-		[
-			'company_id'                    => $company_id,
-			'provider_code'                 => (string) ( $invoice['provider']            ?? '' ),
-			'source_channel'                => $source_channel,
-			'merchant_order_id'             => (string) ( $invoice['merchantOrderId']     ?? '' ),
-			'provider_order_id'             => (string) ( $invoice['orderId']             ?? '' ),
-			'provider_external_order_id'    => isset( $invoice['externalOrderId'] ) ? (string) $invoice['externalOrderId'] : null,
-			'status_code'                   => $status_code,
-			'provider_status_code'          => $provider_status !== '' ? $provider_status : null,
-			'amount_asset_code'             => 'USDT',
-			'amount_asset_value'            => $amount_usdt,
-			'payment_currency_code'         => 'RUB',
-			'payment_amount_value'          => $payment_rub,
-			'payment_link'                  => isset( $invoice['payload'] )     ? (string) $invoice['payload']     : null,
-			'qrc_id'                        => isset( $invoice['qrcId'] )       ? (string) $invoice['qrcId']       : null,
-			'provider_public_link'          => isset( $invoice['publicLink'] )  ? (string) $invoice['publicLink']  : null,
-			'provider_requires_verification'=> ! empty( $invoice['requiresVerification'] ) ? 1 : 0,
-			'created_by_user_id'            => $created_by_user_id,
-			'create_response_payload_json'  => wp_json_encode( $invoice['raw'] ?? [], JSON_UNESCAPED_UNICODE ),
-			'created_at'                    => $now,
-			'updated_at'                    => $now,
-		]
-	);
+	$row = [
+		'company_id'                    => $company_id,
+		'provider_code'                 => (string) ( $invoice['provider']            ?? '' ),
+		'source_channel'                => $source_channel,
+		'merchant_order_id'             => (string) ( $invoice['merchantOrderId']     ?? '' ),
+		'provider_order_id'             => (string) ( $invoice['orderId']             ?? '' ),
+		'provider_external_order_id'    => isset( $invoice['externalOrderId'] ) ? (string) $invoice['externalOrderId'] : null,
+		'status_code'                   => $status_code,
+		'provider_status_code'          => $provider_status !== '' ? $provider_status : null,
+		'amount_asset_code'             => 'USDT',
+		'amount_asset_value'            => $amount_usdt,
+		'payment_currency_code'         => 'RUB',
+		'payment_amount_value'          => $payment_rub,
+		'payment_link'                  => isset( $invoice['payload'] )     ? (string) $invoice['payload']     : null,
+		'qrc_id'                        => isset( $invoice['qrcId'] )       ? (string) $invoice['qrcId']       : null,
+		'provider_public_link'          => isset( $invoice['publicLink'] )  ? (string) $invoice['publicLink']  : null,
+		'provider_requires_verification'=> ! empty( $invoice['requiresVerification'] ) ? 1 : 0,
+		'created_by_user_id'            => $created_by_user_id,
+		'create_response_payload_json'  => wp_json_encode( $invoice['raw'] ?? [], JSON_UNESCAPED_UNICODE ),
+		'created_at'                    => $now,
+		'updated_at'                    => $now,
+	];
+
+	if ( ! empty( $overrides ) ) {
+		$row = array_merge( $row, $overrides );
+	}
+
+	$wpdb->insert( 'crm_fintech_payment_orders', $row );
 
 	$order_id = (int) $wpdb->insert_id;
 	if ( $order_id <= 0 ) {
@@ -169,27 +173,24 @@ function crm_fintech_save_order(
 	return $order_id;
 }
 
-// ─── Main orchestration ───────────────────────────────────────────────────────
+// ─── Shared create-order helpers ─────────────────────────────────────────────
 
 /**
- * Создаёт платёжный ордер: вызывает gateway → сохраняет в БД → генерирует QR.
+ * Общая подготовка перед созданием company-order.
  *
- * Возвращает массив:
- *   success (bool), order_db_id (?int), merchant_order_id, provider_order_id,
- *   payment_link, qrc_id, payload, qr_url, provider, payment_amount_rub, warning (?string), error (?string)
+ * Возвращает:
+ *   success (bool), error (?string), active_provider (?string)
  */
-function crm_fintech_create_order(
-	float $amount_usdt,
-	int $company_id = 0,
-	string $source_channel = 'web',
-	?int $created_by_user_id = null,
-	string $description = ''
+function _crm_fintech_prepare_create_order(
+	int $company_id,
+	string $source_channel,
+	array $log_context = []
 ): array {
 	if ( $company_id < 0 ) {
 		return [
-			'success'     => false,
-			'order_db_id' => null,
-			'error'       => 'Операция требует валидную компанию пользователя.',
+			'success'         => false,
+			'active_provider' => null,
+			'error'           => 'Операция требует валидную компанию пользователя.',
 		];
 	}
 
@@ -210,26 +211,28 @@ function crm_fintech_create_order(
 			'message'     => $error_message,
 			'target_type' => 'payment_order',
 			'is_success'  => false,
-			'context'     => [
-				'company_id'     => $company_id,
-				'provider'       => $active_provider,
-				'amount_usdt'    => $amount_usdt,
-				'source_channel' => $source_channel,
-			],
+			'context'     => array_merge(
+				[
+					'company_id'     => $company_id,
+					'provider'       => $active_provider,
+					'source_channel' => $source_channel,
+				],
+				$log_context
+			),
 		] );
 
 		return [
-			'success'     => false,
-			'order_db_id' => null,
-			'error'       => $error_message,
+			'success'         => false,
+			'active_provider' => $active_provider,
+			'error'           => $error_message,
 		];
 	}
 
 	// Проверяем наличие настроек СТРОГО для этой компании.
 	// Запрещено использовать настройки другой компании — это финансовая операция.
 	if ( ! crm_fintech_is_configured( $company_id ) ) {
-		$config_status   = crm_fintech_get_configuration_status( $company_id );
-		$missing_labels  = array_map(
+		$config_status  = crm_fintech_get_configuration_status( $company_id );
+		$missing_labels = array_map(
 			static fn( $item ) => (string) ( $item['label'] ?? '' ),
 			$config_status['missing_fields'] ?? []
 		);
@@ -241,17 +244,139 @@ function crm_fintech_create_order(
 			'action'     => 'create',
 			'message'    => sprintf( 'Попытка создать ордер: платёжный шлюз не настроен для компании %d', $company_id ),
 			'is_success' => false,
-			'context'    => [ 'company_id' => $company_id, 'amount_usdt' => $amount_usdt ],
+			'context'    => array_merge(
+				[ 'company_id' => $company_id, 'source_channel' => $source_channel ],
+				$log_context
+			),
 		] );
 
 		return [
-			'success'     => false,
-			'order_db_id' => null,
-			'error'       => sprintf(
+			'success'         => false,
+			'active_provider' => $active_provider,
+			'error'           => sprintf(
 				'Платёжный шлюз не настроен для вашей компании (ID: %d).%s',
 				$company_id,
 				! empty( $missing_labels ) ? ' Не хватает: ' . implode( ', ', $missing_labels ) . '.' : ' Обратитесь к администратору системы.'
 			),
+		];
+	}
+
+	return [
+		'success'         => true,
+		'active_provider' => $active_provider,
+		'error'           => null,
+	];
+}
+
+/**
+ * Общая финализация созданного provider-order: БД, QR, единый ответ и аудит.
+ */
+function _crm_fintech_finalize_created_order(
+	array $invoice,
+	int $company_id,
+	string $source_channel,
+	?int $created_by_user_id,
+	array $success_context = []
+): array {
+	$order_db_id = crm_fintech_save_order( $invoice, $company_id, $source_channel, $created_by_user_id );
+
+	$payload = (string) ( $invoice['payload'] ?? '' );
+	$qrc_id  = (string) ( $invoice['qrcId']   ?? '' );
+	$qr_url  = null;
+
+	if ( $payload !== '' && $qrc_id !== '' ) {
+		$order_id_str = (string) ( $invoice['merchantOrderId'] ?? ( (string) ( $order_db_id ?? '0' ) ) );
+		$qr_url       = crm_fintech_qr_url( $payload, $qrc_id, $order_id_str );
+	}
+
+	crm_log( 'payment.order.created', [
+		'category'    => 'payments',
+		'level'       => 'info',
+		'action'      => 'create',
+		'message'     => 'Создан платёжный ордер',
+		'target_type' => 'payment_order',
+		'target_id'   => $order_db_id,
+		'is_success'  => true,
+		'context'     => array_merge(
+			[
+				'provider'          => $invoice['provider'] ?? null,
+				'merchant_order_id' => $invoice['merchantOrderId'] ?? null,
+				'source_channel'    => $source_channel,
+				'company_id'        => $company_id,
+			],
+			$success_context
+		),
+	] );
+
+	return [
+		'success'              => true,
+		'order_db_id'          => $order_db_id,
+		'merchant_order_id'    => (string) ( $invoice['merchantOrderId']  ?? '' ),
+		'provider_order_id'    => (string) ( $invoice['orderId']           ?? '' ),
+		'amount_usdt'          => isset( $invoice['amountUsdt'] ) ? (float) $invoice['amountUsdt'] : null,
+		'payment_link'         => $payload,
+		'qrc_id'               => $qrc_id,
+		'payload'              => $payload,
+		'qr_url'               => $qr_url,
+		'provider'             => (string) ( $invoice['provider']          ?? '' ),
+		'payload_mode'         => (string) ( $invoice['payloadMode']       ?? '' ),
+		'payment_amount_rub'   => isset( $invoice['paymentAmountRub'] ) ? round( $invoice['paymentAmountRub'] / 100, 2 ) : null,
+		'payment_currency_code'=> isset( $invoice['paymentCurrencyCode'] ) ? (string) $invoice['paymentCurrencyCode'] : null,
+		'warning'              => isset( $invoice['warning'] ) ? (string) $invoice['warning'] : null,
+		'error'                => null,
+	];
+}
+
+/**
+ * Определяет input contour для company create-order form.
+ * `rub` включается только для Kanyon-компаний с `fintech_pay2day_order_currency = RUB`.
+ */
+function crm_fintech_company_create_order_input_mode( int $company_id ): string {
+	if ( $company_id <= 0 ) {
+		return 'usdt';
+	}
+
+	$provider_code  = crm_fintech_normalize_provider_code(
+		(string) crm_get_setting( 'fintech_active_provider', $company_id, '' )
+	);
+	$order_currency = crm_fintech_normalize_kanyon_order_currency(
+		(string) crm_get_setting( 'fintech_pay2day_order_currency', $company_id, '' )
+	);
+
+	if ( $provider_code === 'kanyon' && $order_currency === 'RUB' ) {
+		return 'rub';
+	}
+
+	return 'usdt';
+}
+
+// ─── Main orchestration ───────────────────────────────────────────────────────
+
+/**
+ * Создаёт платёжный ордер: вызывает gateway → сохраняет в БД → генерирует QR.
+ *
+ * Возвращает массив:
+ *   success (bool), order_db_id (?int), merchant_order_id, provider_order_id,
+ *   payment_link, qrc_id, payload, qr_url, provider, payment_amount_rub, warning (?string), error (?string)
+ */
+function crm_fintech_create_order(
+	float $amount_usdt,
+	int $company_id = 0,
+	string $source_channel = 'web',
+	?int $created_by_user_id = null,
+	string $description = ''
+): array {
+	$preflight = _crm_fintech_prepare_create_order(
+		$company_id,
+		$source_channel,
+		[ 'amount_usdt' => $amount_usdt ]
+	);
+
+	if ( empty( $preflight['success'] ) ) {
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => $preflight['error'] ?? 'Ошибка создания ордера.',
 		];
 	}
 
@@ -281,48 +406,91 @@ function crm_fintech_create_order(
 		];
 	}
 
-	$order_db_id = crm_fintech_save_order( $invoice, $company_id, $source_channel, $created_by_user_id );
+	return _crm_fintech_finalize_created_order(
+		$invoice,
+		$company_id,
+		$source_channel,
+		$created_by_user_id,
+		[ 'amount_usdt' => $amount_usdt ]
+	);
+}
 
-	$payload = (string) ( $invoice['payload'] ?? '' );
-	$qrc_id  = (string) ( $invoice['qrcId']   ?? '' );
-	$qr_url  = null;
+/**
+ * Создаёт company-order из суммы оплаты в RUB для нового Kanyon paymentAmount contour.
+ *
+ * Возвращает тот же ответ, что и crm_fintech_create_order(), но входная сумма трактуется
+ * как сумма платежа клиента в payment currency.
+ */
+function crm_fintech_create_order_by_payment_amount(
+	float $payment_amount,
+	string $payment_currency_code,
+	int $company_id = 0,
+	string $source_channel = 'web',
+	?int $created_by_user_id = null,
+	string $description = ''
+): array {
+	$payment_currency_code = strtoupper( trim( $payment_currency_code ) );
 
-	if ( $payload !== '' && $qrc_id !== '' ) {
-		$order_id_str = (string) ( $invoice['merchantOrderId'] ?? ( (string) ( $order_db_id ?? '0' ) ) );
-		$qr_url = crm_fintech_qr_url( $payload, $qrc_id, $order_id_str );
+	$preflight = _crm_fintech_prepare_create_order(
+		$company_id,
+		$source_channel,
+		[
+			'payment_amount'        => $payment_amount,
+			'payment_currency_code' => $payment_currency_code,
+		]
+	);
+
+	if ( empty( $preflight['success'] ) ) {
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => $preflight['error'] ?? 'Ошибка создания ордера.',
+		];
 	}
 
-	crm_log( 'payment.order.created', [
-		'category'    => 'payments',
-		'level'       => 'info',
-		'action'      => 'create',
-		'message'     => 'Создан платёжный ордер',
-		'target_type' => 'payment_order',
-		'target_id'   => $order_db_id,
-		'is_success'  => true,
-		'context'     => [
-			'amount_usdt'       => $amount_usdt,
-			'provider'          => $invoice['provider'],
-			'merchant_order_id' => $invoice['merchantOrderId'] ?? null,
-			'source_channel'    => $source_channel,
-			'company_id'        => $company_id,
-		],
-	] );
+	Fintech_Payment_Gateway::set_company_id( $company_id );
+	$invoice = Fintech_Payment_Gateway::create_invoice_by_payment_amount(
+		$payment_amount,
+		$payment_currency_code,
+		null,
+		$description
+	);
 
-	return [
-		'success'            => true,
-		'order_db_id'        => $order_db_id,
-		'merchant_order_id'  => (string) ( $invoice['merchantOrderId']  ?? '' ),
-		'provider_order_id'  => (string) ( $invoice['orderId']           ?? '' ),
-		'payment_link'       => $payload,
-		'qrc_id'             => $qrc_id,
-		'payload'            => $payload,
-		'qr_url'             => $qr_url,
-		'provider'           => (string) ( $invoice['provider']          ?? '' ),
-		'payment_amount_rub' => isset( $invoice['paymentAmountRub'] ) ? round( $invoice['paymentAmountRub'] / 100, 2 ) : null,
-		'warning'            => isset( $invoice['warning'] ) ? (string) $invoice['warning'] : null,
-		'error'              => null,
-	];
+	if ( empty( $invoice['success'] ) ) {
+		crm_log( 'payment.order.create_failed', [
+			'category'    => 'payments',
+			'level'       => 'error',
+			'action'      => 'create',
+			'message'     => 'Ошибка создания paymentAmount-ордера: ' . ( $invoice['error'] ?? 'unknown' ),
+			'target_type' => 'payment_order',
+			'is_success'  => false,
+			'context'     => [
+				'payment_amount'        => $payment_amount,
+				'payment_currency_code' => $payment_currency_code,
+				'provider'              => $invoice['provider'] ?? null,
+				'source_channel'        => $source_channel,
+				'error'                 => $invoice['error'] ?? null,
+			],
+		] );
+
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => $invoice['error'] ?? 'Gateway error',
+		];
+	}
+
+	return _crm_fintech_finalize_created_order(
+		$invoice,
+		$company_id,
+		$source_channel,
+		$created_by_user_id,
+		[
+			'payment_amount'        => $payment_amount,
+			'payment_currency_code' => $payment_currency_code,
+			'amount_usdt'           => isset( $invoice['amountUsdt'] ) ? (float) $invoice['amountUsdt'] : null,
+		]
+	);
 }
 
 // ─── Poll order status ────────────────────────────────────────────────────────
@@ -382,7 +550,10 @@ function crm_fintech_poll_order_status( object $order ): array {
 	$update = [ 'last_checked_at' => $now, 'updated_at' => $now ];
 
 	if (
-		( empty( $order->payment_link ) || empty( $order->qrc_id ) )
+		(
+			( empty( $order->payment_link ) || empty( $order->qrc_id ) )
+			|| ( isset( $order->amount_asset_value ) && (float) $order->amount_asset_value <= 0 )
+		)
 		&& ! empty( $order->provider_code )
 		&& $provider_order_id !== ''
 	) {
@@ -401,6 +572,13 @@ function crm_fintech_poll_order_status( object $order ): array {
 
 		$order_data_result = Fintech_Payment_Gateway::get_order_data_for_provider( (string) ( $order->provider_code ?? '' ), $provider_order_id );
 		if ( ! empty( $order_data_result['success'] ) ) {
+			if (
+				isset( $order_data_result['order']['orderAmount'] )
+				&& $order_data_result['order']['orderAmount'] !== null
+				&& (int) $order_data_result['order']['orderAmount'] > 0
+			) {
+				$update['amount_asset_value'] = round( ( (int) $order_data_result['order']['orderAmount'] ) / 100, 8 );
+			}
 			if ( ! empty( $order_data_result['payload'] ) ) {
 				$update['payment_link'] = (string) $order_data_result['payload'];
 			}
@@ -415,6 +593,9 @@ function crm_fintech_poll_order_status( object $order ): array {
 			}
 			if ( empty( $update['provider_status_code'] ) && ! empty( $order_data_result['providerStatus'] ) ) {
 				$update['provider_status_code'] = (string) $order_data_result['providerStatus'];
+			}
+			if ( ! empty( $order_data_result['raw'] ) ) {
+				$update['last_provider_payload_json'] = wp_json_encode( $order_data_result['raw'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
 			}
 		}
 	}
@@ -459,6 +640,10 @@ function crm_fintech_poll_order_status( object $order ): array {
 				'provider_status'   => $provider_status,
 			],
 		] );
+	}
+
+	if ( $new_status === 'paid' ) {
+		crm_merchant_create_paid_order_accrual( $order_db_id, 'poll' );
 	}
 
 	return [
@@ -554,6 +739,10 @@ function crm_fintech_process_callback( array $event, array $payload, array $head
 	// Дубликат в терминальном статусе — просто отмечаем как duplicate
 	$terminal = [ 'paid', 'declined', 'cancelled', 'expired' ];
 	if ( in_array( $old_status, $terminal, true ) && $old_status === $new_status ) {
+		if ( $new_status === 'paid' ) {
+			crm_merchant_create_paid_order_accrual( $order_db_id, 'callback_duplicate' );
+		}
+
 		if ( $callback_id ) {
 			$wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 				'crm_fintech_payment_callbacks',
@@ -590,6 +779,9 @@ function crm_fintech_process_callback( array $event, array $payload, array $head
 	if ( isset( $event['paymentAmount'] ) && $event['paymentAmount'] !== null ) {
 		$update['payment_amount_value'] = round( $event['paymentAmount'] / 100, 2 );
 	}
+	if ( isset( $event['orderAmount'] ) && $event['orderAmount'] !== null && (int) $event['orderAmount'] > 0 ) {
+		$update['amount_asset_value'] = round( ( (int) $event['orderAmount'] ) / 100, 8 );
+	}
 	if ( ! empty( $event['qrcId'] ) ) {
 		$update['qrc_id'] = (string) $event['qrcId'];
 	}
@@ -598,6 +790,9 @@ function crm_fintech_process_callback( array $event, array $payload, array $head
 	}
 	if ( ! empty( $event['externalOrderId'] ) ) {
 		$update['provider_external_order_id'] = (string) $event['externalOrderId'];
+	}
+	if ( isset( $event['raw'] ) && is_array( $event['raw'] ) ) {
+		$update['last_provider_payload_json'] = wp_json_encode( $event['raw'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
 	}
 
 	$wpdb->update( 'crm_fintech_payment_orders', $update, [ 'id' => $order_db_id ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
@@ -645,4 +840,8 @@ function crm_fintech_process_callback( array $event, array $payload, array $head
 			'provider'          => $event['provider'] ?? null,
 		],
 	] );
+
+	if ( $new_status === 'paid' ) {
+		crm_merchant_create_paid_order_accrual( $order_db_id, 'callback' );
+	}
 }

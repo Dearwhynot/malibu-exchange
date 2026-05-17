@@ -44,6 +44,60 @@ function _me_payouts_require_current_company(): int {
 	return $company_id;
 }
 
+function _me_payouts_provider_labels(): array {
+	if ( function_exists( 'crm_fintech_provider_labels' ) ) {
+		return crm_fintech_provider_labels();
+	}
+
+	return [
+		'kanyon'  => 'Kanyon (Pay2Day)',
+		'doverka' => 'Doverka',
+	];
+}
+
+function _me_payouts_allowed_providers( int $company_id ): array {
+	if ( $company_id <= 0 ) {
+		return [];
+	}
+
+	if ( function_exists( 'crm_fintech_get_allowed_providers' ) ) {
+		return crm_fintech_get_allowed_providers( $company_id );
+	}
+
+	return array_keys( _me_payouts_provider_labels() );
+}
+
+function _me_payouts_normalize_provider_code( string $provider ): string {
+	if ( function_exists( 'crm_fintech_normalize_provider_code' ) ) {
+		return crm_fintech_normalize_provider_code( $provider );
+	}
+
+	$provider = sanitize_key( $provider );
+	return array_key_exists( $provider, _me_payouts_provider_labels() ) ? $provider : '';
+}
+
+function _me_payouts_resolve_provider_or_fail( int $company_id, $raw_provider ): string {
+	$allowed  = _me_payouts_allowed_providers( $company_id );
+	$provider = _me_payouts_normalize_provider_code( (string) $raw_provider );
+
+	if ( $provider === '' ) {
+		$active_provider = _me_payouts_normalize_provider_code(
+			(string) crm_get_setting( 'fintech_active_provider', $company_id, '' )
+		);
+		if ( $active_provider !== '' && in_array( $active_provider, $allowed, true ) ) {
+			$provider = $active_provider;
+		} elseif ( ! empty( $allowed ) ) {
+			$provider = (string) reset( $allowed );
+		}
+	}
+
+	if ( $provider === '' || ! in_array( $provider, $allowed, true ) ) {
+		wp_send_json_error( [ 'message' => 'Платёжный провайдер недоступен для этой компании.' ], 422 );
+	}
+
+	return $provider;
+}
+
 // ─── 1. Список выплат ─────────────────────────────────────────────────────────
 
 add_action( 'wp_ajax_me_payouts_list', 'me_ajax_payouts_list' );
@@ -66,6 +120,7 @@ function me_ajax_payouts_list(): void {
 
 	// ── Company scope ─────────────────────────────────────────────────────────
 	$company_id = _me_payouts_require_current_company();
+	$provider_code = _me_payouts_resolve_provider_or_fail( $company_id, $_POST['provider_code'] ?? '' );
 
 	// ── WHERE ─────────────────────────────────────────────────────────────────
 	$where  = 'WHERE 1=1';
@@ -73,6 +128,8 @@ function me_ajax_payouts_list(): void {
 
 	$where   .= ' AND p.`company_id` = %d';
 	$params[] = $company_id;
+	$where   .= ' AND p.`provider_code` = %s';
+	$params[] = $provider_code;
 
 	// ── Запрос с именем пользователя ──────────────────────────────────────────
 	// phpcs:disable WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
@@ -149,6 +206,7 @@ function me_ajax_payouts_create(): void {
 	// ── Company scope ─────────────────────────────────────────────────────────
 	$uid        = get_current_user_id();
 	$company_id = _me_payouts_require_current_company();
+	$provider_code = _me_payouts_resolve_provider_or_fail( $company_id, $_POST['provider_code'] ?? '' );
 	// ── Загрузка квитанции (опционально) ─────────────────────────────────────
 	$receipt_filename = null;
 
@@ -170,6 +228,7 @@ function me_ajax_payouts_create(): void {
 
 	$row_data    = [
 		'company_id'          => $company_id,
+		'provider_code'       => $provider_code,
 		'amount'              => number_format( $amount, 8, '.', '' ),
 		'currency_code'       => $currency,
 		'period_from'         => $period_from ?: null,
@@ -178,7 +237,7 @@ function me_ajax_payouts_create(): void {
 		'notes'               => $notes       ?: null,
 		'recorded_by_user_id' => $uid,
 	];
-	$row_formats = [ '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%d' ];
+	$row_formats = [ '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d' ];
 
 	if ( $has_receipt_col ) {
 		$row_data['receipt_filename'] = $receipt_filename;
@@ -218,6 +277,7 @@ function me_ajax_payouts_create(): void {
 			'payout_id'   => $payout_id,
 			'amount'      => $amount,
 			'currency'    => $currency,
+			'provider'    => $provider_code,
 			'period_from' => $period_from,
 			'period_to'   => $period_to,
 			'reference'   => $reference,
@@ -226,7 +286,7 @@ function me_ajax_payouts_create(): void {
 	] );
 
 	// ── Возвращаем текущий долг ───────────────────────────────────────────────
-	$stats = _me_payouts_get_stats( $company_id );
+	$stats = _me_payouts_get_stats( $company_id, $provider_code );
 
 	wp_send_json_success( [
 		'payout_id'   => $payout_id,
@@ -253,8 +313,9 @@ function me_ajax_payouts_stats(): void {
 	}
 
 	$company_id = _me_payouts_require_current_company();
+	$provider_code = _me_payouts_resolve_provider_or_fail( $company_id, $_GET['provider_code'] ?? '' );
 
-	wp_send_json_success( _me_payouts_get_stats( $company_id ) );
+	wp_send_json_success( _me_payouts_get_stats( $company_id, $provider_code ) );
 }
 
 // ─── Вспомогательные функции ──────────────────────────────────────────────────
@@ -263,7 +324,7 @@ function me_ajax_payouts_stats(): void {
  * Агрегаты в USDT: total_paid (amount_asset_value paid-ордеров), total_out (выплаты), ep_debt (долг).
  * Выплаты ЭП всегда в USDT, поэтому считаем накопленный USDT по paid-ордерам.
  */
-function _me_payouts_get_stats( int $company_id ): array {
+function _me_payouts_get_stats( int $company_id, string $provider_code = '' ): array {
 	global $wpdb;
 
 	if ( $company_id < 0 ) {
@@ -274,27 +335,33 @@ function _me_payouts_get_stats( int $company_id ): array {
 		];
 	}
 
+	$provider_code = _me_payouts_normalize_provider_code( $provider_code );
+
 	$company_cond_orders  = $wpdb->prepare( ' AND company_id = %d', $company_id );
 	$company_cond_payouts = $wpdb->prepare( ' AND company_id = %d', $company_id );
+	$provider_cond_orders = $provider_code !== '' ? $wpdb->prepare( ' AND provider_code = %s', $provider_code ) : '';
+	$provider_cond_payouts = $provider_code !== '' ? $wpdb->prepare( ' AND provider_code = %s', $provider_code ) : '';
 
 	// phpcs:disable WordPress.DB.PreparedSQL.NotPrepared
 	// Суммируем USDT (amount_asset_value) по paid-ордерам — именно это должен выплатить ЭП
 	$total_paid = (float) $wpdb->get_var(
 		"SELECT COALESCE(SUM(amount_asset_value), 0)
 		 FROM `crm_fintech_payment_orders`
-		 WHERE status_code = 'paid'" . $company_cond_orders
+		 WHERE status_code = 'paid'" . $company_cond_orders . $provider_cond_orders
 	);
 
 	$total_out = (float) $wpdb->get_var(
 		"SELECT COALESCE(SUM(amount), 0)
 		 FROM `crm_acquirer_payouts`
-		 WHERE 1=1" . $company_cond_payouts
+		 WHERE 1=1" . $company_cond_payouts . $provider_cond_payouts
 	);
 	// phpcs:enable
 
 	$ep_debt = $total_paid - $total_out; // отрицательное = переплата
 
 	return [
+		'provider_code' => $provider_code,
+		'provider_label'=> $provider_code !== '' ? ( _me_payouts_provider_labels()[ $provider_code ] ?? $provider_code ) : 'Все провайдеры',
 		'total_paid' => round( $total_paid, 2 ),
 		'total_out'  => round( $total_out, 2 ),
 		'ep_debt'    => round( $ep_debt, 2 ),
@@ -316,6 +383,8 @@ function _me_payouts_format_row( object $row, int $org_id = 0 ): array {
 	return [
 		'id'             => (int) $row->id,
 		'company_id'     => (int) $row->company_id,
+		'provider_code'  => isset( $row->provider_code ) ? (string) $row->provider_code : '',
+		'provider_label' => isset( $row->provider_code ) ? ( _me_payouts_provider_labels()[ (string) $row->provider_code ] ?? (string) $row->provider_code ) : '',
 		'amount'         => (float) $row->amount,
 		'currency_code'  => $row->currency_code,
 		'period_from'    => $row->period_from,

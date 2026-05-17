@@ -19,29 +19,57 @@ if ( ! crm_can_access( 'payouts.view' ) ) {
 $_company_id = crm_require_company_page_context();
 $_tz         = crm_get_timezone( $_company_id );
 $_tz_label   = crm_get_timezone_label( $_company_id );
+$_provider_labels = function_exists( 'crm_fintech_provider_labels' ) ? crm_fintech_provider_labels() : [
+	'kanyon'  => 'Kanyon (Pay2Day)',
+	'doverka' => 'Doverka',
+];
+$_allowed_providers = function_exists( 'crm_fintech_get_allowed_providers' )
+	? crm_fintech_get_allowed_providers( $_company_id )
+	: array_keys( $_provider_labels );
+$_normalize_provider = static function ( string $provider ) use ( $_provider_labels ): string {
+	if ( function_exists( 'crm_fintech_normalize_provider_code' ) ) {
+		return crm_fintech_normalize_provider_code( $provider );
+	}
+	$provider = sanitize_key( $provider );
+	return array_key_exists( $provider, $_provider_labels ) ? $provider : '';
+};
+$_active_provider = $_normalize_provider( (string) crm_get_setting( 'fintech_active_provider', $_company_id, '' ) );
+$_selected_provider = $_normalize_provider( (string) ( $_GET['provider_code'] ?? '' ) );
+if ( $_selected_provider === '' || ! in_array( $_selected_provider, $_allowed_providers, true ) ) {
+	if ( $_active_provider !== '' && in_array( $_active_provider, $_allowed_providers, true ) ) {
+		$_selected_provider = $_active_provider;
+	} elseif ( ! empty( $_allowed_providers ) ) {
+		$_selected_provider = (string) reset( $_allowed_providers );
+	}
+}
+$_selected_provider_label = $_selected_provider !== ''
+	? ( $_provider_labels[ $_selected_provider ] ?? $_selected_provider )
+	: 'Провайдер не выбран';
 
 // ─── Агрегаты (server-side, без AJAX) ────────────────────────────────────────
 global $wpdb;
 
 $_co_cond_orders  = $wpdb->prepare( ' AND company_id = %d', $_company_id );
 $_co_cond_payouts = $wpdb->prepare( ' AND company_id = %d', $_company_id );
+$_provider_cond_orders  = $_selected_provider !== '' ? $wpdb->prepare( ' AND provider_code = %s', $_selected_provider ) : '';
+$_provider_cond_payouts = $_selected_provider !== '' ? $wpdb->prepare( ' AND provider_code = %s', $_selected_provider ) : '';
 
 // phpcs:disable WordPress.DB.PreparedSQL.NotPrepared
 // Накопленный USDT по paid-ордерам (amount_asset_value = USDT)
 $_total_paid_all = (float) $wpdb->get_var(
 	"SELECT COALESCE(SUM(amount_asset_value), 0)
 	 FROM `crm_fintech_payment_orders`
-	 WHERE status_code = 'paid'" . $_co_cond_orders
+	 WHERE status_code = 'paid'" . $_co_cond_orders . $_provider_cond_orders
 );
 $_total_payout_all = (float) $wpdb->get_var(
 	"SELECT COALESCE(SUM(amount), 0)
 	 FROM `crm_acquirer_payouts`
-	 WHERE 1=1" . $_co_cond_payouts
+	 WHERE 1=1" . $_co_cond_payouts . $_provider_cond_payouts
 );
 $_payout_count_all = (int) $wpdb->get_var(
 	"SELECT COUNT(*)
 	 FROM `crm_acquirer_payouts`
-	 WHERE 1=1" . $_co_cond_payouts
+	 WHERE 1=1" . $_co_cond_payouts . $_provider_cond_payouts
 );
 // phpcs:enable
 
@@ -82,13 +110,39 @@ get_header();
 
 			<div class="container-fluid container-fixed-lg mt-4">
 
+				<div class="card card-default m-b-20">
+					<div class="card-body p-t-20 p-b-15">
+						<form method="get" id="payout-provider-filter-form" class="row g-2 align-items-center">
+							<div class="col-md-4 col-sm-12">
+								<label class="fs-12 text-uppercase hint-text">Провайдер выплат ЭП</label>
+								<select name="provider_code" id="payout-provider-filter" class="full-width" data-init-plugin="select2">
+									<?php if ( empty( $_allowed_providers ) ) : ?>
+										<option value="">Нет доступных провайдеров</option>
+									<?php else : ?>
+										<?php foreach ( $_allowed_providers as $_provider_code ) : ?>
+											<option value="<?php echo esc_attr( $_provider_code ); ?>" <?php selected( $_selected_provider, $_provider_code ); ?>>
+												<?php echo esc_html( $_provider_labels[ $_provider_code ] ?? $_provider_code ); ?>
+											</option>
+										<?php endforeach; ?>
+									<?php endif; ?>
+								</select>
+							</div>
+							<div class="col-md-8 col-sm-12">
+								<p class="hint-text no-margin m-t-25">
+									Долг и история выплат считаются по выбранному провайдеру внутри текущей компании.
+								</p>
+							</div>
+						</form>
+					</div>
+				</div>
+
 				<!-- ── Сводные карточки ─────────────────────────────────────── -->
 				<div class="row m-b-20">
 
 					<div class="col-xl-4 col-lg-4 col-md-6 col-sm-12 m-b-15">
 						<div class="card card-default no-margin">
 							<div class="card-body p-3">
-								<p class="hint-text no-margin fs-12 text-uppercase" style="letter-spacing:.05em;">Всего paid-ордеров (накоплено)</p>
+								<p class="hint-text no-margin fs-12 text-uppercase" style="letter-spacing:.05em;">Paid-ордеры <?php echo esc_html( $_selected_provider_label ); ?></p>
 								<h3 class="no-margin bold text-complete"><?php echo esc_html( _fmt_usdt( $_total_paid_all ) ); ?></h3>
 							</div>
 						</div>
@@ -97,7 +151,7 @@ get_header();
 					<div class="col-xl-4 col-lg-4 col-md-6 col-sm-12 m-b-15">
 						<div class="card card-default no-margin">
 							<div class="card-body p-3">
-								<p class="hint-text no-margin fs-12 text-uppercase" style="letter-spacing:.05em;">Выплачено ЭП (<?php echo esc_html( $_payout_count_all ); ?> зап.)</p>
+								<p class="hint-text no-margin fs-12 text-uppercase" style="letter-spacing:.05em;">Выплачено ЭП <?php echo esc_html( $_selected_provider_label ); ?> (<?php echo esc_html( $_payout_count_all ); ?> зап.)</p>
 								<h3 class="no-margin bold text-success"><?php echo esc_html( _fmt_usdt( $_total_payout_all ) ); ?></h3>
 							</div>
 						</div>
@@ -108,7 +162,7 @@ get_header();
 						<div class="card no-margin bg-danger">
 							<div class="card-body p-3">
 								<p class="hint-text no-margin fs-12 text-uppercase text-white" style="letter-spacing:.05em;">
-									⚠ Переплата ЭП
+									⚠ Переплата ЭП <?php echo esc_html( $_selected_provider_label ); ?>
 								</p>
 								<h3 class="no-margin bold text-white"><?php echo esc_html( _fmt_usdt( $_ep_debt ) ); ?></h3>
 								<p class="no-margin fs-11 text-white" style="opacity:.8;">
@@ -119,14 +173,14 @@ get_header();
 						<?php elseif ( $_ep_debt > 0 ) : ?>
 						<div class="card no-margin bg-warning">
 							<div class="card-body p-3">
-								<p class="hint-text no-margin fs-12 text-uppercase text-white" style="letter-spacing:.05em;">Долг ЭП (не выплачено)</p>
+								<p class="hint-text no-margin fs-12 text-uppercase text-white" style="letter-spacing:.05em;">Долг ЭП <?php echo esc_html( $_selected_provider_label ); ?></p>
 								<h3 class="no-margin bold text-white"><?php echo esc_html( _fmt_usdt( $_ep_debt ) ); ?></h3>
 							</div>
 						</div>
 						<?php else : ?>
 						<div class="card card-default no-margin">
 							<div class="card-body p-3">
-								<p class="hint-text no-margin fs-12 text-uppercase" style="letter-spacing:.05em;">Долг ЭП</p>
+								<p class="hint-text no-margin fs-12 text-uppercase" style="letter-spacing:.05em;">Долг ЭП <?php echo esc_html( $_selected_provider_label ); ?></p>
 								<h3 class="no-margin bold text-success"><?php echo esc_html( _fmt_usdt( 0.0 ) ); ?></h3>
 								<p class="no-margin fs-11 hint-text">Расчёты в балансе</p>
 							</div>
@@ -167,8 +221,14 @@ get_header();
 
 							<form id="form-add-payout" novalidate>
 								<input type="hidden" name="_nonce" value="<?php echo esc_attr( $_nonce ); ?>">
+								<input type="hidden" name="provider_code" id="payout-provider-code" value="<?php echo esc_attr( $_selected_provider ); ?>">
 
 								<div class="row">
+
+									<div class="col-md-4 m-b-15">
+										<label class="fs-12 text-uppercase hint-text">Провайдер <span class="text-danger">*</span></label>
+										<input type="text" class="form-control" value="<?php echo esc_attr( $_selected_provider_label ); ?>" readonly>
+									</div>
 
 									<div class="col-md-4 m-b-15">
 										<label class="fs-12 text-uppercase hint-text">Сумма выплаты (USDT) <span class="text-danger">*</span></label>
@@ -237,6 +297,7 @@ get_header();
 									<tr>
 										<th>#</th>
 										<th>Дата внесения</th>
+										<th>Провайдер</th>
 										<th>Период</th>
 										<th class="text-right">Сумма</th>
 										<th>Поручение / Референс</th>
@@ -247,7 +308,7 @@ get_header();
 								</thead>
 								<tbody id="payouts-tbody">
 									<tr>
-										<td colspan="7" class="text-center hint-text p-3">Загрузка...</td>
+										<td colspan="9" class="text-center hint-text p-3">Загрузка...</td>
 									</tr>
 								</tbody>
 							</table>
@@ -277,7 +338,7 @@ get_header();
 <?php get_template_part( 'template-parts/overlay' ); ?>
 
 <?php
-add_action( 'wp_footer', function () use ( $_nonce, $_can_create, $_ep_debt ) {
+add_action( 'wp_footer', function () use ( $_nonce, $_can_create, $_ep_debt, $_selected_provider ) {
 ?>
 <script>
 (function($) {
@@ -285,9 +346,21 @@ add_action( 'wp_footer', function () use ( $_nonce, $_can_create, $_ep_debt ) {
 	var ajaxUrl    = <?php echo json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
 	var canCreate  = <?php echo $_can_create ? 'true' : 'false'; ?>;
 	var currentDebt= <?php echo json_encode( round( $_ep_debt, 2 ) ); ?>;
+	var providerCode = <?php echo json_encode( $_selected_provider ); ?>;
 
 	var page     = 1;
 	var perPage  = 25;
+
+	$('#payout-provider-filter').on('change', function() {
+		var provider = $(this).val() || '';
+		var url = new URL(window.location.href);
+		if (provider) {
+			url.searchParams.set('provider_code', provider);
+		} else {
+			url.searchParams.delete('provider_code');
+		}
+		window.location.assign(url.toString());
+	});
 
 	// ── Отображение/скрытие формы ─────────────────────────────────────────────
 	$('#btn-add-payout').on('click', function() {
@@ -381,6 +454,7 @@ add_action( 'wp_footer', function () use ( $_nonce, $_can_create, $_ep_debt ) {
 		$.post(ajaxUrl, {
 			action:   'me_payouts_list',
 			_nonce:   nonce,
+			provider_code: providerCode,
 			page:     page,
 			per_page: perPage
 		}, function(res) {
@@ -389,7 +463,7 @@ add_action( 'wp_footer', function () use ( $_nonce, $_can_create, $_ep_debt ) {
 			var $tbody = $('#payouts-tbody').empty();
 
 			if (!rows || rows.length === 0) {
-				$tbody.html('<tr><td colspan="7" class="text-center hint-text p-3">Выплат пока нет.</td></tr>');
+				$tbody.html('<tr><td colspan="9" class="text-center hint-text p-3">Выплат пока нет.</td></tr>');
 				$('#payouts-pagination-row').hide();
 				return;
 			}
@@ -402,6 +476,7 @@ add_action( 'wp_footer', function () use ( $_nonce, $_can_create, $_ep_debt ) {
 				var notes = r.notes     ? escHtml(r.notes)     : '<span class="hint-text">—</span>';
 				var who   = r.recorder_name ? escHtml(r.recorder_name) : '<span class="hint-text">—</span>';
 				var amt   = parseFloat(r.amount).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:8}) + '\u00a0' + r.currency_code;
+				var provider = r.provider_label ? escHtml(r.provider_label) : '<span class="hint-text">—</span>';
 
 				var receipt = '<span class="hint-text">—</span>';
 				if (r.receipt_url) {
@@ -416,6 +491,7 @@ add_action( 'wp_footer', function () use ( $_nonce, $_can_create, $_ep_debt ) {
 					'<tr>' +
 					'<td class="hint-text">' + r.id + '</td>' +
 					'<td>' + escHtml(r.created_at || '—') + '</td>' +
+					'<td>' + provider + '</td>' +
 					'<td>' + escHtml(period) + '</td>' +
 					'<td class="text-right font-montserrat fs-14 bold">' + escHtml(amt) + '</td>' +
 					'<td>' + ref + '</td>' +

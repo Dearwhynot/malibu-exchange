@@ -2,9 +2,10 @@
 /**
  * Malibu Exchange — Company-scoped Telegram bot helpers
  *
- * The project has two Telegram contours per company:
+ * The project has Telegram contours per company:
  * - merchant: merchant onboarding/menu/invoices;
  * - operator: internal operator workflows.
+ * - service: service/integration workflows.
  *
  * Legacy functions without an explicit context intentionally point to the
  * merchant contour, because the existing Telegram functionality is merchant-led.
@@ -19,6 +20,7 @@ if ( ! function_exists( 'crm_telegram_bot_context_labels' ) ) {
 		return [
 			'merchant' => 'Мерчантский бот',
 			'operator' => 'Операторский бот',
+			'service'  => 'Сервисный бот',
 		];
 	}
 }
@@ -142,9 +144,13 @@ if ( ! function_exists( 'crm_telegram_company_callback_url' ) ) {
 		}
 
 		$context = crm_telegram_normalize_bot_context( $context );
-		$route   = $context === 'operator'
-			? 'malibu-exchange/v1/telegram/operator-callback'
-			: 'malibu-exchange/v1/telegram/merchant-callback';
+		if ( $context === 'operator' ) {
+			$route = 'malibu-exchange/v1/telegram/operator-callback';
+		} elseif ( $context === 'service' ) {
+			$route = 'malibu-exchange/v1/telegram/service-callback';
+		} else {
+			$route = 'malibu-exchange/v1/telegram/merchant-callback';
+		}
 
 		return add_query_arg(
 			[
@@ -269,69 +275,125 @@ if ( ! function_exists( 'crm_telegram_opposite_bot_context' ) ) {
 
 if ( ! function_exists( 'crm_telegram_find_duplicate_bot_setting' ) ) {
 	function crm_telegram_find_duplicate_bot_setting( int $company_id, string $context, string $bot_username, string $bot_token ): array {
-		$context       = crm_telegram_normalize_bot_context( $context );
-		$other_context = crm_telegram_opposite_bot_context( $context );
-		$labels        = crm_telegram_bot_context_labels();
-		$fields        = [];
+		$context                = crm_telegram_normalize_bot_context( $context );
+		$labels                 = crm_telegram_bot_context_labels();
+		$field_map              = [];
+		$matching_context_names = [];
 
 		if ( $company_id <= 0 ) {
 			return [
 				'has_duplicate'       => false,
-				'other_context'       => $other_context,
-				'other_context_label' => (string) ( $labels[ $other_context ] ?? '' ),
+				'other_context'       => '',
+				'other_context_label' => '',
 				'fields'              => [],
 				'message'             => '',
 			];
 		}
 
-		$bot_username  = crm_telegram_sanitize_bot_username( $bot_username );
-		$bot_token     = trim( $bot_token );
-		$other_settings = crm_telegram_collect_settings( $company_id, $other_context );
+		$bot_username = crm_telegram_sanitize_bot_username( $bot_username );
+		$bot_token    = trim( $bot_token );
 
-		if ( $bot_token !== '' && trim( (string) ( $other_settings['bot_token'] ?? '' ) ) !== '' ) {
-			$tokens_match = function_exists( 'hash_equals' )
-				? hash_equals( trim( (string) $other_settings['bot_token'] ), $bot_token )
-				: trim( (string) $other_settings['bot_token'] ) === $bot_token;
+		foreach ( $labels as $other_context => $other_label ) {
+			$other_context = crm_telegram_normalize_bot_context( (string) $other_context );
+			if ( $other_context === $context ) {
+				continue;
+			}
 
-			if ( $tokens_match ) {
-				$fields[] = [
-					'id'    => crm_telegram_setting_key( $context, 'bot_token' ),
-					'label' => 'Токен бота',
-				];
+			$other_settings = crm_telegram_collect_settings( $company_id, $other_context );
+			$matched_here   = false;
+
+			if ( $bot_token !== '' && trim( (string) ( $other_settings['bot_token'] ?? '' ) ) !== '' ) {
+				$tokens_match = function_exists( 'hash_equals' )
+					? hash_equals( trim( (string) $other_settings['bot_token'] ), $bot_token )
+					: trim( (string) $other_settings['bot_token'] ) === $bot_token;
+
+				if ( $tokens_match ) {
+					$field_map['bot_token'] = [
+						'id'    => crm_telegram_setting_key( $context, 'bot_token' ),
+						'label' => 'Токен бота',
+					];
+					$matched_here = true;
+				}
+			}
+
+			if ( $bot_username !== '' && trim( (string) ( $other_settings['bot_username'] ?? '' ) ) !== '' ) {
+				if ( strcasecmp( $bot_username, trim( (string) $other_settings['bot_username'] ) ) === 0 ) {
+					$field_map['bot_username'] = [
+						'id'    => crm_telegram_setting_key( $context, 'bot_username' ),
+						'label' => 'Имя бота',
+					];
+					$matched_here = true;
+				}
+			}
+
+			if ( $matched_here ) {
+				$matching_context_names[ $other_context ] = (string) $other_label;
 			}
 		}
 
-		if ( $bot_username !== '' && trim( (string) ( $other_settings['bot_username'] ?? '' ) ) !== '' ) {
-			if ( strcasecmp( $bot_username, trim( (string) $other_settings['bot_username'] ) ) === 0 ) {
-				$fields[] = [
-					'id'    => crm_telegram_setting_key( $context, 'bot_username' ),
-					'label' => 'Имя бота',
-				];
-			}
-		}
+		$fields         = array_values( $field_map );
+		$has_duplicate  = ! empty( $fields );
+		$other_contexts = array_keys( $matching_context_names );
+		$other_context  = ! empty( $other_contexts ) ? (string) $other_contexts[0] : '';
+		$other_label    = $other_context !== '' ? (string) ( $labels[ $other_context ] ?? '' ) : '';
+		$contexts_text  = '';
 
-		$has_duplicate = ! empty( $fields );
+		if ( ! empty( $matching_context_names ) ) {
+			$quoted_contexts = array_map(
+				static fn( string $label ): string => '«' . $label . '»',
+				array_values( $matching_context_names )
+			);
+			$contexts_text = implode( ', ', $quoted_contexts );
+		}
 
 		return [
 			'has_duplicate'       => $has_duplicate,
 			'other_context'       => $other_context,
-			'other_context_label' => (string) ( $labels[ $other_context ] ?? '' ),
+			'other_context_label' => $other_label,
 			'fields'              => $fields,
 			'message'             => $has_duplicate
-				? 'Нельзя использовать одного Telegram-бота в двух контурах. Измените токен или username: совпадение найдено в блоке «' . (string) ( $labels[ $other_context ] ?? $other_context ) . '».'
+				? 'Нельзя использовать одного Telegram-бота в двух контурах. Измените токен или username: совпадение найдено в блоке ' . $contexts_text . '.'
 				: '',
 		];
 	}
 }
 
+if ( ! function_exists( 'crm_telegram_get_context_status_meta' ) ) {
+	function crm_telegram_get_context_status_meta( string $context ): array {
+		$context = crm_telegram_normalize_bot_context( $context );
+
+		switch ( $context ) {
+			case 'operator':
+				return [
+					'blocked_default' => 'Чтобы включить операторский бот, заполните имя и токен операторского бота.',
+					'connect_message' => 'Telegram callback подключён. Операторский бот готов к работе.',
+				];
+			case 'service':
+				return [
+					'blocked_default' => 'Чтобы включить сервисный бот, заполните имя и токен сервисного бота.',
+					'connect_message' => 'Telegram callback подключён. Сервисный бот готов к работе.',
+				];
+			case 'merchant':
+			default:
+				return [
+					'blocked_default' => 'Чтобы включить приглашения мерчантов, заполните имя и токен мерчантского бота.',
+					'connect_message' => 'Telegram callback подключён. Инвайты готовы к работе.',
+				];
+		}
+	}
+}
+
 if ( ! function_exists( 'crm_telegram_get_configuration_status' ) ) {
 	function crm_telegram_get_configuration_status( int $company_id, string $context = 'merchant', bool $auto_lock_connected = false ): array {
-		$context       = crm_telegram_normalize_bot_context( $context );
-		$settings      = crm_telegram_collect_settings( $company_id, $context );
-		$callback_url  = crm_telegram_company_callback_url( $company_id, $context );
+		$context        = crm_telegram_normalize_bot_context( $context );
+		$settings       = crm_telegram_collect_settings( $company_id, $context );
+		$callback_url   = crm_telegram_company_callback_url( $company_id, $context );
+		$status_meta    = crm_telegram_get_context_status_meta( $context );
 		$missing_fields = [];
 		$blocked_reason = '';
 		$is_merchant    = $context === 'merchant';
+		$is_operator    = $context === 'operator';
+		$is_service     = $context === 'service';
 
 		if ( $settings['bot_username'] === '' ) {
 			$missing_fields[] = [
@@ -368,9 +430,7 @@ if ( ! function_exists( 'crm_telegram_get_configuration_status' ) ) {
 		if ( ! empty( $duplicate['has_duplicate'] ) ) {
 			$blocked_reason = (string) $duplicate['message'];
 		} elseif ( ! $is_configured ) {
-			$blocked_reason = $is_merchant
-				? 'Чтобы включить приглашения мерчантов, заполните имя и токен мерчантского бота.'
-				: 'Чтобы включить операторский бот, заполните имя и токен операторского бота.';
+			$blocked_reason = (string) ( $status_meta['blocked_default'] ?? '' );
 		} elseif ( ! $webhook_ready ) {
 			$blocked_reason = 'Бот ещё не подключён к callback. Сначала нажмите «Подключить callback».';
 		}
@@ -382,7 +442,8 @@ if ( ! function_exists( 'crm_telegram_get_configuration_status' ) ) {
 			'is_configured'        => $is_configured,
 			'webhook_ready'        => $webhook_ready,
 			'invite_ready'         => $is_merchant && $ready,
-			'operator_ready'       => ! $is_merchant && $ready,
+			'operator_ready'       => $is_operator && $ready,
+			'service_ready'        => $is_service && $ready,
 			'webhook_matches'      => $webhook_matches,
 			'blocked_reason'       => $blocked_reason,
 			'missing_fields'       => $missing_fields,

@@ -23,6 +23,7 @@ function _me_settings_telegram_status_payload( int $org_id, string $context = 'm
 			'webhook_ready'        => false,
 			'invite_ready'         => false,
 			'operator_ready'       => false,
+			'service_ready'        => false,
 			'blocked_reason'       => 'Telegram-настройки доступны только в контексте компании.',
 			'missing_fields'       => [],
 			'duplicate_fields'     => [],
@@ -44,6 +45,7 @@ function _me_settings_telegram_status_payload( int $org_id, string $context = 'm
 		'webhook_ready'        => ! empty( $status['webhook_ready'] ),
 		'invite_ready'         => ! empty( $status['invite_ready'] ),
 		'operator_ready'       => ! empty( $status['operator_ready'] ),
+		'service_ready'        => ! empty( $status['service_ready'] ),
 		'blocked_reason'       => (string) ( $status['blocked_reason'] ?? '' ),
 		'missing_fields'       => array_values( $status['missing_fields'] ?? [] ),
 		'duplicate_fields'     => array_values( $status['duplicate_fields'] ?? [] ),
@@ -122,6 +124,33 @@ function _me_settings_require_allowed_fintech_provider( int $org_id, string $pro
 	}
 }
 
+function _me_settings_parse_fintech_kanyon_rapira_markup_percent(): string {
+	$raw_value = trim( (string) wp_unslash(
+		$_POST['fintech_kanyon_rapira_markup_percent'] ?? crm_fintech_default_kanyon_rapira_markup_percent()
+	) );
+	$raw_value = str_replace( ',', '.', $raw_value );
+
+	if ( $raw_value === '' || ! is_numeric( $raw_value ) ) {
+		wp_send_json_error( [ 'message' => 'Наценка ЭП к Rapira должна быть числом.' ], 422 );
+	}
+
+	$markup_percent = (float) $raw_value;
+	if ( $markup_percent < 0 ) {
+		wp_send_json_error( [ 'message' => 'Наценка ЭП к Rapira не может быть отрицательной.' ], 422 );
+	}
+	if ( $markup_percent > 1000 ) {
+		wp_send_json_error( [ 'message' => 'Наценка ЭП к Rapira выглядит слишком большой.' ], 422 );
+	}
+
+	return crm_fintech_normalize_kanyon_rapira_markup_percent( $markup_percent );
+}
+
+function _me_settings_parse_fintech_pay2day_default_payment_purpose(): string {
+	return crm_fintech_normalize_payment_purpose(
+		wp_unslash( $_POST['fintech_pay2day_default_payment_purpose'] ?? '' )
+	);
+}
+
 function me_ajax_settings_save(): void {
 	check_ajax_referer( 'me_settings_save', 'nonce' );
 
@@ -172,18 +201,25 @@ function me_ajax_settings_save(): void {
 		if ( $pair_code === '' ) {
 			$pair_code = RATES_PAIR_CODE;
 		}
+		$pair_code = function_exists( 'crm_normalize_legacy_pair_code' )
+			? crm_normalize_legacy_pair_code( $pair_code )
+			: $pair_code;
 
 		$pair_def = function_exists( 'crm_root_get_pair_definition' ) ? crm_root_get_pair_definition( $pair_code ) : null;
 		if ( ! $pair_def ) {
 			wp_send_json_error( [ 'message' => 'Неизвестная пара: ' . $pair_code ], 400 );
 		}
 
+		if ( ! function_exists( 'crm_company_contour_is_enabled' ) || ! crm_company_contour_is_enabled( $org_id, $pair_code ) ) {
+			wp_send_json_error( [ 'message' => 'Направление ' . $pair_def['title'] . ' отключено root\'ом и недоступно для сохранения.' ], 403 );
+		}
+
 		$pair = function_exists( 'rates_get_any_pair' ) ? rates_get_any_pair( $pair_code, $org_id ) : null;
 		if ( ! $pair ) {
-			wp_send_json_error( [ 'message' => 'Пара не активирована для компании. Активацию производит root.' ], 409 );
+			wp_send_json_error( [ 'message' => 'Направление не найдено для компании. Проверьте root company settings.' ], 409 );
 		}
 		if ( (int) $pair->is_active !== 1 ) {
-			wp_send_json_error( [ 'message' => 'Пара отключена root\'ом. Изменение наценки недоступно.' ], 409 );
+			wp_send_json_error( [ 'message' => 'Направление отключено root\'ом. Изменение наценки недоступно.' ], 409 );
 		}
 
 		$coeff_type = sanitize_key( wp_unslash( $_POST['coefficient_type'] ?? 'absolute' ) );
@@ -236,18 +272,26 @@ function me_ajax_settings_save(): void {
 	if ( $section === 'rates_market_source' ) {
 		global $wpdb;
 
-		$pair_code           = sanitize_text_field( wp_unslash( $_POST['pair_code'] ?? '' ) );
-		$allowed_source_pairs = [ 'USDT_THB', 'RUB_USDT' ];
-		if ( ! in_array( $pair_code, $allowed_source_pairs, true ) ) {
+		$pair_code = sanitize_text_field( wp_unslash( $_POST['pair_code'] ?? '' ) );
+		$pair_code = function_exists( 'crm_normalize_legacy_pair_code' )
+			? crm_normalize_legacy_pair_code( $pair_code )
+			: $pair_code;
+		$pair_def  = function_exists( 'crm_root_get_pair_definition' ) ? crm_root_get_pair_definition( $pair_code ) : null;
+
+		if ( ! function_exists( 'crm_company_pair_supports_market_source' ) || ! crm_company_pair_supports_market_source( $pair_code ) ) {
 			wp_send_json_error( [ 'message' => 'Источник котировки не применим для пары: ' . $pair_code ], 400 );
+		}
+
+		if ( ! function_exists( 'crm_company_contour_is_enabled' ) || ! crm_company_contour_is_enabled( $org_id, $pair_code ) ) {
+			wp_send_json_error( [ 'message' => 'Направление ' . ( $pair_def['title'] ?? $pair_code ) . ' отключено root\'ом. Изменение источника недоступно.' ], 403 );
 		}
 
 		$pair = function_exists( 'rates_get_any_pair' ) ? rates_get_any_pair( $pair_code, $org_id ) : null;
 		if ( ! $pair ) {
-			wp_send_json_error( [ 'message' => 'Пара не найдена для компании.' ], 404 );
+			wp_send_json_error( [ 'message' => 'Направление не найдено для компании.' ], 404 );
 		}
 		if ( (int) $pair->is_active !== 1 ) {
-			wp_send_json_error( [ 'message' => 'Пара отключена root\'ом. Изменение источника недоступно.' ], 409 );
+			wp_send_json_error( [ 'message' => 'Направление отключено root\'ом. Изменение источника недоступно.' ], 409 );
 		}
 
 		$source          = sanitize_key( wp_unslash( $_POST['market_source'] ?? '' ) );
@@ -384,21 +428,37 @@ function me_ajax_settings_save(): void {
 	// Fintech: Kanyon / Pay2Day
 	if ( $section === 'fintech_kanyon' ) {
 		_me_settings_require_allowed_fintech_provider( $org_id, 'kanyon' );
+		$order_currency        = crm_fintech_normalize_kanyon_order_currency(
+			wp_unslash( $_POST['fintech_pay2day_order_currency'] ?? '' )
+		);
+		$default_payment_purpose = _me_settings_parse_fintech_pay2day_default_payment_purpose();
+		$rapira_markup_percent = $order_currency === 'RUB'
+			? _me_settings_parse_fintech_kanyon_rapira_markup_percent()
+			: null;
 
-		$keys = [
-			'fintech_pay2day_login',
-			'fintech_pay2day_password',
-			'fintech_pay2day_tsp_id',
-			'fintech_pay2day_order_currency',
-			'fintech_kanyon_verify_signature',
-			'fintech_kanyon_public_key_pem',
+		$values = [
+			'fintech_pay2day_login'              => sanitize_textarea_field( wp_unslash( $_POST['fintech_pay2day_login'] ?? '' ) ),
+			'fintech_pay2day_password'           => sanitize_textarea_field( wp_unslash( $_POST['fintech_pay2day_password'] ?? '' ) ),
+			'fintech_pay2day_tsp_id'             => sanitize_textarea_field( wp_unslash( $_POST['fintech_pay2day_tsp_id'] ?? '' ) ),
+			'fintech_pay2day_order_currency'     => $order_currency,
+			'fintech_pay2day_default_payment_purpose' => $default_payment_purpose,
+			'fintech_kanyon_verify_signature'    => sanitize_textarea_field( wp_unslash( $_POST['fintech_kanyon_verify_signature'] ?? '' ) ),
+			'fintech_kanyon_public_key_pem'      => sanitize_textarea_field( wp_unslash( $_POST['fintech_kanyon_public_key_pem'] ?? '' ) ),
 		];
-		foreach ( $keys as $key ) {
-			crm_set_setting( $key, sanitize_textarea_field( wp_unslash( $_POST[ $key ] ?? '' ) ), $org_id );
+		foreach ( $values as $key => $value ) {
+			crm_set_setting( $key, $value, $org_id );
+		}
+		if ( $rapira_markup_percent !== null ) {
+			crm_set_setting( 'fintech_kanyon_rapira_markup_percent', $rapira_markup_percent, $org_id );
 		}
 		crm_log_entity( 'settings.fintech_kanyon_saved', 'settings', 'update',
 			'Обновлены учётные данные Kanyon / Pay2Day',
-			'settings', 0, [ 'context' => [ 'section' => 'fintech_kanyon' ] ]
+			'settings', 0, [ 'context' => [
+				'section'                => 'fintech_kanyon',
+				'order_currency'         => $order_currency,
+				'default_payment_purpose'=> $default_payment_purpose,
+				'rapira_markup_percent'  => $rapira_markup_percent,
+			] ]
 		);
 		wp_send_json_success( _me_settings_fintech_status_message( 'Настройки Kanyon сохранены.', $org_id ) );
 		return;
@@ -430,6 +490,13 @@ function me_ajax_settings_save(): void {
 		$active_provider = crm_fintech_normalize_provider_code(
 			sanitize_key( wp_unslash( $_POST['fintech_active_provider'] ?? '' ) )
 		);
+		$order_currency        = crm_fintech_normalize_kanyon_order_currency(
+			wp_unslash( $_POST['fintech_pay2day_order_currency'] ?? '' )
+		);
+		$default_payment_purpose = _me_settings_parse_fintech_pay2day_default_payment_purpose();
+		$rapira_markup_percent = $order_currency === 'RUB'
+			? _me_settings_parse_fintech_kanyon_rapira_markup_percent()
+			: null;
 		_me_settings_require_allowed_fintech_provider( $org_id, $active_provider );
 
 		$values = [
@@ -440,7 +507,8 @@ function me_ajax_settings_save(): void {
 			'fintech_pay2day_login'         => sanitize_textarea_field( wp_unslash( $_POST['fintech_pay2day_login'] ?? '' ) ),
 			'fintech_pay2day_password'      => sanitize_textarea_field( wp_unslash( $_POST['fintech_pay2day_password'] ?? '' ) ),
 			'fintech_pay2day_tsp_id'        => sanitize_textarea_field( wp_unslash( $_POST['fintech_pay2day_tsp_id'] ?? '' ) ),
-			'fintech_pay2day_order_currency' => sanitize_textarea_field( wp_unslash( $_POST['fintech_pay2day_order_currency'] ?? '' ) ),
+			'fintech_pay2day_order_currency' => $order_currency,
+			'fintech_pay2day_default_payment_purpose' => $default_payment_purpose,
 			'fintech_doverka_api_key'       => sanitize_textarea_field( wp_unslash( $_POST['fintech_doverka_api_key'] ?? '' ) ),
 			'fintech_doverka_currency_id'   => sanitize_textarea_field( wp_unslash( $_POST['fintech_doverka_currency_id'] ?? '' ) ),
 			'fintech_doverka_approve_url'   => sanitize_textarea_field( wp_unslash( $_POST['fintech_doverka_approve_url'] ?? '' ) ),
@@ -448,6 +516,9 @@ function me_ajax_settings_save(): void {
 			'fintech_kanyon_verify_signature'  => isset( $_POST['fintech_kanyon_verify_signature'] ) && wp_unslash( $_POST['fintech_kanyon_verify_signature'] ) === '1' ? '1' : '0',
 			'fintech_kanyon_public_key_pem' => sanitize_textarea_field( wp_unslash( $_POST['fintech_kanyon_public_key_pem'] ?? '' ) ),
 		];
+		if ( $rapira_markup_percent !== null ) {
+			$values['fintech_kanyon_rapira_markup_percent'] = $rapira_markup_percent;
+		}
 		foreach ( $values as $key => $value ) {
 			crm_set_setting( $key, $value, $org_id );
 		}
@@ -606,9 +677,7 @@ function me_ajax_settings_telegram_connect(): void {
 	);
 
 	wp_send_json_success( [
-		'message'         => $telegram_context === 'merchant'
-			? 'Telegram callback подключён. Инвайты готовы к работе.'
-			: 'Telegram callback подключён. Операторский бот готов к работе.',
+		'message'         => (string) ( crm_telegram_get_context_status_meta( $telegram_context )['connect_message'] ?? 'Telegram callback подключён.' ),
 		'telegram_status' => $telegram_status,
 		'telegram_context' => $telegram_context,
 	] );
@@ -656,10 +725,17 @@ function me_ajax_settings_telegram_unlock(): void {
 	] );
 }
 
-add_action( 'wp_ajax_me_company_fintech_access_save', 'me_ajax_company_fintech_access_save' );
+add_action( 'wp_ajax_me_company_contours_save', 'me_ajax_company_contours_save' );
+add_action( 'wp_ajax_me_company_fintech_access_save', 'me_ajax_company_contours_save' );
 
-function me_ajax_company_fintech_access_save(): void {
-	check_ajax_referer( 'me_company_fintech_access_save', 'nonce' );
+function me_ajax_company_contours_save(): void {
+	$nonce_ok = check_ajax_referer( 'me_company_contours_save', 'nonce', false );
+	if ( false === $nonce_ok ) {
+		$nonce_ok = check_ajax_referer( 'me_company_fintech_access_save', 'nonce', false );
+	}
+	if ( false === $nonce_ok ) {
+		wp_send_json_error( [ 'message' => 'Нарушена безопасность запроса.' ], 403 );
+	}
 
 	if ( ! crm_is_root( get_current_user_id() ) ) {
 		wp_send_json_error( [ 'message' => 'Недостаточно прав.' ], 403 );
@@ -672,9 +748,22 @@ function me_ajax_company_fintech_access_save(): void {
 		'sanitize_key',
 		(array) wp_unslash( $_POST['providers'] ?? [] )
 	);
+	$exchange_pairs = array_map(
+		'sanitize_text_field',
+		(array) wp_unslash( $_POST['exchange_pairs'] ?? [] )
+	);
+	$rub_usdt_fixation_mode = function_exists( 'crm_company_normalize_rub_usdt_fixation_mode' )
+		? crm_company_normalize_rub_usdt_fixation_mode( (string) wp_unslash( $_POST['rub_usdt_fixation_mode'] ?? '' ) )
+		: 'rapira_manual';
+	$providers_provided = array_key_exists( 'providers', $_POST );
+	$pairs_provided     = array_key_exists( 'exchange_pairs', $_POST );
+	$fixation_provided  = array_key_exists( 'rub_usdt_fixation_mode', $_POST );
 
 	if ( $company_id <= 0 ) {
 		wp_send_json_error( [ 'message' => 'Некорректный company_id.' ], 422 );
+	}
+	if ( ! $providers_provided && ! $pairs_provided && ! $fixation_provided ) {
+		wp_send_json_error( [ 'message' => 'Не переданы изменения контуров компании.' ], 422 );
 	}
 
 	$company = $wpdb->get_row( $wpdb->prepare(
@@ -686,54 +775,158 @@ function me_ajax_company_fintech_access_save(): void {
 		wp_send_json_error( [ 'message' => 'Компания не найдена.' ], 404 );
 	}
 
-	$allowed_providers = crm_fintech_normalize_allowed_providers( $providers );
-	crm_set_setting(
-		'fintech_allowed_providers',
-		crm_fintech_serialize_allowed_providers( $allowed_providers ),
-		$company_id
-	);
+	$pairs_result = [
+		'enabled_codes' => crm_company_get_enabled_exchange_pairs( $company_id ),
+		'changes'       => [],
+	];
+	if ( $pairs_provided ) {
+		$pairs_result = crm_company_replace_enabled_contours( $company_id, 'exchange_pairs', $exchange_pairs );
+		if ( is_wp_error( $pairs_result ) ) {
+			wp_send_json_error( [ 'message' => $pairs_result->get_error_message() ], 500 );
+		}
+	}
 
-	$current_active_provider = crm_fintech_normalize_provider_code(
-		(string) crm_get_setting( 'fintech_active_provider', $company_id, '' )
-	);
+	$providers_result = [
+		'enabled_codes' => crm_company_get_enabled_fintech_providers( $company_id ),
+		'changes'       => [],
+	];
+	if ( $providers_provided ) {
+		$providers_result = crm_company_replace_enabled_contours( $company_id, 'fintech_providers', $providers );
+		if ( is_wp_error( $providers_result ) ) {
+			wp_send_json_error( [ 'message' => $providers_result->get_error_message() ], 500 );
+		}
+	}
+
+	$current_fixation_mode = function_exists( 'crm_company_get_rub_usdt_fixation_mode' )
+		? crm_company_get_rub_usdt_fixation_mode( $company_id )
+		: 'rapira_manual';
+	$fixation_mode_changed = false;
+	if ( $fixation_provided ) {
+		$fixation_mode_changed = $current_fixation_mode !== $rub_usdt_fixation_mode;
+		if ( ! function_exists( 'crm_company_set_rub_usdt_fixation_mode' ) || ! crm_company_set_rub_usdt_fixation_mode( $company_id, $rub_usdt_fixation_mode ) ) {
+			wp_send_json_error( [ 'message' => 'Не удалось сохранить режим фиксации RUB/USDT.' ], 500 );
+		}
+	}
+
+	$enabled_exchange_pairs  = array_values( $pairs_result['enabled_codes'] ?? [] );
+	$allowed_providers       = array_values( $providers_result['enabled_codes'] ?? [] );
 	$active_provider_cleared = false;
 
-	if ( $current_active_provider !== '' && ! in_array( $current_active_provider, $allowed_providers, true ) ) {
-		crm_set_setting( 'fintech_active_provider', '', $company_id );
-		$active_provider_cleared = true;
+	foreach ( (array) ( $providers_result['changes'] ?? [] ) as $change ) {
+		if ( ! empty( $change['active_provider_cleared'] ) ) {
+			$active_provider_cleared = true;
+			break;
+		}
 	}
 
+	foreach ( [ $pairs_result['changes'] ?? [], $providers_result['changes'] ?? [] ] as $changes ) {
+		foreach ( (array) $changes as $contour_code => $change ) {
+			if ( empty( $change['changed'] ) ) {
+				continue;
+			}
+
+			$contour = function_exists( 'crm_company_contour_get' ) ? crm_company_contour_get( (string) $contour_code ) : null;
+			if ( ! is_array( $contour ) ) {
+				continue;
+			}
+
+			$enabled = ! empty( $change['enabled'] );
+			$label   = (string) ( $contour['title'] ?? $contour['code'] ?? $contour_code );
+
+			crm_log_entity(
+				'settings.company_contour_toggled',
+				'settings',
+				'update',
+				sprintf(
+					'Для компании «%s» %s контур %s',
+					(string) $company->name,
+					$enabled ? 'включён' : 'выключен',
+					$label
+				),
+				'company',
+				$company_id,
+				[
+					'org_id'  => $company_id,
+					'context' => [
+						'company_code'   => (string) $company->code,
+						'contour_group'  => (string) ( $contour['group'] ?? '' ),
+						'contour_code'   => (string) ( $contour['code'] ?? $contour_code ),
+						'contour_label'  => $label,
+						'enabled'        => $enabled,
+						'previous_state' => ! empty( $change['previous_state'] ),
+					],
+				]
+			);
+		}
+	}
+
+	if ( $fixation_provided && $fixation_mode_changed ) {
+		$fixation_label = function_exists( 'crm_company_get_rub_usdt_fixation_mode_label' )
+			? crm_company_get_rub_usdt_fixation_mode_label( $rub_usdt_fixation_mode )
+			: $rub_usdt_fixation_mode;
+
+		crm_log_entity(
+			'settings.company_rub_usdt_fixation_mode_saved',
+			'settings',
+			'update',
+			sprintf(
+				'Для компании «%s» изменён режим фиксации RUB/USDT: %s',
+				(string) $company->name,
+				$fixation_label
+			),
+			'company',
+			$company_id,
+			[
+				'org_id'  => $company_id,
+				'context' => [
+					'company_code'   => (string) $company->code,
+					'setting_key'    => 'rub_usdt_fixation_mode',
+					'previous_mode'  => $current_fixation_mode,
+					'current_mode'   => $rub_usdt_fixation_mode,
+					'current_label'  => $fixation_label,
+				],
+			]
+		);
+	}
+
+	$pair_titles = array_map(
+		static function ( string $pair_code ): string {
+			$pair = function_exists( 'crm_root_get_pair_definition' ) ? crm_root_get_pair_definition( $pair_code ) : null;
+			return is_array( $pair ) ? (string) $pair['title'] : $pair_code;
+		},
+		$enabled_exchange_pairs
+	);
 	$allowed_provider_labels = array_map( 'crm_fintech_provider_label', $allowed_providers );
-	$message                 = empty( $allowed_provider_labels )
-		? 'Для компании отключены все платёжные контуры.'
-		: 'Настройки компании сохранены: доступны ' . implode( ', ', $allowed_provider_labels ) . '.';
+	$current_fixation_mode = function_exists( 'crm_company_get_rub_usdt_fixation_mode' )
+		? crm_company_get_rub_usdt_fixation_mode( $company_id )
+		: $rub_usdt_fixation_mode;
+	$fixation_mode_label = function_exists( 'crm_company_get_rub_usdt_fixation_mode_label' )
+		? crm_company_get_rub_usdt_fixation_mode_label( $current_fixation_mode )
+		: $current_fixation_mode;
+
+	$message_parts = [
+		empty( $pair_titles )
+			? 'Обмен отключён'
+			: 'Обмен: ' . implode( ', ', $pair_titles ),
+		empty( $allowed_provider_labels )
+			? 'Платёжные контуры отключены'
+			: 'Платежи: ' . implode( ', ', $allowed_provider_labels ),
+		'RUB/USDT фиксация: ' . $fixation_mode_label,
+	];
+	$message = 'Настройки компании сохранены. ' . implode( '. ', $message_parts ) . '.';
 
 	if ( $active_provider_cleared ) {
-		$message .= ' Активный контур был сброшен, потому что он больше недоступен.';
+		$message .= ' Активный платёжный контур был сброшен, потому что он больше недоступен.';
 	}
-
-	crm_log_entity(
-		'settings.company_fintech_access_saved',
-		'settings',
-		'update',
-		sprintf( 'Обновлена доступность платёжных контуров для компании «%s»', $company->name ),
-		'company',
-		$company_id,
-		[
-			'org_id'   => $company_id,
-			'context'  => [
-				'company_code'            => (string) $company->code,
-				'allowed_providers'       => $allowed_providers,
-				'active_provider_cleared' => $active_provider_cleared,
-			],
-		]
-	);
 
 	wp_send_json_success( [
 		'message'                 => $message,
 		'company_id'              => $company_id,
+		'enabled_exchange_pairs'  => $enabled_exchange_pairs,
 		'allowed_providers'       => $allowed_providers,
 		'allowed_provider_labels' => $allowed_provider_labels,
+		'rub_usdt_fixation_mode'  => $current_fixation_mode,
+		'rub_usdt_fixation_label' => $fixation_mode_label,
 		'active_provider_cleared' => $active_provider_cleared,
 	] );
 }

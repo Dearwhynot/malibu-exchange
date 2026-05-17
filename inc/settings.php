@@ -138,3 +138,25 @@ function crm_get_all_settings( int $org_id = CRM_DEFAULT_ORG_ID ): array {
 
 	return $settings;
 }
+
+if ( ! function_exists( 'crm_fintech_kanyon_order_currency_options' ) ) {
+	function crm_fintech_kanyon_order_currency_options(): array {
+		return [
+			'USDT' => 'USDT',
+			'RUB'  => 'RUB',
+		];
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_normalize_kanyon_order_currency' ) ) {
+	function crm_fintech_normalize_kanyon_order_currency( $value, string $default = '' ): string {
+		$currency = strtoupper( trim( (string) $value ) );
+		$options  = crm_fintech_kanyon_order_currency_options();
+
+		if ( isset( $options[ $currency ] ) ) {
+			return $currency;
+		}
+
+		return strtoupper( trim( $default ) );
+	}
+}

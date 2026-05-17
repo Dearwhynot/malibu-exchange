@@ -18,6 +18,10 @@ function malibu_exchange_get_telegram_callback_route( string $context = 'merchan
         return '/telegram/operator-callback';
     }
 
+    if ( $context === 'service' ) {
+        return '/telegram/service-callback';
+    }
+
     return '/telegram/merchant-callback';
 }
 
@@ -55,6 +59,14 @@ function malibu_exchange_register_telegram_callback_route(): void
         'permission_callback' => '__return_true',
     ]);
 
+    register_rest_route('malibu-exchange/v1', malibu_exchange_get_telegram_callback_route( 'service' ), [
+        'methods' => ['GET', 'POST'],
+        'callback' => static function ( WP_REST_Request $request ) {
+            return malibu_exchange_handle_telegram_callback_request( $request, 'service' );
+        },
+        'permission_callback' => '__return_true',
+    ]);
+
     register_rest_route('malibu-exchange/v1', malibu_exchange_get_telegram_callback_route( 'legacy' ), [
         'methods' => ['GET', 'POST'],
         'callback' => static function ( WP_REST_Request $request ) {
@@ -78,9 +90,13 @@ function malibu_exchange_handle_telegram_callback_request(WP_REST_Request $reque
     $GLOBALS['CRM_TELEGRAM_CALLBACK_CONTEXT'] = $context;
     $GLOBALS['TG_UNIVERSAL_RAW_UPDATE'] = (string) $request->get_body();
 
-    $callback_file = $context === 'operator'
-        ? '/callbacks/telegram/telegram-callback-operator.php'
-        : '/callbacks/telegram/telegram-callback-merchant.php';
+    if ( $context === 'operator' ) {
+        $callback_file = '/callbacks/telegram/telegram-callback-operator.php';
+    } elseif ( $context === 'service' ) {
+        $callback_file = '/callbacks/telegram/telegram-callback-service.php';
+    } else {
+        $callback_file = '/callbacks/telegram/telegram-callback-merchant.php';
+    }
 
     require_once get_template_directory() . $callback_file;
 

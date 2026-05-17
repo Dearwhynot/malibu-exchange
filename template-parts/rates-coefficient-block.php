@@ -3,7 +3,7 @@
  * Блок настройки наценки валютной пары.
  *
  * Args:
- *   - pair_code        string  Код пары (THB_RUB, USDT_THB, RUB_USDT)
+ *   - pair_code        string  Код пары (RUB_THB, USDT_THB, RUB_USDT)
  *   - pair_title       string  Заголовок пары (RUB/THB и т.п.)
  *   - state            string  'active' | 'disabled' | 'not_configured'
  *   - coefficient      float   Текущее значение наценки (если запись есть)

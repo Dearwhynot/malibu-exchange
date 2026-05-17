@@ -170,6 +170,7 @@
   - deployment config: `.vscode/sftp.json`;
   - theme remote path usually points to `.../wp-content/themes/<theme>`;
   - WordPress debug log is usually one level above themes: `.../wp-content/debug.log`.
+- Exact Malibu SFTP log workflow and resolved path: [`docs/debug-log-sftp-self-service.md`](docs/debug-log-sftp-self-service.md)
 - Prefer downloading the log to a temporary local file under `/private/tmp` and reading only the tail/relevant matches. Do not paste full logs into the chat.
 - Build SFTP commands through a temporary script file instead of putting credentials directly in long visible command arguments. Remove temporary scripts/files after use.
 - If sandbox/network restrictions block log download, request escalation for the exact SFTP/log-read command and continue; do not ask the user to open the log manually unless all automated paths are blocked.

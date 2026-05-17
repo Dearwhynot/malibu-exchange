@@ -136,40 +136,18 @@ $nonce_merchants_list = wp_create_nonce( 'me_merchants_list' );
 $nonce_merchant_delete = wp_create_nonce( 'me_merchants_delete' );
 $nonce_create_co     = wp_create_nonce( 'me_create_company' );
 $nonce_create_office = wp_create_nonce( 'me_create_company_office' );
-$nonce_company_settings = wp_create_nonce( 'me_company_fintech_access_save' );
-
-if ( ! function_exists( 'me_users_render_company_provider_badges_html' ) ) {
-	function me_users_render_company_provider_badges_html( array $providers ): string {
-		$providers = crm_fintech_normalize_allowed_providers( $providers );
-
-		ob_start();
-		if ( empty( $providers ) ) :
-			?>
-			<span class="badge badge-secondary m-r-2">Контуры отключены</span>
-			<?php
-		else :
-			foreach ( $providers as $provider ) :
-				$badge_class = $provider === 'doverka' ? 'badge-info' : 'badge-primary';
-				?>
-				<span class="badge <?php echo esc_attr( $badge_class ); ?> m-r-2">
-					<?php echo esc_html( crm_fintech_provider_label( $provider ) ); ?>
-				</span>
-				<?php
-			endforeach;
-		endif;
-
-		return (string) ob_get_clean();
-	}
-}
+$nonce_company_settings = wp_create_nonce( 'me_company_contours_save' );
 
 // Данные для вкладки "Компании" — только root
-$all_companies_full        = [];
+$all_companies_full         = [];
 $company_fintech_access_map = [];
+$company_exchange_pairs_map = [];
 if ( crm_is_root( $current_uid ) ) {
 	$all_companies_full = crm_get_all_companies_full();
 	foreach ( $all_companies_full as $co ) {
 		$co_id = (int) $co->id;
-		$company_fintech_access_map[ $co_id ] = crm_fintech_get_allowed_providers( $co_id );
+		$company_fintech_access_map[ $co_id ] = crm_company_get_enabled_fintech_providers( $co_id );
+		$company_exchange_pairs_map[ $co_id ] = crm_company_get_enabled_exchange_pairs( $co_id );
 	}
 }
 
@@ -985,7 +963,8 @@ get_header();
 										<tbody id="companies-tbody">
 											<?php foreach ( $all_companies_full as $co ) :
 												$co_id             = (int) $co->id;
-												$allowed_providers = $company_fintech_access_map[ $co_id ] ?? crm_fintech_default_allowed_providers();
+												$enabled_pairs     = $company_exchange_pairs_map[ $co_id ] ?? [];
+												$allowed_providers = $company_fintech_access_map[ $co_id ] ?? crm_company_get_enabled_fintech_providers( $co_id );
 											?>
 											<tr id="corow-<?php echo $co_id; ?>">
 												<td class="v-align-middle">
@@ -996,8 +975,13 @@ get_header();
 														<span class="semi-bold"><?php echo esc_html( $co->name ); ?></span>
 														<small class="hint-text m-l-5 fs-11"><?php echo esc_html( $co->code ); ?></small>
 													</div>
+													<div class="m-t-5" id="company-exchange-pairs-<?php echo $co_id; ?>">
+														<span class="hint-text fs-11 m-r-5">Обмен:</span>
+														<?php echo crm_company_render_exchange_pair_badges_html( $enabled_pairs ); ?>
+													</div>
 													<div class="m-t-5" id="company-providers-<?php echo $co_id; ?>">
-														<?php echo me_users_render_company_provider_badges_html( $allowed_providers ); ?>
+														<span class="hint-text fs-11 m-r-5">Платежи:</span>
+														<?php echo crm_company_render_fintech_provider_badges_html( $allowed_providers ); ?>
 													</div>
 												</td>
 												<td class="v-align-middle">
@@ -1029,6 +1013,7 @@ get_header();
 																   data-company-id="<?php echo $co_id; ?>"
 																   data-company-name="<?php echo esc_attr( $co->name ); ?>"
 																   data-company-code="<?php echo esc_attr( $co->code ); ?>"
+																   data-enabled-exchange-pairs="<?php echo esc_attr( implode( ',', $enabled_pairs ) ); ?>"
 																   data-allowed-providers="<?php echo esc_attr( implode( ',', $allowed_providers ) ); ?>"
 																   data-bs-toggle="modal"
 																   data-bs-target="#modal-company-settings">
@@ -1482,91 +1467,7 @@ get_header();
 <!-- ════════════════════════════════════════════════════════════════════════
      MODAL: COMPANY SETTINGS (root only)
      ════════════════════════════════════════════════════════════════════ -->
-<div class="modal fade" id="modal-company-settings" tabindex="-1"
-     aria-labelledby="modal-company-settings-title" aria-hidden="true">
-	<div class="modal-dialog modal-lg">
-		<div class="modal-content">
-			<div class="modal-header clearfix text-left">
-				<button aria-label="Закрыть" type="button" class="close" data-bs-dismiss="modal" aria-hidden="true">
-					<i class="pg-icon">close</i>
-				</button>
-				<h5 class="modal-title" id="modal-company-settings-title">Настройки компании</h5>
-				<p class="p-b-10 m-b-0">
-					Root определяет, какие платёжные контуры компания видит в настройках и через какие ей разрешено создавать новые ордера.
-				</p>
-			</div>
-			<div class="modal-body">
-				<form id="form-company-settings" novalidate>
-					<input type="hidden" id="cfs-company-id" value="0">
-
-					<div class="form-group-attached">
-						<div class="row">
-							<div class="col-md-8">
-								<div class="form-group form-group-default">
-									<label>Компания</label>
-									<input type="text" class="form-control" id="cfs-company-name" value="" readonly>
-								</div>
-							</div>
-							<div class="col-md-4">
-								<div class="form-group form-group-default">
-									<label>ID / код</label>
-									<input type="text" class="form-control" id="cfs-company-code" value="" readonly>
-								</div>
-							</div>
-						</div>
-
-						<div class="row">
-							<div class="col-12">
-								<div class="form-group form-group-default">
-									<label>Доступные платёжные контуры</label>
-									<p class="hint-text small m-b-0">
-										Секция сделана расширяемой: позже сюда можно будет добавить и другие настройки компании.
-									</p>
-								</div>
-							</div>
-						</div>
-
-						<div class="row">
-							<div class="col-md-6">
-								<div class="form-group form-group-default">
-									<label>Kanyon (Pay2Day)</label>
-									<div class="form-check complete m-t-5">
-										<input type="checkbox" id="cfs-provider-kanyon" class="js-company-provider" value="kanyon">
-										<label for="cfs-provider-kanyon">Разрешить компании</label>
-									</div>
-									<p class="hint-text small m-b-0">
-										Логин, пароль и создание новых ордеров через Kanyon / Pay2Day.
-									</p>
-								</div>
-							</div>
-							<div class="col-md-6">
-								<div class="form-group form-group-default">
-									<label>Doverka</label>
-									<div class="form-check complete m-t-5">
-										<input type="checkbox" id="cfs-provider-doverka" class="js-company-provider" value="doverka">
-										<label for="cfs-provider-doverka">Разрешить компании</label>
-									</div>
-									<p class="hint-text small m-b-0">
-										API-ключ Doverka, выбор Doverka как активного провайдера и создание новых ордеров.
-									</p>
-								</div>
-							</div>
-						</div>
-					</div>
-
-					<div class="alert alert-danger d-none m-t-10" id="cfs-error"></div>
-				</form>
-			</div>
-			<div class="modal-footer">
-				<button type="button" class="btn btn-default" data-bs-dismiss="modal">Отмена</button>
-				<button type="button" class="btn btn-primary" id="btn-save-company-settings">
-					<span class="btn-label">Сохранить</span>
-					<i class="pg-icon spin d-none" id="btn-company-settings-spinner">refresh</i>
-				</button>
-			</div>
-		</div>
-	</div>
-</div>
+<?php get_template_part( 'template-parts/root-company-settings-modal' ); ?>
 
 <!-- ════════════════════════════════════════════════════════════════════════
      MODAL: CREDENTIALS (показывается после создания нового пользователя)
@@ -1715,6 +1616,7 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 	var CAN_MANAGE_OFFICES = <?php echo $can_manage_offices ? 'true' : 'false'; ?>;
 	var IS_ROOT          = <?php echo crm_is_root( $current_uid ) ? 'true' : 'false'; ?>;
 	var FINTECH_PROVIDER_LABELS = <?php echo crm_json_for_inline_js( crm_fintech_provider_labels() ); ?>;
+	var EXCHANGE_PAIR_TITLES = <?php echo crm_json_for_inline_js( array_column( crm_company_exchange_pair_definitions(), 'title', 'code' ) ); ?>;
 
 	// ── Дропдауны Actions: strategy fixed (fix overflow in .table-responsive) ──
 	function initActionDropdowns($scope) {
@@ -1776,12 +1678,44 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 		return normalized;
 	}
 
+	function normalizePairCodes(pairs) {
+		var seen = {};
+		var normalized = [];
+		$.each(pairs || [], function (_, pair) {
+			var code = $.trim(String(pair || '')).toUpperCase();
+			if (code === 'THB_RUB') {
+				code = 'RUB_THB';
+			}
+			if (!code || seen[code] || !EXCHANGE_PAIR_TITLES[code]) {
+				return;
+			}
+			seen[code] = true;
+			normalized.push(code);
+		});
+		return normalized;
+	}
+
+	function renderCompanyExchangePairBadges(pairs) {
+		var normalized = normalizePairCodes(pairs);
+		var html = '';
+
+		if (!normalized.length) {
+			return '<span class="badge badge-secondary m-r-2">Направления выключены</span>';
+		}
+
+		$.each(normalized, function (_, code) {
+			html += '<span class="badge badge-success m-r-2">' + escapeHtml(EXCHANGE_PAIR_TITLES[code] || code) + '</span>';
+		});
+
+		return html;
+	}
+
 	function renderCompanyProviderBadges(providers) {
 		var normalized = normalizeProviderCodes(providers);
 		var html = '';
 
 		if (!normalized.length) {
-			return '<span class="badge badge-secondary m-r-2">Контуры отключены</span>';
+			return '<span class="badge badge-secondary m-r-2">Платёжные контуры отключены</span>';
 		}
 
 		$.each(normalized, function (_, provider) {
@@ -1803,6 +1737,7 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 			+       ' data-company-id="' + escapeHtml(company.id) + '"'
 			+       ' data-company-name="' + escapeHtml(company.name) + '"'
 			+       ' data-company-code="' + escapeHtml(company.code) + '"'
+			+       ' data-enabled-exchange-pairs="' + escapeHtml((company.enabled_exchange_pairs || []).join(',')) + '"'
 			+       ' data-allowed-providers="' + escapeHtml((company.allowed_providers || []).join(',')) + '"'
 			+       ' data-bs-toggle="modal"'
 			+       ' data-bs-target="#modal-company-settings">'
@@ -2555,12 +2490,20 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 			return normalizeProviderCodes(String(rawValue).split(','));
 		}
 
+		function parseCompanyPairsAttr(rawValue) {
+			if (!rawValue) {
+				return [];
+			}
+			return normalizePairCodes(String(rawValue).split(','));
+		}
+
 		$companySettingsModal.on('hidden.bs.modal', function () {
 			$('#cfs-company-id').val(0);
 			$('#modal-company-settings-title').text('Настройки компании');
 			$('#cfs-company-name').val('');
 			$('#cfs-company-code').val('');
 			$('#cfs-error').addClass('d-none').text('');
+			$('.js-company-pair').prop('checked', false);
 			$('.js-company-provider').prop('checked', false);
 			$('#btn-save-company-settings').prop('disabled', false)
 				.find('.btn-label').show()
@@ -2572,12 +2515,16 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 			var companyId = parseInt($trigger.attr('data-company-id'), 10) || 0;
 			var companyName = $trigger.attr('data-company-name') || '—';
 			var companyCode = $trigger.attr('data-company-code') || '—';
+			var pairs = parseCompanyPairsAttr($trigger.attr('data-enabled-exchange-pairs'));
 			var providers = parseCompanyProvidersAttr($trigger.attr('data-allowed-providers'));
 
 			$('#cfs-company-id').val(companyId);
 			$('#modal-company-settings-title').text('Настройки: ' + companyName);
 			$('#cfs-company-name').val(companyName);
 			$('#cfs-company-code').val('#' + companyId + ' · ' + companyCode);
+			$('.js-company-pair').each(function () {
+				$(this).prop('checked', pairs.indexOf($(this).val()) !== -1);
+			});
 			$('.js-company-provider').each(function () {
 				$(this).prop('checked', providers.indexOf($(this).val()) !== -1);
 			});
@@ -2587,7 +2534,12 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 		$('#btn-save-company-settings').on('click', function () {
 			var $btn = $(this);
 			var companyId = parseInt($('#cfs-company-id').val(), 10) || 0;
+			var pairs = [];
 			var providers = [];
+
+			$('.js-company-pair:checked').each(function () {
+				pairs.push($(this).val());
+			});
 
 			$('.js-company-provider:checked').each(function () {
 				providers.push($(this).val());
@@ -2599,9 +2551,10 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 				.end().find('#btn-company-settings-spinner').removeClass('d-none');
 
 			$.post(AJAX_URL, {
-				action: 'me_company_fintech_access_save',
+				action: 'me_company_contours_save',
 				nonce: NONCES.companySettings,
 				company_id: companyId,
+				exchange_pairs: pairs,
 				providers: providers
 			})
 			.done(function (res) {
@@ -2613,11 +2566,15 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 					return;
 				}
 
+				var pairList = normalizePairCodes(res.data.enabled_exchange_pairs || []);
 				var providerList = normalizeProviderCodes(res.data.allowed_providers || []);
+				var pairAttr = pairList.join(',');
 				var providerAttr = providerList.join(',');
 				var $row = $('#corow-' + companyId);
+				$row.find('.js-company-settings').attr('data-enabled-exchange-pairs', pairAttr);
 				$row.find('.js-company-settings').attr('data-allowed-providers', providerAttr);
-				$('#company-providers-' + companyId).html(renderCompanyProviderBadges(providerList));
+				$('#company-exchange-pairs-' + companyId).html('<span class="hint-text fs-11 m-r-5">Обмен:</span>' + renderCompanyExchangePairBadges(pairList));
+				$('#company-providers-' + companyId).html('<span class="hint-text fs-11 m-r-5">Платежи:</span>' + renderCompanyProviderBadges(providerList));
 				showToast(res.data.message || 'Настройки компании сохранены.', 'success');
 				bootstrap.Modal.getInstance($companySettingsModal[0]).hide();
 			})
@@ -2673,10 +2630,11 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 					var co = res.data.company;
 					var $tbody = $('#companies-tbody');
 					if ($tbody.length) {
+						var exchangeBadges = renderCompanyExchangePairBadges(co.enabled_exchange_pairs || []);
 						var providerBadges = renderCompanyProviderBadges(co.allowed_providers || []);
 						var row = '<tr id="corow-' + co.id + '">' +
 							'<td class="v-align-middle"><span class="hint-text fs-12">#' + co.id + '</span></td>' +
-							'<td class="v-align-middle"><div><span class="semi-bold">' + escapeHtml(co.name) + '</span> <small class="hint-text m-l-5 fs-11">' + escapeHtml(co.code) + '</small></div><div class="m-t-5" id="company-providers-' + co.id + '">' + providerBadges + '</div></td>' +
+							'<td class="v-align-middle"><div><span class="semi-bold">' + escapeHtml(co.name) + '</span> <small class="hint-text m-l-5 fs-11">' + escapeHtml(co.code) + '</small></div><div class="m-t-5" id="company-exchange-pairs-' + co.id + '"><span class="hint-text fs-11 m-r-5">Обмен:</span>' + exchangeBadges + '</div><div class="m-t-5" id="company-providers-' + co.id + '"><span class="hint-text fs-11 m-r-5">Платежи:</span>' + providerBadges + '</div></td>' +
 							'<td class="v-align-middle"><span class="badge badge-success">active</span></td>' +
 							'<td class="v-align-middle hint-text fs-12">0</td>' +
 							'<td class="v-align-middle hint-text fs-12">' + escapeHtml(co.phone || '—') + '</td>' +

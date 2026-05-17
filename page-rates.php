@@ -16,8 +16,18 @@ if ( ! crm_user_has_permission( get_current_user_id(), 'rates.view' ) ) {
 }
 
 // ─── Данные пары и коэффициента ──────────────────────────────────────────────
-$rates_org_id = crm_require_company_page_context();
-$pair         = rates_get_pair( RATES_PAIR_CODE, $rates_org_id );
+$rates_org_id            = crm_require_company_page_context();
+$enabled_exchange_pairs  = function_exists( 'crm_company_get_enabled_exchange_pairs' )
+	? crm_company_get_enabled_exchange_pairs( $rates_org_id )
+	: [];
+$rub_thb_enabled         = in_array( RATES_PAIR_CODE, $enabled_exchange_pairs, true );
+$usdt_thb_enabled        = in_array( 'USDT_THB', $enabled_exchange_pairs, true );
+$rub_usdt_enabled        = in_array( 'RUB_USDT', $enabled_exchange_pairs, true );
+$rub_usdt_fixation_mode  = function_exists( 'crm_company_get_rub_usdt_fixation_mode' )
+	? crm_company_get_rub_usdt_fixation_mode( $rates_org_id )
+	: 'rapira_manual';
+$rub_usdt_manual_save_allowed = $rub_usdt_fixation_mode === 'rapira_manual';
+$pair                    = $rub_thb_enabled ? rates_get_pair( RATES_PAIR_CODE, $rates_org_id ) : null;
 $coeff_full   = $pair
 	? rates_get_coefficient_full( (int) $pair->id, RATES_PROVIDER_EX24, RATES_PROVIDER_SOURCE )
 	: [ 'value' => 0.05, 'type' => 'absolute' ];
@@ -25,12 +35,19 @@ $coeff        = (float) $coeff_full['value'];
 $coeff_type   = (string) $coeff_full['type'];
 
 // Текущие курсы Ex24 — только для отображения, кэш 5 мин, в базу не пишем
-$ex24      = rates_get_ex24_cached( RATES_PROVIDER_SOURCE );
-$ex24_ok   = $ex24['ok'];
+$ex24      = $rub_thb_enabled
+	? rates_get_ex24_cached( RATES_PROVIDER_SOURCE )
+	: [
+		'ok'           => false,
+		'error'        => '',
+		'sberbank_buy' => null,
+		'tinkoff_buy'  => null,
+	];
+$ex24_ok   = $rub_thb_enabled ? ! empty( $ex24['ok'] ) : false;
 $ex24_err  = $ex24['error'] ?? '';
 
-$comp_sber    = $ex24['sberbank_buy'];
-$comp_tinkoff = $ex24['tinkoff_buy'];
+$comp_sber    = $ex24['sberbank_buy'] ?? null;
+$comp_tinkoff = $ex24['tinkoff_buy'] ?? null;
 $calculated   = rates_calculate( $comp_sber, $comp_tinkoff, $coeff, $coeff_type );
 $our_sber     = $calculated['our_sberbank'];
 $our_tinkoff  = $calculated['our_tinkoff'];
@@ -54,14 +71,18 @@ foreach ( $chart_history as $row ) {
 
 // ─── Рыночные курсы (кэш 3 мин, только для отображения) ──────────────────────
 $rapira     = rates_get_rapira_cached();
-$bitkub     = rates_get_bitkub_cached();
-$binance_th = rates_get_binance_th_cached();
+$bitkub     = $usdt_thb_enabled
+	? rates_get_bitkub_cached()
+	: [ 'ok' => false, 'error' => '', 'highestBid' => null, 'lowestAsk' => null ];
+$binance_th = $usdt_thb_enabled
+	? rates_get_binance_th_cached()
+	: [ 'ok' => false, 'error' => '', 'bid' => null, 'ask' => null, 'mid' => null ];
 $cbr        = rates_get_cbr_usd_cached();
 
 // ─── Последние сохранённые снимки из crm_market_snapshots_usdt ───────────────
 $last_rapira     = rates_get_last_market_snapshot( 'rapira', $rates_org_id );
-$last_bitkub     = rates_get_last_market_snapshot( 'bitkub', $rates_org_id );
-$last_binance_th = rates_get_last_market_snapshot( 'binance_th', $rates_org_id );
+$last_bitkub     = $usdt_thb_enabled ? rates_get_last_market_snapshot( 'bitkub', $rates_org_id ) : null;
+$last_binance_th = $usdt_thb_enabled ? rates_get_last_market_snapshot( 'binance_th', $rates_org_id ) : null;
 
 // ─── История снимков для таблицы ─────────────────────────────────────────────
 $market_history = rates_get_all_market_history( 100, $rates_org_id );
@@ -115,7 +136,7 @@ get_header();
 
 			<div class="container-fluid container-fixed-lg mt-4 rates-page">
 
-				<?php if ( ! $ex24_ok ) : ?>
+				<?php if ( $rub_thb_enabled && ! $ex24_ok ) : ?>
 				<!-- Алерт: Ex24 недоступен -->
 				<div class="alert alert-danger m-b-20" role="alert">
 					<strong>Ex24 недоступен.</strong>
@@ -124,11 +145,11 @@ get_header();
 				</div>
 				<?php endif; ?>
 
-				<?php if ( ! $pair ) : ?>
+				<?php if ( $rub_thb_enabled && ! $pair ) : ?>
 				<!-- Empty state: пара не активирована для текущей компании -->
 				<div class="alert alert-warning m-b-20" role="alert">
-					<strong>Курсы для вашей компании пока не настроены.</strong>
-					Активная валютная пара отсутствует — обратитесь к администратору, чтобы он включил пару и задал коэффициент.
+					<strong>Контур RUB/THB включён, но ещё не настроен.</strong>
+					Активная валютная пара отсутствует — обратитесь к администратору, чтобы он пересоздал направление и задал коэффициент.
 				</div>
 				<?php endif; ?>
 
@@ -140,11 +161,21 @@ get_header();
 				<!-- Последние сохранённые рыночные курсы (из crm_market_snapshots_usdt) -->
 				<?php
 				$last_snapshots = [
-					[ 'label' => 'Rapira',     'symbol' => 'USDT/RUB', 'row' => $last_rapira ],
-					[ 'label' => 'Bitkub',     'symbol' => 'THB/USDT', 'row' => $last_bitkub ],
-					[ 'label' => 'Binance TH', 'symbol' => 'USDT/THB', 'row' => $last_binance_th ],
+					[ 'label' => 'Rapira',     'symbol' => 'USDT/RUB', 'row' => $last_rapira, 'visible' => true ],
+					[ 'label' => 'Bitkub',     'symbol' => 'THB/USDT', 'row' => $last_bitkub, 'visible' => $usdt_thb_enabled ],
+					[ 'label' => 'Binance TH', 'symbol' => 'USDT/THB', 'row' => $last_binance_th, 'visible' => $usdt_thb_enabled ],
 				];
-				$any_snapshot = $last_rapira || $last_bitkub || $last_binance_th;
+				$last_snapshots = array_values( array_filter(
+					$last_snapshots,
+					static fn( array $snapshot ): bool => ! empty( $snapshot['visible'] )
+				) );
+				$any_snapshot = false;
+				foreach ( $last_snapshots as $snapshot ) {
+					if ( ! empty( $snapshot['row'] ) ) {
+						$any_snapshot = true;
+						break;
+					}
+				}
 				?>
 				<?php if ( $any_snapshot ) : ?>
 				<div class="row row-eq-height m-b-20">
@@ -301,10 +332,12 @@ get_header();
 								</div>
 							</div>
 							<div class="card-footer p-t-8 p-b-8 p-l-20 p-r-20">
-								<?php if ( $rapira['ok'] ) : ?>
+								<?php if ( $rapira['ok'] && $rub_usdt_manual_save_allowed ) : ?>
 								<button class="btn btn-xs btn-default btn-market-save" data-source="rapira" type="button">
 									<i class="pg-icon fs-5">save</i> Сохранить
 								</button>
+								<?php elseif ( $rapira['ok'] ) : ?>
+								<span class="hint-text fs-10">Фиксация этого курса переведена на сервисный Telegram-контур.</span>
 								<?php else : ?>
 								<span class="hint-text fs-10"><?php echo esc_html( $rapira['error'] ); ?></span>
 								<?php endif; ?>
@@ -313,6 +346,7 @@ get_header();
 					</div>
 
 					<!-- Bitkub: THB/USDT -->
+					<?php if ( $usdt_thb_enabled ) : ?>
 					<div class="col-md-3 col-sm-6 m-b-10 d-flex flex-column">
 						<div class="card card-default no-margin h-100">
 							<div class="card-header">
@@ -344,8 +378,10 @@ get_header();
 							</div>
 						</div>
 					</div>
+					<?php endif; ?>
 
 					<!-- Binance TH: USDT/THB -->
+					<?php if ( $usdt_thb_enabled ) : ?>
 					<div class="col-md-3 col-sm-6 m-b-10 d-flex flex-column">
 						<div class="card card-default no-margin h-100">
 							<div class="card-header">
@@ -377,6 +413,7 @@ get_header();
 							</div>
 						</div>
 					</div>
+					<?php endif; ?>
 
 					<!-- ЦБ РФ: USD/RUB — только информационный блок, без сохранения -->
 					<div class="col-md-3 col-sm-6 m-b-10 d-flex flex-column">
@@ -439,6 +476,7 @@ get_header();
 					</div>
 				</div>
 
+				<?php if ( $rub_thb_enabled && $pair ) : ?>
 				<!-- ─── График ──────────────────────────────────────────────────── -->
 				<?php if ( ! empty( $chart_sber ) || ! empty( $chart_tinkoff ) ) : ?>
 				<div class="card card-default m-b-30">
@@ -496,6 +534,7 @@ get_header();
 						</table>
 					</div>
 				</div>
+				<?php endif; ?>
 
 			<?php if ( $kanyon_allowed ) : ?>
 			<!-- ══ Kanyon USDT/RUB ════════════════════════════════════════════════════ -->
@@ -669,14 +708,16 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_market_save, $cha
 		'oLanguage'     : RATES_DT_LANGUAGE
 	});
 
-	$('#rates-history-table').dataTable({
-		'sDom'          : RATES_DT_DOM,
-		'destroy'       : true,
-		'order'         : [[ 0, 'desc' ]],
-		'iDisplayLength': 15,
-		'bFilter'       : false,
-		'oLanguage'     : RATES_DT_LANGUAGE
-	});
+	if ($('#rates-history-table').length) {
+		$('#rates-history-table').dataTable({
+			'sDom'          : RATES_DT_DOM,
+			'destroy'       : true,
+			'order'         : [[ 0, 'desc' ]],
+			'iDisplayLength': 15,
+			'bFilter'       : false,
+			'oLanguage'     : RATES_DT_LANGUAGE
+		});
+	}
 
 	var kanyonDT = null;
 	if ($('#kanyon-history-table').length) {

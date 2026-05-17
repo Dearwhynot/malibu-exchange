@@ -6,7 +6,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 define( 'RATES_PROVIDER_EX24',   'ex24' );
 define( 'RATES_PROVIDER_SOURCE', 'phuket' );
-define( 'RATES_PAIR_CODE',       'THB_RUB' );
+define( 'RATES_PAIR_CODE',       'RUB_THB' );
 define( 'RATES_EX24_URL',        'https://dev-mock.ex24.pro/api/tvrateQR?source=' );
 define( 'RATES_EX24_TIMEOUT',    8 );
 define( 'RATES_EX24_CACHE_TTL',  5 * MINUTE_IN_SECONDS );
@@ -94,6 +94,14 @@ function rates_get_ex24_cached( string $source = RATES_PROVIDER_SOURCE ): array 
  * @return object|null
  */
 function rates_get_pair( string $pair_code = RATES_PAIR_CODE, int $org_id = CRM_DEFAULT_ORG_ID ): ?object {
+	$pair_code = function_exists( 'crm_normalize_legacy_pair_code' )
+		? crm_normalize_legacy_pair_code( $pair_code )
+		: $pair_code;
+
+	if ( function_exists( 'crm_company_get_rate_pair_row' ) ) {
+		return crm_company_get_rate_pair_row( $org_id, $pair_code, true );
+	}
+
 	global $wpdb;
 
 	return $wpdb->get_row( $wpdb->prepare(
@@ -114,6 +122,14 @@ function rates_get_pair( string $pair_code = RATES_PAIR_CODE, int $org_id = CRM_
  * @return object|null
  */
 function rates_get_any_pair( string $pair_code, int $org_id ): ?object {
+	$pair_code = function_exists( 'crm_normalize_legacy_pair_code' )
+		? crm_normalize_legacy_pair_code( $pair_code )
+		: $pair_code;
+
+	if ( function_exists( 'crm_company_get_rate_pair_row' ) ) {
+		return crm_company_get_rate_pair_row( $org_id, $pair_code, false );
+	}
+
 	global $wpdb;
 
 	return $wpdb->get_row( $wpdb->prepare(
@@ -427,6 +443,10 @@ function rates_refresh_ex24_snapshot(
 	global $wpdb;
 
 	$actor_source = sanitize_key( $actor_source );
+	$pair_code    = function_exists( 'crm_normalize_legacy_pair_code' )
+		? crm_normalize_legacy_pair_code( $pair_code )
+		: $pair_code;
+
 	if ( ! in_array( $actor_source, [ 'web', 'telegram', 'cron' ], true ) ) {
 		$actor_source = 'web';
 	}

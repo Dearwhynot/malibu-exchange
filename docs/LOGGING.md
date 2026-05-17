@@ -32,6 +32,7 @@ For fast diagnostics of PHP, WordPress, database and `admin-ajax.php` failures, 
 - WP admin viewer: `/wp-admin/admin.php?page=debug-log`.
 - Viewer implementation: `includes/debug-log-2.php`.
 - Viewer menu label: `Debug Log`.
+- Malibu SFTP self-service note with exact remote path and commands: `docs/debug-log-sftp-self-service.md`.
 - The viewer supports refresh, search, clearing the file, pagination and emoji severity/source prefixes.
 - CRM audit log is separate: `/logs/` and table `crm_audit_log`. It records business actions, but it does not replace `debug.log` for PHP fatal errors.
 

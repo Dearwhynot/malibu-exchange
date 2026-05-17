@@ -7,9 +7,18 @@
 ## 0. Базовые решения
 
 - Пилотный merchant-flow: только `RUB -> USDT`.
+- Legacy merchant contour для компаний с `fintech_pay2day_order_currency = USDT` сохраняется и продолжает работать по старой схеме через `orderAmount`.
+- Новый contour с прямым вводом RUB-суммы включается только для компаний, у которых `fintech_pay2day_order_currency = RUB`.
+- Новый RUB-contour не должен ломать или неявно подменять старый USDT-contour.
 - Источник базового курса: Rapira `USDT/RUB`, верхний курс стакана / `askPrice`.
-- У каждой компании должен быть company-scoped параметр наценки эквайринг-партнёра к Rapira, по пилоту дефолт `6%`.
+- У каждой компании должен быть company-scoped параметр наценки эквайринг-партнёра к Rapira, по пилоту дефолт `6%`, но только для RUB-contour.
 - У каждого мерчанта есть свой процент из карточки мерчанта.
+- У каждого мерчанта должен быть selectable mode, как считать этот процент:
+  - `acquirer_cost` = на нашу себестоимость (`Rapira + % ЭП`);
+  - `rapira_rate` = напрямую от курса Rapira.
+- У каждого мерчанта должен быть ещё один отдельный selectable mode для RUB invoice amount:
+  - `none` = клиент платит ровно введённую мерчантом RUB-сумму;
+  - `add_on_top` = к введённой RUB-сумме добавляется merchant percent.
 - Мерчант вводит только RUB-сумму счёта.
 - Мерчанту не показываем platform fee, acquirer gross, внутреннюю маржу и технические расчёты.
 - В backoffice сохраняем полный снимок экономики каждого order.
@@ -25,16 +34,22 @@
 
 Используется для старых сценариев и для компаний, где настройка `fintech_pay2day_order_currency` равна `USDT`.
 
+Это не deprecated runtime-path: пока есть компании/мерчанты на USDT-контуре, он должен оставаться рабочим.
+В этом режиме Rapira не участвует, а company setting `fintech_kanyon_rapira_markup_percent` не используется.
+
 Семантика:
 
 - вход системы: USDT amount;
 - payload в Kanyon: `orderAmount`;
 - локально `amount_asset_value` = переданная USDT-сумма;
 - `payment_amount_value` заполняется из ответа Kanyon, если провайдер вернул RUB-сумму.
+- Курс для старого merchant-flow берётся из Kanyon check-order на тестовый `100 USDT`, как и раньше.
 
 ### 1.2 Режим `paymentAmount`
 
-Используется для нового merchant-flow, когда настройка `fintech_pay2day_order_currency` равна `RUB`.
+Используется только для нового merchant-flow, когда настройка `fintech_pay2day_order_currency` равна `RUB`.
+
+Именно в этом режиме используются Rapira и company markup `fintech_kanyon_rapira_markup_percent`.
 
 Семантика:
 
@@ -49,6 +64,13 @@
 
 Не менять существующий смысл старого `crm_fintech_create_order($amount_usdt, ...)` без явного refactor. Для merchant-flow лучше добавить отдельный orchestration/helper, который ясно принимает RUB amount и вызывает Kanyon в режиме `paymentAmount`.
 
+Дополнительное правило:
+
+- если у компании `fintech_pay2day_order_currency = USDT`, остаётся старый contour через `orderAmount`;
+- если у компании `fintech_pay2day_order_currency = RUB`, новый contour должен идти через `paymentAmount`;
+- для `USDT` нельзя подмешивать Rapira/`6%` в старый расчёт;
+- нельзя автоматически переводить USDT-компанию на RUB-flow и нельзя пытаться интерпретировать legacy USDT amount как RUB amount.
+
 ## 2. Формула экономики
 
 Вход:
@@ -57,17 +79,30 @@
 - `rapira_ask_rate` - живой Rapira ask, RUB за 1 USDT.
 - `acquirer_markup_percent` - company setting, пилотный дефолт `6`.
 - `merchant_markup_percent` - процент из карточки мерчанта.
+- `merchant_markup_basis` - режим расчёта merchant percent: `acquirer_cost` или `rapira_rate`.
+- `rub_invoice_markup_mode` - режим, нужно ли добавлять merchant percent к введённой RUB-сумме.
 - `kanyon_gross_usdt` - фактический USDT/gross из ответа Kanyon.
 
 Расчёт:
 
+- `payment_amount_rub = requested_rub`, если `rub_invoice_markup_mode = none`.
+- `payment_amount_rub = requested_rub * (1 + merchant_markup_percent / 100)`, если `rub_invoice_markup_mode = add_on_top`.
 - `acquirer_rate = rapira_ask_rate * (1 + acquirer_markup_percent / 100)`.
-- `merchant_rate = acquirer_rate * (1 + merchant_markup_percent / 100)`.
-- `merchant_payable_usdt = requested_rub / merchant_rate`.
+- если `merchant_markup_basis = acquirer_cost`, то `merchant_rate = acquirer_rate * (1 + merchant_markup_percent / 100)`.
+- если `merchant_markup_basis = rapira_rate`, то `merchant_rate = rapira_ask_rate * (1 + merchant_markup_percent / 100)`.
+- `merchant_payable_usdt = payment_amount_rub / merchant_rate`.
 - `platform_fee_usdt = max(kanyon_gross_usdt - merchant_payable_usdt, 0)`.
 - `merchant_markup_value = platform_fee_usdt`.
 - `referral_reward_value = 0` на MVP.
 - `merchant_profit_value = 0`, чтобы не путать прибыль мерчанта с прибылью платформы.
+
+Эта формула относится только к новому RUB-contour. Для legacy USDT-contour экономика и курс продолжают жить по старому Kanyon-based сценарию без Rapira markup.
+
+Техническое ограничение первого production-step:
+
+- новый RUB invoice flow пока поддерживает только `merchant base_markup_type = percent`;
+- если у мерчанта стоит `fixed`, backend должен вернуть явную ошибку, а не пытаться угадать формулу.
+- если выбран режим `rapira_rate`, процент мерчанта не должен быть ниже company markup эквайринг-партнёра, иначе счёт уйдёт ниже себестоимости.
 
 Важное правило: внешний долг ЭП перед компанией считаем по фактическому `kanyon_gross_usdt`, а внутренний долг компании перед мерчантом считаем по `merchant_payable_usdt`.
 
@@ -83,8 +118,9 @@
 - `source_channel = telegram_merchant`.
 - `provider_code = kanyon`.
 - `payment_currency_code = RUB`.
-- `payment_amount_value = requested_rub`.
+- `payment_amount_value = payment_amount_rub`.
 - `amount_asset_code = USDT`.
+- `merchant_requested_rub_value = requested_rub` как исходный ввод мерчанта.
 - `amount_asset_value = kanyon_gross_usdt`.
 - `merchant_requested_rub_value = requested_rub`.
 - `merchant_payable_value = merchant_payable_usdt`.
@@ -113,6 +149,8 @@
 
 Если `expected_acquirer_gross_usdt` заметно отличается от `kanyon_gross_usdt`, это не блокер для MVP, но нужно писать warning в лог. Источник внешнего долга всё равно фактический ответ Kanyon.
 
+Если на момент create Kanyon не вернул `orderAmount`, допустимо временно сохранить order с `amount_asset_value = 0` и дождаться callback/poll. Но settlement по paid order должен быть заблокирован, пока gross amount не будет получен от провайдера.
+
 ## 4. Merchant-bot: меню
 
 Мерчант работает только через Telegram, поэтому меню должно быть полноценным.
@@ -130,7 +168,9 @@
 
 ## 5. Merchant-bot: экран курса
 
-Старый экран `Kanyon check-order` для `RUB -> USDT` убрать из merchant-flow.
+Старый экран `Kanyon check-order` для `RUB -> USDT` убрать из нового RUB merchant-flow.
+
+Важно: это не означает удаление legacy USDT-контура. Для компаний на `USDT` старые рабочие сценарии можно сохранять, пока они ещё используются.
 
 Новый экран:
 
@@ -147,12 +187,13 @@ Backoffice rates page можно оставить для отображения 
 Flow:
 
 1. Мерчант нажимает `Выставить счёт`.
-2. Система показывает доступное направление `RUB -> USDT`.
-3. Мерчант вводит RUB-сумму.
-4. Backend проверяет активный merchant access по `company_id + chat_id`.
-5. Backend берёт свежий Rapira ask.
-6. Backend считает `merchant_rate`, `merchant_payable_usdt`.
-7. Backend создаёт Kanyon order:
+2. Система смотрит, какие invoice-направления root открыл для компании.
+3. Если направление одно, бот не показывает выбор и сразу просит RUB-сумму; если направлений несколько, бот показывает только разрешённые для этой компании.
+4. Мерчант вводит RUB-сумму.
+5. Backend проверяет активный merchant access по `company_id + chat_id`.
+6. Backend берёт свежий Rapira ask.
+7. Backend считает `merchant_rate`, `merchant_payable_usdt`.
+8. Backend создаёт Kanyon order:
    - если `fintech_pay2day_order_currency = RUB`, payload через `paymentAmount`;
    - если `fintech_pay2day_order_currency = USDT`, оставить legacy `orderAmount`, но этот режим не является целевым для пилота RUB invoice.
 8. Backend сохраняет order и полный economics snapshot.
@@ -232,7 +273,7 @@ Flow:
 - `fintech_kanyon_rapira_markup_percent` или близкое имя.
 - Хранить в `crm_settings`.
 - Сидировать через миграцию.
-- Показывать в настройках компании рядом с Kanyon/fintech настройками.
+- Показывать в настройках компании рядом с Kanyon/fintech настройками только если `fintech_pay2day_order_currency = RUB`.
 - Дефолт пилота: `6`.
 
 Страница orders:
@@ -262,6 +303,7 @@ Flow:
 
 - Расширить Kanyon wrapper под `paymentAmount` для `RUB`.
 - Сохранить legacy `orderAmount` для `USDT`.
+- Явно развести оба режима по company setting `fintech_pay2day_order_currency`, без неявной подмены одного другим.
 - Добавить unit/smoke checks без реального provider call там, где возможно.
 
 ### Этап 3. Settings

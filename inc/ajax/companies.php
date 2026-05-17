@@ -102,7 +102,13 @@ function me_ajax_create_company(): void {
 		crm_fintech_serialize_allowed_providers( crm_fintech_default_allowed_providers() ),
 		$company_id
 	);
+	if ( function_exists( 'crm_fintech_seed_company_settings' ) ) {
+		crm_fintech_seed_company_settings( $company_id );
+	}
 	crm_telegram_seed_company_settings( $company_id );
+	if ( function_exists( 'crm_company_seed_rub_usdt_fixation_settings' ) ) {
+		crm_company_seed_rub_usdt_fixation_settings( $company_id );
+	}
 	crm_merchants_seed_company_settings( $company_id );
 
 	crm_log( 'company.created', [
@@ -129,7 +135,11 @@ function me_ajax_create_company(): void {
 			'phone'      => $phone,
 			'address'    => $address,
 			'note'       => '',
-			'allowed_providers' => crm_fintech_default_allowed_providers(),
+			'enabled_exchange_pairs' => [],
+			'allowed_providers'      => crm_company_get_enabled_fintech_providers( $company_id ),
+			'rub_usdt_fixation_mode' => function_exists( 'crm_company_get_rub_usdt_fixation_mode' )
+				? crm_company_get_rub_usdt_fixation_mode( $company_id )
+				: 'rapira_manual',
 		],
 	] );
 }

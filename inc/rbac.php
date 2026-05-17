@@ -84,6 +84,14 @@ function crm_rbac_permissions(): array {
 		'payouts.view'       => [ 'module' => 'payouts',   'action' => 'view',         'name' => 'Просмотр выплат ЭП' ],
 		'payouts.create'     => [ 'module' => 'payouts',   'action' => 'create',       'name' => 'Внесение выплат ЭП' ],
 
+		// ── Merchant Payouts (выплаты мерчантам) ─────────────────────────────
+		'merchant_payouts.view'   => [ 'module' => 'merchant_payouts', 'action' => 'view',   'name' => 'Просмотр выплат мерчантам' ],
+		'merchant_payouts.create' => [ 'module' => 'merchant_payouts', 'action' => 'create', 'name' => 'Внесение выплат мерчантам' ],
+
+		// ── Company Withdrawals (вывод средств компании) ─────────────────────
+		'company_withdrawals.view'   => [ 'module' => 'company_withdrawals', 'action' => 'view',   'name' => 'Просмотр выводов компании' ],
+		'company_withdrawals.create' => [ 'module' => 'company_withdrawals', 'action' => 'create', 'name' => 'Внесение выводов компании' ],
+
 		// ── Rates ────────────────────────────────────────────────────────────
 		'rates.view'         => [ 'module' => 'rates',     'action' => 'view',         'name' => 'Просмотр курсов' ],
 		'rates.edit'         => [ 'module' => 'rates',     'action' => 'edit',         'name' => 'Редактирование курсов' ],
@@ -111,7 +119,7 @@ function crm_rbac_permissions(): array {
 		'merchants.edit'     => [ 'module' => 'merchants', 'action' => 'edit',         'name' => 'Редактирование мерчантов' ],
 		'merchants.block'    => [ 'module' => 'merchants', 'action' => 'block',        'name' => 'Блокировка мерчантов' ],
 		'merchants.invite'   => [ 'module' => 'merchants', 'action' => 'invite',       'name' => 'Управление приглашениями мерчантов' ],
-		'merchants.ledger'   => [ 'module' => 'merchants', 'action' => 'ledger',       'name' => 'Просмотр ledger мерчантов' ],
+		'merchants.ledger'   => [ 'module' => 'merchants', 'action' => 'ledger',       'name' => 'Просмотр баланса мерчантов' ],
 
 		// ── Operator Telegram ─────────────────────────────────────────────────
 		'operators.telegram.view'   => [ 'module' => 'operators', 'action' => 'telegram_view',   'name' => 'Просмотр Telegram-привязок операторов' ],
@@ -152,6 +160,8 @@ function crm_rbac_role_grants(): array {
 			'users.view',
 			'payments.view', 'payments.confirm',
 			'payouts.view',
+			'merchant_payouts.view',
+			'company_withdrawals.view',
 			'rates.view',
 			'kyc.view',
 			'aml.view',
@@ -168,6 +178,8 @@ function crm_rbac_role_grants(): array {
 			'orders.view',
 			'payments.view', 'payments.confirm',
 			'payouts.view',
+			'merchant_payouts.view',
+			'company_withdrawals.view',
 			'rates.view',
 		],
 		'compliance' => [
@@ -182,6 +194,8 @@ function crm_rbac_role_grants(): array {
 			'orders.view',
 			'payments.view',
 			'payouts.view', 'payouts.create',
+			'merchant_payouts.view', 'merchant_payouts.create',
+			'company_withdrawals.view', 'company_withdrawals.create',
 			'reports.view', 'reports.export',
 		],
 		'support' => [

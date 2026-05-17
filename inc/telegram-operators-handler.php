@@ -335,8 +335,11 @@ if ( ! function_exists( 'crm_operator_tg_route_command' ) ) {
 			bot_send_message(
 				$telegram,
 				$chat_id,
-				"✅ <b>Операторский бот активен</b>\n\nРабочие команды оператора будут добавлены следующим этапом."
+				"✅ <b>Операторский бот активен</b>\n\nОткрываю рабочее меню заказов."
 			);
+			if ( function_exists( 'fifo_bot_menu' ) ) {
+				fifo_bot_menu( $telegram, $chat_id, $ctx['actor_id'] ?? null );
+			}
 			return true;
 		}
 

@@ -9,12 +9,14 @@
  *
  * Публичный API:
  *   Fintech_Payment_Gateway::create_invoice(float, ?string, string): array
+ *   Fintech_Payment_Gateway::create_invoice_by_payment_amount(float, string, ?string, string): array
  *   Fintech_Payment_Gateway::get_order_status(string): array
  *   Fintech_Payment_Gateway::get_order_data(string): array
  *   Fintech_Payment_Gateway::set_company_id(int): void
  *
  * Процедурные обёртки:
  *   fintech_create_invoice()
+ *   fintech_create_invoice_by_payment_amount()
  *   fintech_get_order_status()
  *   fintech_get_order_data()
  */
@@ -54,6 +56,104 @@ if ( ! function_exists( 'crm_fintech_normalize_provider_code' ) ) {
 if ( ! function_exists( 'crm_fintech_default_allowed_providers' ) ) {
 	function crm_fintech_default_allowed_providers(): array {
 		return array_keys( crm_fintech_provider_labels() );
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_default_kanyon_rapira_markup_percent' ) ) {
+	function crm_fintech_default_kanyon_rapira_markup_percent(): string {
+		return '6';
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_default_pay2day_payment_purpose' ) ) {
+	function crm_fintech_default_pay2day_payment_purpose(): string {
+		return '';
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_normalize_kanyon_rapira_markup_percent' ) ) {
+	function crm_fintech_normalize_kanyon_rapira_markup_percent( $value ): string {
+		if ( is_string( $value ) ) {
+			$value = str_replace( ',', '.', trim( $value ) );
+		}
+
+		$number = is_numeric( $value )
+			? (float) $value
+			: (float) crm_fintech_default_kanyon_rapira_markup_percent();
+
+		$number     = max( 0, min( 1000, round( $number, 4 ) ) );
+		$normalized = number_format( $number, 4, '.', '' );
+		$normalized = rtrim( rtrim( $normalized, '0' ), '.' );
+
+		return $normalized !== '' ? $normalized : '0';
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_get_kanyon_rapira_markup_percent' ) ) {
+	function crm_fintech_get_kanyon_rapira_markup_percent( int $company_id ): float {
+		return (float) crm_fintech_normalize_kanyon_rapira_markup_percent(
+			crm_get_setting(
+				'fintech_kanyon_rapira_markup_percent',
+				$company_id,
+				crm_fintech_default_kanyon_rapira_markup_percent()
+			)
+		);
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_normalize_payment_purpose' ) ) {
+	function crm_fintech_normalize_payment_purpose( $value, int $max_length = 120 ): string {
+		$value = wp_strip_all_tags( (string) $value );
+		$value = preg_replace( '/\s+/u', ' ', trim( $value ) );
+		$value = is_string( $value ) ? $value : '';
+
+		if ( $value === '' ) {
+			return '';
+		}
+
+		if ( function_exists( 'mb_substr' ) ) {
+			return mb_substr( $value, 0, $max_length );
+		}
+
+		return substr( $value, 0, $max_length );
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_get_pay2day_default_payment_purpose' ) ) {
+	function crm_fintech_get_pay2day_default_payment_purpose( int $company_id ): string {
+		return crm_fintech_normalize_payment_purpose(
+			crm_get_setting(
+				'fintech_pay2day_default_payment_purpose',
+				$company_id,
+				crm_fintech_default_pay2day_payment_purpose()
+			)
+		);
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_seed_company_settings' ) ) {
+	function crm_fintech_seed_company_settings( int $company_id ): void {
+		if ( $company_id <= 0 ) {
+			return;
+		}
+
+		global $wpdb;
+
+		$defaults = [
+			'fintech_kanyon_rapira_markup_percent'   => crm_fintech_default_kanyon_rapira_markup_percent(),
+			'fintech_pay2day_default_payment_purpose' => crm_fintech_default_pay2day_payment_purpose(),
+		];
+
+		foreach ( $defaults as $setting_key => $setting_value ) {
+			$wpdb->query(
+				$wpdb->prepare(
+					'INSERT IGNORE INTO crm_settings (org_id, setting_key, setting_value) VALUES (%d, %s, %s)',
+					$company_id,
+					$setting_key,
+					$setting_value
+				)
+			);
+		}
 	}
 }
 
@@ -112,6 +212,10 @@ if ( ! function_exists( 'crm_fintech_serialize_allowed_providers' ) ) {
 
 if ( ! function_exists( 'crm_fintech_get_allowed_providers' ) ) {
 	function crm_fintech_get_allowed_providers( int $company_id ): array {
+		if ( function_exists( 'crm_company_get_enabled_fintech_providers' ) ) {
+			return crm_company_get_enabled_fintech_providers( $company_id );
+		}
+
 		$raw_value = crm_get_setting( 'fintech_allowed_providers', $company_id, '' );
 
 		return crm_fintech_parse_allowed_providers( $raw_value );
@@ -122,7 +226,15 @@ if ( ! function_exists( 'crm_fintech_is_provider_allowed' ) ) {
 	function crm_fintech_is_provider_allowed( int $company_id, string $provider ): bool {
 		$provider = crm_fintech_normalize_provider_code( $provider );
 
-		return $provider !== '' && in_array( $provider, crm_fintech_get_allowed_providers( $company_id ), true );
+		if ( $provider === '' ) {
+			return false;
+		}
+
+		if ( function_exists( 'crm_company_contour_is_enabled' ) ) {
+			return crm_company_contour_is_enabled( $company_id, $provider );
+		}
+
+		return in_array( $provider, crm_fintech_get_allowed_providers( $company_id ), true );
 	}
 }
 
@@ -138,7 +250,11 @@ function crm_fintech_collect_settings( int $company_id ): array {
 		'pay2day_login'            => trim( (string) crm_get_setting( 'fintech_pay2day_login', $company_id, '' ) ),
 		'pay2day_password'         => trim( (string) crm_get_setting( 'fintech_pay2day_password', $company_id, '' ) ),
 		'pay2day_tsp_id'           => (int) crm_get_setting( 'fintech_pay2day_tsp_id', $company_id, '0' ),
-		'pay2day_order_currency'   => trim( (string) crm_get_setting( 'fintech_pay2day_order_currency', $company_id, '' ) ),
+		'pay2day_order_currency'   => crm_fintech_normalize_kanyon_order_currency(
+			crm_get_setting( 'fintech_pay2day_order_currency', $company_id, '' )
+		),
+		'pay2day_default_payment_purpose' => crm_fintech_get_pay2day_default_payment_purpose( $company_id ),
+		'kanyon_rapira_markup_percent' => crm_fintech_get_kanyon_rapira_markup_percent( $company_id ),
 		'doverka_api_key'          => trim( (string) crm_get_setting( 'fintech_doverka_api_key', $company_id, '' ) ),
 		'doverka_currency_id'      => (int) crm_get_setting( 'fintech_doverka_currency_id', $company_id, '0' ),
 		'doverka_approve_url'      => trim( (string) crm_get_setting( 'fintech_doverka_approve_url', $company_id, '' ) ),
@@ -296,11 +412,15 @@ function crm_fintech_settings( int $company_id = 0 ): array {
 		'active_provider'       => $settings['active_provider'],
 		'debug'                 => $settings['debug'],
 		'callback_path'         => '/fintech-payment-callback',
+		'kanyon_rapira_markup_percent' => $settings['kanyon_rapira_markup_percent'],
+		'pay2day_default_payment_purpose' => $settings['pay2day_default_payment_purpose'],
 		'pay2day'               => [
 			'login'          => $settings['pay2day_login'],
 			'password'       => $settings['pay2day_password'],
 			'tsp_id'         => $settings['pay2day_tsp_id'],
 			'order_currency' => $settings['pay2day_order_currency'],
+			'default_payment_purpose' => $settings['pay2day_default_payment_purpose'],
+			'rapira_markup_percent' => $settings['kanyon_rapira_markup_percent'],
 		],
 		'doverka'               => [
 			'api_key'         => $settings['doverka_api_key'],
@@ -355,6 +475,37 @@ class Fintech_Payment_Gateway {
 		}
 
 		return self::pay2day_create_invoice( $amount_usdt, $merchant_order_id, $description );
+	}
+
+	public static function create_invoice_by_payment_amount(
+		float $payment_amount,
+		string $payment_currency,
+		?string $merchant_order_id = null,
+		string $description = ''
+	): array {
+		$provider = self::get_active_provider();
+		if ( $provider === '' ) {
+			return [
+				'success'  => false,
+				'provider' => '',
+				'error'    => 'Активный платёжный контур недоступен для этой компании.',
+			];
+		}
+
+		if ( $provider !== self::PROVIDER_KANYON ) {
+			return self::build_error_response(
+				'Режим paymentAmount поддерживается только для Kanyon.',
+				$provider,
+				[ 'paymentCurrency' => $payment_currency ]
+			);
+		}
+
+		return self::pay2day_create_invoice_by_payment_amount(
+			$payment_amount,
+			$payment_currency,
+			$merchant_order_id,
+			$description
+		);
 	}
 
 	public static function get_order_status( string $order_id ): array {
@@ -476,6 +627,134 @@ class Fintech_Payment_Gateway {
 
 	private static function build_default_description( string $merchant_order_id ): string {
 		return self::get_company_name() . ' payment ' . $merchant_order_id;
+	}
+
+	private static function build_default_pay2day_description( string $merchant_order_id ): string {
+		$settings = self::get_settings();
+		$purpose  = crm_fintech_normalize_payment_purpose( $settings['pay2day']['default_payment_purpose'] ?? '' );
+
+		return $purpose !== ''
+			? $purpose
+			: self::build_default_description( $merchant_order_id );
+	}
+
+	private static function pay2day_compose_error_message( string $fallback_message, array $response ): string {
+		$parts = [];
+
+		if ( ! empty( $response['httpCode'] ) ) {
+			$parts[] = 'HTTP ' . (int) $response['httpCode'];
+		}
+
+		$data = isset( $response['data'] ) && is_array( $response['data'] )
+			? $response['data']
+			: [];
+
+		$provider_description = trim( (string) ( $data['description'] ?? '' ) );
+		if ( $provider_description === '' ) {
+			$provider_description = trim( (string) ( $data['message'] ?? '' ) );
+		}
+		if ( $provider_description === '' ) {
+			$provider_description = trim( (string) ( $response['error'] ?? '' ) );
+		}
+
+		if ( $provider_description !== '' ) {
+			$parts[] = $provider_description;
+		}
+
+		return ! empty( $parts )
+			? $fallback_message . ': ' . implode( ' | ', $parts )
+			: $fallback_message;
+	}
+
+	private static function pay2day_resolve_payment_currency_code( ?string $requested_payment_currency, ?array $order = null ): string {
+		$payment_currency = $requested_payment_currency !== null
+			? strtoupper( trim( $requested_payment_currency ) )
+			: '';
+
+		if ( $payment_currency !== '' ) {
+			return $payment_currency;
+		}
+
+		if ( is_array( $order ) && ! empty( $order['paymentCurrency'] ) ) {
+			$payment_currency = strtoupper( trim( (string) $order['paymentCurrency'] ) );
+			if ( $payment_currency !== '' ) {
+				return $payment_currency;
+			}
+		}
+
+		return 'RUB';
+	}
+
+	private static function pay2day_build_invoice_success_response(
+		array $order,
+		?array $qrc_order,
+		array $raw_payload,
+		string $payload_mode,
+		float $requested_amount,
+		string $configured_order_currency,
+		?string $requested_payment_currency = null,
+		?string $warning = null
+	): array {
+		$order_amount_cents   = isset( $order['orderAmount'] ) ? (int) $order['orderAmount'] : null;
+		$payment_amount_minor = isset( $order['paymentAmount'] ) ? (int) $order['paymentAmount'] : null;
+		$provider_order_currency = isset( $order['orderCurrency'] ) && trim( (string) $order['orderCurrency'] ) !== ''
+			? strtoupper( trim( (string) $order['orderCurrency'] ) )
+			: $configured_order_currency;
+		$payment_currency     = self::pay2day_resolve_payment_currency_code( $requested_payment_currency, $order );
+		$payment_details      = isset( $order['paymentInfo']['paymentDetails'] ) && is_array( $order['paymentInfo']['paymentDetails'] )
+			? $order['paymentInfo']['paymentDetails']
+			: [];
+		$warnings             = [];
+
+		if ( $warning !== null && trim( $warning ) !== '' ) {
+			$warnings[] = trim( $warning );
+		}
+
+		if ( $payload_mode === 'paymentAmount' && $payment_amount_minor === null ) {
+			$payment_amount_minor = (int) round( $requested_amount * 100 );
+		}
+
+		if ( $payload_mode === 'paymentAmount' && $order_amount_cents === null ) {
+			$warnings[] = 'Kanyon не вернул orderAmount для paymentAmount-ордера.';
+			self::debug_log( 'Pay2Day paymentAmount response missing orderAmount', [
+				'merchantOrderId'      => (string) ( $order['merchantOrderId'] ?? '' ),
+				'orderId'              => (string) ( $order['id'] ?? '' ),
+				'configuredOrderCurrency' => $configured_order_currency,
+			] );
+		}
+
+		$amount_usdt = $payload_mode === 'orderAmount'
+			? round( $requested_amount, 8 )
+			: ( $order_amount_cents !== null ? round( $order_amount_cents / 100, 8 ) : null );
+
+		return [
+			'success'            => true,
+			'provider'           => self::PROVIDER_KANYON,
+			'error'              => null,
+			'warning'            => ! empty( $warnings ) ? implode( ' ', $warnings ) : null,
+			'orderId'            => (string) ( $order['id'] ?? '' ),
+			'merchantOrderId'    => (string) ( $order['merchantOrderId'] ?? '' ),
+			'payloadMode'        => $payload_mode,
+			'orderCurrency'      => $provider_order_currency,
+			'amountUsdt'         => $amount_usdt,
+			'amountAssetCode'    => 'USDT',
+			'amountAssetValue'   => $amount_usdt,
+			'orderAmountCents'   => $order_amount_cents,
+			'paymentAmountMinor' => $payment_amount_minor,
+			'paymentAmountValue' => $payment_amount_minor !== null ? round( $payment_amount_minor / 100, 2 ) : null,
+			'paymentAmountRub'   => $payment_currency === 'RUB' && $payment_amount_minor !== null ? $payment_amount_minor : null,
+			'paymentCurrencyCode'=> $payment_currency,
+			'qrcId'              => isset( $qrc_order['qrcId'] ) ? (string) $qrc_order['qrcId'] : null,
+			'payload'            => isset( $qrc_order['payload'] ) ? (string) $qrc_order['payload'] : null,
+			'externalOrderId'    => isset( $qrc_order['externalOrderId'] )
+				? (string) $qrc_order['externalOrderId']
+				: ( isset( $order['externalOrderId'] )
+					? (string) $order['externalOrderId']
+					: ( isset( $payment_details['externalId'] ) ? (string) $payment_details['externalId'] : null )
+				),
+			'providerStatus'     => ! empty( $order['status'] ) ? (string) $order['status'] : null,
+			'raw'                => $raw_payload,
+		];
 	}
 
 	private static function debug_log( string $label, $payload = null ): void {
@@ -641,12 +920,22 @@ class Fintech_Payment_Gateway {
 		if ( $order_currency === '' ) {
 			return self::build_error_response( 'Pay2Day order_currency not configured', self::PROVIDER_KANYON );
 		}
+		if ( $order_currency !== 'USDT' ) {
+			return self::build_error_response(
+				sprintf(
+					'Старый Kanyon-контур через orderAmount работает только при валюте USDT. У этой компании сейчас настроена валюта %s. Для RUB используйте отдельный flow через paymentAmount.',
+					$order_currency
+				),
+				self::PROVIDER_KANYON,
+				[ 'configuredOrderCurrency' => $order_currency ]
+			);
+		}
 
 		if ( $merchant_order_id === null || trim( $merchant_order_id ) === '' ) {
 			$merchant_order_id = self::build_merchant_order_id();
 		}
 		if ( $description === '' ) {
-			$description = self::build_default_description( $merchant_order_id );
+			$description = self::build_default_pay2day_description( $merchant_order_id );
 		}
 
 		$token_response = self::pay2day_get_access_token();
@@ -673,7 +962,11 @@ class Fintech_Payment_Gateway {
 		$order_id = is_array( $order ) ? (string) ( $order['id'] ?? '' ) : '';
 
 		if ( empty( $create_response['success'] ) || $order_id === '' ) {
-			return self::build_error_response( 'Pay2Day order creation failed', self::PROVIDER_KANYON, [ 'raw' => $create_response, 'merchantOrderId' => $merchant_order_id ] );
+			return self::build_error_response(
+				self::pay2day_compose_error_message( 'Pay2Day order creation failed', $create_response ),
+				self::PROVIDER_KANYON,
+				[ 'raw' => $create_response, 'merchantOrderId' => $merchant_order_id ]
+			);
 		}
 
 		$qrc_response = self::http_request(
@@ -703,24 +996,24 @@ class Fintech_Payment_Gateway {
 					'providerStatus'  => $fallback_status,
 				] );
 
-				return [
-					'success'           => true,
-					'provider'          => self::PROVIDER_KANYON,
-					'error'             => null,
-					'warning'           => 'QR получен через резервный запрос данных заказа после ошибки qrcData.',
-					'orderId'           => $order_id,
-					'merchantOrderId'   => (string) ( $order['merchantOrderId'] ?? $merchant_order_id ),
-					'amountUsdt'        => $amount_usdt,
-					'orderAmountCents'  => (int) ( $order['orderAmount'] ?? $order_amount_cents ),
-					'paymentAmountRub'  => isset( $order_data_response['paymentAmountRub'] ) && $order_data_response['paymentAmountRub'] !== null
-						? (int) $order_data_response['paymentAmountRub']
-						: ( isset( $order['paymentAmount'] ) ? (int) $order['paymentAmount'] : null ),
-					'qrcId'             => (string) $fallback_qrc_id,
-					'payload'           => (string) $fallback_payload,
-					'externalOrderId'   => $fallback_external,
-					'providerStatus'    => $fallback_status !== '' ? $fallback_status : null,
-					'raw'               => $raw_payload,
-				];
+				$fallback_order = isset( $order_data_response['order'] ) && is_array( $order_data_response['order'] )
+					? $order_data_response['order']
+					: $order;
+
+				return self::pay2day_build_invoice_success_response(
+					$fallback_order,
+					[
+						'qrcId'           => $fallback_qrc_id,
+						'payload'         => $fallback_payload,
+						'externalOrderId' => $fallback_external,
+					],
+					$raw_payload,
+					'orderAmount',
+					$amount_usdt,
+					$order_currency,
+					null,
+					'QR получен через резервный запрос данных заказа после ошибки qrcData.'
+				);
 			}
 
 			self::debug_log( 'Pay2Day qrcData failed, saving provider order without QR', [
@@ -730,41 +1023,204 @@ class Fintech_Payment_Gateway {
 				'qrcHttpCode'     => (int) ( $qrc_response['httpCode'] ?? 0 ),
 			] );
 
-			return [
-				'success'           => true,
-				'provider'          => self::PROVIDER_KANYON,
-				'error'             => null,
-				'warning'           => 'Ордер создан у провайдера, но QR ещё не готов. Проверьте ордер повторно через несколько секунд.',
-				'orderId'           => $order_id,
-				'merchantOrderId'   => (string) ( $order['merchantOrderId'] ?? $merchant_order_id ),
-				'amountUsdt'        => $amount_usdt,
-				'orderAmountCents'  => (int) ( $order['orderAmount'] ?? $order_amount_cents ),
-				'paymentAmountRub'  => isset( $order_data_response['paymentAmountRub'] ) && $order_data_response['paymentAmountRub'] !== null
-					? (int) $order_data_response['paymentAmountRub']
-					: ( isset( $order['paymentAmount'] ) ? (int) $order['paymentAmount'] : null ),
-				'qrcId'             => $fallback_qrc_id,
-				'payload'           => $fallback_payload,
-				'externalOrderId'   => $fallback_external,
-				'providerStatus'    => $fallback_status !== '' ? $fallback_status : null,
-				'raw'               => $raw_payload,
-			];
+			$fallback_order = isset( $order_data_response['order'] ) && is_array( $order_data_response['order'] )
+				? $order_data_response['order']
+				: $order;
+
+			return self::pay2day_build_invoice_success_response(
+				$fallback_order,
+				[
+					'qrcId'           => $fallback_qrc_id,
+					'payload'         => $fallback_payload,
+					'externalOrderId' => $fallback_external,
+				],
+				$raw_payload,
+				'orderAmount',
+				$amount_usdt,
+				$order_currency,
+				null,
+				'Ордер создан у провайдера, но QR ещё не готов. Проверьте ордер повторно через несколько секунд.'
+			);
 		}
 
-		return [
-			'success'           => true,
-			'provider'          => self::PROVIDER_KANYON,
-			'error'             => null,
-			'orderId'           => $order_id,
-			'merchantOrderId'   => (string) ( $order['merchantOrderId'] ?? $merchant_order_id ),
-			'amountUsdt'        => $amount_usdt,
-			'orderAmountCents'  => (int) ( $order['orderAmount'] ?? $order_amount_cents ),
-			'paymentAmountRub'  => isset( $order['paymentAmount'] ) ? (int) $order['paymentAmount'] : null,
-			'qrcId'             => $qrc_order['qrcId'] ?? null,
-			'payload'           => $qrc_order['payload'] ?? null,
-			'externalOrderId'   => $qrc_order['externalOrderId'] ?? null,
-			'providerStatus'    => $order['status'] ?? null,
-			'raw'               => [ 'createOrder' => $create_response, 'qrcData' => $qrc_response ],
-		];
+		return self::pay2day_build_invoice_success_response(
+			$order,
+			$qrc_order,
+			[ 'createOrder' => $create_response, 'qrcData' => $qrc_response ],
+			'orderAmount',
+			$amount_usdt,
+			$order_currency
+		);
+	}
+
+	private static function pay2day_create_invoice_by_payment_amount(
+		float $payment_amount,
+		string $payment_currency,
+		?string $merchant_order_id,
+		string $description
+	): array {
+		$settings           = self::get_settings();
+		$tsp_id             = (int) $settings['pay2day']['tsp_id'];
+		$configured_currency = strtoupper( trim( (string) $settings['pay2day']['order_currency'] ) );
+		$payment_currency   = strtoupper( trim( $payment_currency ) );
+
+		if ( $payment_amount <= 0 ) {
+			return self::build_error_response( 'Payment amount must be greater than zero', self::PROVIDER_KANYON );
+		}
+		if ( $tsp_id <= 0 ) {
+			return self::build_error_response( 'Pay2Day tsp_id not configured', self::PROVIDER_KANYON );
+		}
+		if ( $configured_currency === '' ) {
+			return self::build_error_response( 'Pay2Day order_currency not configured', self::PROVIDER_KANYON );
+		}
+		if ( $configured_currency !== 'RUB' ) {
+			return self::build_error_response(
+				sprintf(
+					'Режим paymentAmount сейчас разрешён только для компаний с валютой RUB. У этой компании настроена валюта %s.',
+					$configured_currency
+				),
+				self::PROVIDER_KANYON,
+				[ 'configuredOrderCurrency' => $configured_currency ]
+			);
+		}
+		if ( $payment_currency === '' ) {
+			return self::build_error_response( 'Для режима paymentAmount нужно передать валюту платежа.', self::PROVIDER_KANYON );
+		}
+		if ( $payment_currency !== $configured_currency ) {
+			return self::build_error_response(
+				sprintf(
+					'Валюта paymentAmount не совпадает с настройкой компании: ожидали %s, получили %s.',
+					$configured_currency,
+					$payment_currency
+				),
+				self::PROVIDER_KANYON,
+				[
+					'configuredOrderCurrency' => $configured_currency,
+					'paymentCurrency'         => $payment_currency,
+				]
+			);
+		}
+
+		if ( $merchant_order_id === null || trim( $merchant_order_id ) === '' ) {
+			$merchant_order_id = self::build_merchant_order_id();
+		}
+		if ( $description === '' ) {
+			$description = self::build_default_pay2day_description( $merchant_order_id );
+		}
+
+		$token_response = self::pay2day_get_access_token();
+		if ( empty( $token_response['success'] ) || empty( $token_response['token'] ) ) {
+			return self::build_error_response( 'Unable to get Pay2Day token', self::PROVIDER_KANYON, [ 'raw' => $token_response, 'merchantOrderId' => $merchant_order_id ] );
+		}
+
+		// Для RUB-contour company setting `RUB` служит флагом flow,
+		// а целевая валюта ордера у Kanyon остаётся USDT.
+		$provider_order_currency = 'USDT';
+		$payment_amount_minor = (int) round( $payment_amount * 100 );
+		$create_response      = self::http_request(
+			'POST',
+			rtrim( self::PAY2DAY_BASE_URL, '/' ) . '/order',
+			[ 'Authorization-Token' => (string) $token_response['token'] ],
+			[
+				'merchantOrderId' => $merchant_order_id,
+				'paymentAmount'   => $payment_amount_minor,
+				'orderCurrency'   => $provider_order_currency,
+				'paymentCurrency' => $payment_currency,
+				'tspId'           => $tsp_id,
+				'description'     => $description,
+				'callbackUrl'     => self::get_callback_url(),
+			]
+		);
+
+		$order    = $create_response['data']['order'] ?? null;
+		$order_id = is_array( $order ) ? (string) ( $order['id'] ?? '' ) : '';
+
+		if ( empty( $create_response['success'] ) || $order_id === '' ) {
+			return self::build_error_response(
+				self::pay2day_compose_error_message( 'Pay2Day order creation failed', $create_response ),
+				self::PROVIDER_KANYON,
+				[ 'raw' => $create_response, 'merchantOrderId' => $merchant_order_id ]
+			);
+		}
+
+		$qrc_response = self::http_request(
+			'POST',
+			rtrim( self::PAY2DAY_BASE_URL, '/' ) . '/order/qrcData/' . rawurlencode( $order_id ),
+			[ 'Authorization-Token' => (string) $token_response['token'] ],
+			(object) []
+		);
+		$qrc_order = $qrc_response['data']['order'] ?? null;
+
+		if ( empty( $qrc_response['success'] ) || ! is_array( $qrc_order ) ) {
+			$order_data_response = self::pay2day_get_order_data( $order_id );
+			$fallback_order      = isset( $order_data_response['order'] ) && is_array( $order_data_response['order'] )
+				? $order_data_response['order']
+				: $order;
+			$fallback_status     = (string) ( $order_data_response['providerStatus'] ?? ( $fallback_order['status'] ?? '' ) );
+			$fallback_qrc_id     = $order_data_response['qrcId'] ?? null;
+			$fallback_payload    = $order_data_response['payload'] ?? null;
+			$fallback_external   = $order_data_response['externalOrderId'] ?? null;
+			$raw_payload         = [
+				'createOrder' => $create_response,
+				'qrcData'     => $qrc_response,
+				'orderData'   => $order_data_response,
+			];
+
+			if ( ! empty( $fallback_qrc_id ) && ! empty( $fallback_payload ) ) {
+				self::debug_log( 'Pay2Day paymentAmount qrcData fallback recovered QR from order data', [
+					'orderId'         => $order_id,
+					'merchantOrderId' => $merchant_order_id,
+					'providerStatus'  => $fallback_status,
+				] );
+
+				return self::pay2day_build_invoice_success_response(
+					$fallback_order,
+					[
+						'qrcId'           => $fallback_qrc_id,
+						'payload'         => $fallback_payload,
+						'externalOrderId' => $fallback_external,
+					],
+					$raw_payload,
+					'paymentAmount',
+					$payment_amount,
+					$provider_order_currency,
+					$payment_currency,
+					'QR получен через резервный запрос данных заказа после ошибки qrcData.'
+				);
+			}
+
+			self::debug_log( 'Pay2Day paymentAmount qrcData failed, saving provider order without QR', [
+				'orderId'         => $order_id,
+				'merchantOrderId' => $merchant_order_id,
+				'providerStatus'  => $fallback_status,
+				'qrcHttpCode'     => (int) ( $qrc_response['httpCode'] ?? 0 ),
+			] );
+
+			return self::pay2day_build_invoice_success_response(
+				$fallback_order,
+				[
+					'qrcId'           => $fallback_qrc_id,
+					'payload'         => $fallback_payload,
+					'externalOrderId' => $fallback_external,
+				],
+				$raw_payload,
+				'paymentAmount',
+				$payment_amount,
+				$provider_order_currency,
+				$payment_currency,
+				'Ордер создан у провайдера, но QR ещё не готов. Проверьте ордер повторно через несколько секунд.'
+			);
+		}
+
+		return self::pay2day_build_invoice_success_response(
+			$order,
+			$qrc_order,
+			[ 'createOrder' => $create_response, 'qrcData' => $qrc_response ],
+			'paymentAmount',
+			$payment_amount,
+			$provider_order_currency,
+			$payment_currency
+		);
 	}
 
 	private static function pay2day_get_order_status( string $order_id ): array {
@@ -1077,6 +1533,22 @@ class Fintech_Payment_Gateway {
 if ( ! function_exists( 'fintech_create_invoice' ) ) {
 	function fintech_create_invoice( float $amount_usdt, ?string $merchant_order_id = null, string $description = '' ): array {
 		return Fintech_Payment_Gateway::create_invoice( $amount_usdt, $merchant_order_id, $description );
+	}
+}
+
+if ( ! function_exists( 'fintech_create_invoice_by_payment_amount' ) ) {
+	function fintech_create_invoice_by_payment_amount(
+		float $payment_amount,
+		string $payment_currency,
+		?string $merchant_order_id = null,
+		string $description = ''
+	): array {
+		return Fintech_Payment_Gateway::create_invoice_by_payment_amount(
+			$payment_amount,
+			$payment_currency,
+			$merchant_order_id,
+			$description
+		);
 	}
 }
 

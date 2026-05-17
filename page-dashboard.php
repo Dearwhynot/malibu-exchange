@@ -141,7 +141,83 @@ if ( $_dashboard_is_root ) {
 
 	$_ep_debt = max( 0.0, $_total_paid_all - $_total_out_all );
 
-	// 6. Суммы USDT по статусам (за все время)
+	// 6. Финансовая картина компании: внешний контур, мерчанты, прибыль.
+	$_merchant_balance_totals = $wpdb->get_row(
+		"SELECT
+			COALESCE(SUM(CASE
+				WHEN entry_type IN ('merchant_accrual', 'manual_credit')
+					THEN amount
+				WHEN entry_type IN ('merchant_payout', 'manual_debit')
+					THEN -ABS(amount)
+				ELSE 0
+			END), 0) AS main_balance,
+			COALESCE(SUM(CASE
+				WHEN entry_type IN ('bonus_accrual', 'bonus_adjustment')
+					THEN amount
+				WHEN entry_type = 'bonus_withdrawal'
+					THEN -ABS(amount)
+				ELSE 0
+			END), 0) AS bonus_balance,
+			COALESCE(SUM(CASE
+				WHEN entry_type IN ('referral_accrual', 'referral_adjustment')
+					THEN amount
+				ELSE 0
+			END), 0) AS referral_balance,
+			COALESCE(SUM(CASE
+				WHEN entry_type IN ('merchant_accrual', 'manual_credit', 'bonus_accrual', 'bonus_adjustment', 'referral_accrual', 'referral_adjustment')
+					THEN amount
+				WHEN entry_type IN ('merchant_payout', 'manual_debit', 'bonus_withdrawal')
+					THEN -ABS(amount)
+				ELSE 0
+			END), 0) AS total_balance
+		 FROM `crm_merchant_wallet_ledger`
+		 WHERE 1=1" . $_co_po
+	);
+	$_merchant_main_payable_all     = max( 0.0, (float) ( $_merchant_balance_totals->main_balance ?? 0 ) );
+	$_merchant_bonus_payable_all    = max( 0.0, (float) ( $_merchant_balance_totals->bonus_balance ?? 0 ) );
+	$_merchant_referral_payable_all = max( 0.0, (float) ( $_merchant_balance_totals->referral_balance ?? 0 ) );
+	$_merchant_payable_all          = max( 0.0, (float) ( $_merchant_balance_totals->total_balance ?? 0 ) );
+
+	$_has_merchant_payouts_table = function_exists( 'malibu_migrations_table_exists' )
+		&& malibu_migrations_table_exists( 'crm_merchant_payouts' );
+	$_merchant_payouts_total = $_has_merchant_payouts_table
+		? (float) $wpdb->get_var(
+			"SELECT COALESCE(SUM(amount), 0)
+			 FROM `crm_merchant_payouts`
+			 WHERE 1=1" . $_co_po
+		)
+		: 0.0;
+
+	$_merchant_paid_gross_total = (float) $wpdb->get_var(
+		"SELECT COALESCE(SUM(amount_asset_value), 0)
+		 FROM `crm_fintech_payment_orders`
+		 WHERE status_code = 'paid'
+		   AND created_for_type = 'merchant'" . $_co_po
+	);
+
+	$_company_paid_gross_total = (float) $wpdb->get_var(
+		"SELECT COALESCE(SUM(amount_asset_value), 0)
+		 FROM `crm_fintech_payment_orders`
+		 WHERE status_code = 'paid'
+		   AND created_for_type = 'company'" . $_co_po
+	);
+
+	$_platform_fee_total = (float) $wpdb->get_var(
+		"SELECT COALESCE(SUM(COALESCE(platform_fee_value, merchant_markup_value, 0)), 0)
+		 FROM `crm_fintech_payment_orders`
+		 WHERE status_code = 'paid'
+		   AND created_for_type = 'merchant'" . $_co_po
+	);
+	$_company_withdrawals_total = 0.0;
+	if ( function_exists( 'crm_company_withdrawals_get_stats' ) ) {
+		$_company_wallet_stats      = crm_company_withdrawals_get_stats( $_company_id );
+		$_company_withdrawals_total = (float) ( $_company_wallet_stats['withdrawals_total'] ?? 0 );
+		$_company_profit_balance    = (float) ( $_company_wallet_stats['available_balance'] ?? ( $_platform_fee_total - $_company_withdrawals_total ) );
+	} else {
+		$_company_profit_balance = $_platform_fee_total;
+	}
+
+	// 7. Суммы USDT по статусам (за все время)
 	$_open_statuses     = [ 'created', 'pending' ];
 	$_closed_statuses   = [ 'paid' ];
 	$_canceled_statuses = [ 'declined', 'cancelled', 'expired', 'error' ];
@@ -190,29 +266,40 @@ if ( $_dashboard_is_root ) {
 	$_all_time_total_sum = $_sum_open + $_sum_closed + $_sum_cancel;
 	$_dashboard_has_all_time_orders = $_all_time_total_cnt > 0;
 
-	// 7. Последние 7 дней — динамика сделок
+	// 8. Последние 7 дней — динамика сделок.
+	// Даты группируем в PHP, чтобы не зависеть от MySQL timezone tables.
 	$_week_rows = $wpdb->get_results( $wpdb->prepare(
-		"SELECT
-			DATE(CONVERT_TZ(created_at, 'UTC', %s)) AS day_local,
-			COUNT(*) AS total,
-			SUM(CASE WHEN status_code = 'paid' THEN 1 ELSE 0 END) AS paid_cnt
+		"SELECT created_at, status_code
 		 FROM `crm_fintech_payment_orders`
 		 WHERE created_at >= %s" . $_co_cond . "
-		 GROUP BY day_local
-		 ORDER BY day_local",
-		$_tz->getName(),
+		 ORDER BY created_at ASC",
 		$_week_start_sql
 	) );
 
-	// Заполняем массив на 7 дней (могут быть пропуски)
 	$_week_data_total = [];
 	$_week_data_paid  = [];
 	$_week_labels     = [];
+	$_week_map        = [];
 
-	$_week_map  = [];
 	foreach ( (array) $_week_rows as $r ) {
-		$_week_map[ $r->day_local ] = [ 'total' => (int) $r->total, 'paid' => (int) $r->paid_cnt ];
+		try {
+			$_created_local = new DateTimeImmutable( (string) $r->created_at, new DateTimeZone( 'UTC' ) );
+			$_created_local = $_created_local->setTimezone( $_tz );
+		} catch ( Exception $e ) {
+			continue;
+		}
+
+		$_day_local = $_created_local->format( 'Y-m-d' );
+		if ( ! isset( $_week_map[ $_day_local ] ) ) {
+			$_week_map[ $_day_local ] = [ 'total' => 0, 'paid' => 0 ];
+		}
+
+		$_week_map[ $_day_local ]['total']++;
+		if ( (string) $r->status_code === 'paid' ) {
+			$_week_map[ $_day_local ]['paid']++;
+		}
 	}
+
 	for ( $i = 6; $i >= 0; $i-- ) {
 		$d = ( clone $_today_local )->modify( "-{$i} days" )->format( 'Y-m-d' );
 		$_week_data_total[] = $_week_map[ $d ]['total'] ?? 0;
@@ -220,6 +307,66 @@ if ( $_dashboard_is_root ) {
 		$_week_labels[]     = date( 'd.m', strtotime( $d ) );
 	}
 	$_week_has_activity = array_sum( $_week_data_total ) > 0 || array_sum( $_week_data_paid ) > 0;
+
+	$_week_chart_title       = 'Сделки за последние 7 дней';
+	$_week_chart_hint        = 'Календарные дни по таймзоне компании.';
+	$_week_chart_is_fallback = false;
+
+	if ( ! $_week_has_activity && $_dashboard_has_all_time_orders ) {
+		$_active_rows = $wpdb->get_results(
+			"SELECT created_at, status_code
+			 FROM `crm_fintech_payment_orders`
+			 WHERE 1=1" . $_co_cond . "
+			 ORDER BY created_at DESC
+			 LIMIT 500"
+		);
+
+		$_active_map        = [];
+		$_active_day_order  = [];
+		foreach ( (array) $_active_rows as $r ) {
+			try {
+				$_created_local = new DateTimeImmutable( (string) $r->created_at, new DateTimeZone( 'UTC' ) );
+				$_created_local = $_created_local->setTimezone( $_tz );
+			} catch ( Exception $e ) {
+				continue;
+			}
+
+			$_day_local = $_created_local->format( 'Y-m-d' );
+			if ( ! isset( $_active_map[ $_day_local ] ) ) {
+				if ( count( $_active_day_order ) >= 7 ) {
+					break;
+				}
+				$_active_map[ $_day_local ] = [ 'total' => 0, 'paid' => 0 ];
+				$_active_day_order[]        = $_day_local;
+			}
+
+			$_active_map[ $_day_local ]['total']++;
+			if ( (string) $r->status_code === 'paid' ) {
+				$_active_map[ $_day_local ]['paid']++;
+			}
+		}
+
+		if ( ! empty( $_active_day_order ) ) {
+			$_week_data_total      = [];
+			$_week_data_paid       = [];
+			$_week_labels          = [];
+			$_active_days_ascending = array_reverse( $_active_day_order );
+
+			foreach ( $_active_days_ascending as $_day_local ) {
+				$_week_data_total[] = $_active_map[ $_day_local ]['total'];
+				$_week_data_paid[]  = $_active_map[ $_day_local ]['paid'];
+				$_week_labels[]     = date( 'd.m', strtotime( $_day_local ) );
+			}
+
+			$_week_has_activity     = true;
+			$_week_chart_title      = 'Сделки за последние активные дни';
+			$_week_chart_hint       = 'За календарные 7 дней пусто, поэтому показаны последние дни с ордерами.';
+			$_week_chart_is_fallback = true;
+		}
+	}
+
+	$_week_total_count = array_sum( $_week_data_total );
+	$_week_paid_count  = array_sum( $_week_data_paid );
 	// phpcs:enable
 }
 
@@ -513,17 +660,115 @@ get_header();
 				</div>
 				<!-- /ROW 1 -->
 
-				<!-- ══ ROW 2: График + Статусы сегодня ══════════════════════════ -->
+				<!-- ══ ROW 2: Финансовая картина компании ══════════════════════ -->
+				<div class="row m-b-5">
+					<div class="col-12">
+						<p class="hint-text fs-12 text-uppercase m-b-10" style="letter-spacing:.07em;">Финансовая картина компании</p>
+					</div>
+				</div>
+
+				<div class="row m-b-20">
+					<?php
+					$_dashboard_finance_cards = [
+						[
+							'label'   => 'Долг ЭП → компании',
+							'value'   => $_ep_debt,
+							'color'   => $_ep_debt > 0 ? 'text-warning' : 'text-success',
+							'caption' => 'paid-ордера минус выплаты ЭП',
+						],
+						[
+							'label'   => 'К выплате мерчантам',
+							'value'   => $_merchant_payable_all,
+							'color'   => $_merchant_payable_all > 0 ? 'text-warning' : 'text-success',
+							'caption' => 'основной + бонус + рефка',
+						],
+						[
+							'label'   => 'Выплачено мерчантам',
+							'value'   => $_merchant_payouts_total,
+							'color'   => 'text-complete',
+							'caption' => 'зафиксированные выплаты',
+						],
+						[
+							'label'   => 'Прибыль компании',
+							'value'   => $_company_profit_balance,
+							'color'   => $_company_profit_balance < 0 ? 'text-danger' : 'text-success',
+							'caption' => 'merchant fee минус выводы',
+						],
+					];
+					?>
+					<?php foreach ( $_dashboard_finance_cards as $_dashboard_finance_card ) : ?>
+						<div class="col-xl-3 col-lg-6 col-md-6 col-sm-12 m-b-15">
+							<div class="card card-default no-margin">
+								<div class="card-body p-3">
+									<p class="hint-text no-margin fs-12 text-uppercase"><?php echo esc_html( $_dashboard_finance_card['label'] ); ?></p>
+									<h3 class="no-margin bold font-montserrat <?php echo esc_attr( $_dashboard_finance_card['color'] ); ?>">
+										<?php echo esc_html( _dash_fmt_usdt( (float) $_dashboard_finance_card['value'] ) ); ?>
+									</h3>
+									<p class="hint-text no-margin fs-12"><?php echo esc_html( $_dashboard_finance_card['caption'] ); ?></p>
+								</div>
+							</div>
+						</div>
+					<?php endforeach; ?>
+				</div>
+
+				<div class="row m-b-20">
+					<div class="col-lg-4 col-md-12 m-b-15">
+						<div class="card card-default no-margin">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase">Операторский / company контур paid</p>
+								<h3 class="no-margin bold font-montserrat text-primary"><?php echo esc_html( _dash_fmt_usdt( $_company_paid_gross_total ) ); ?></h3>
+								<p class="hint-text no-margin fs-12">ордера без мерчантского контура</p>
+							</div>
+						</div>
+					</div>
+					<div class="col-lg-4 col-md-12 m-b-15">
+						<div class="card card-default no-margin">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase">Мерчантский контур paid</p>
+								<h3 class="no-margin bold font-montserrat text-complete"><?php echo esc_html( _dash_fmt_usdt( $_merchant_paid_gross_total ) ); ?></h3>
+								<p class="hint-text no-margin fs-12">gross paid-объём по ордерам мерчантов</p>
+							</div>
+						</div>
+					</div>
+					<div class="col-lg-4 col-md-12 m-b-15">
+						<div class="card card-default no-margin">
+							<div class="card-body p-3">
+								<p class="hint-text no-margin fs-12 text-uppercase">Выведено компанией</p>
+								<h3 class="no-margin bold font-montserrat text-complete"><?php echo esc_html( _dash_fmt_usdt( $_company_withdrawals_total ) ); ?></h3>
+								<p class="hint-text no-margin fs-12">списания из profit/wallet</p>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- ══ ROW 3: График + Статусы сегодня ══════════════════════════ -->
 				<div class="row m-b-20">
 
 					<!-- График: динамика за 7 дней -->
 					<div class="col-lg-8 col-md-12 m-b-15">
 						<div class="card card-default no-margin full-height">
 							<div class="card-header">
-								<div class="card-title">Сделки за последние 7 дней</div>
+								<div class="card-title"><?php echo esc_html( $_week_chart_title ); ?></div>
 							</div>
 							<div class="card-body">
 								<?php if ( $_week_has_activity ) : ?>
+									<p class="hint-text fs-12 m-b-15"><?php echo esc_html( $_week_chart_hint ); ?></p>
+									<div class="row m-b-15">
+										<div class="col-sm-4 col-6 m-b-10">
+											<p class="hint-text no-margin fs-11 text-uppercase">Всего</p>
+											<h4 class="no-margin bold text-primary"><?php echo esc_html( number_format_i18n( (int) $_week_total_count ) ); ?></h4>
+										</div>
+										<div class="col-sm-4 col-6 m-b-10">
+											<p class="hint-text no-margin fs-11 text-uppercase">Paid</p>
+											<h4 class="no-margin bold text-success"><?php echo esc_html( number_format_i18n( (int) $_week_paid_count ) ); ?></h4>
+										</div>
+										<div class="col-sm-4 col-12 m-b-10">
+											<p class="hint-text no-margin fs-11 text-uppercase">Период</p>
+											<h5 class="no-margin bold text-master">
+												<?php echo esc_html( reset( $_week_labels ) . ' — ' . end( $_week_labels ) ); ?>
+											</h5>
+										</div>
+									</div>
 									<div class="row m-b-10">
 										<div class="col-6">
 											<span class="m-r-10" style="display:inline-block;width:12px;height:12px;background:#6d5cae;border-radius:2px;"></span>
@@ -604,9 +849,9 @@ get_header();
 					</div>
 
 				</div>
-				<!-- /ROW 2 -->
+				<!-- /ROW 3 -->
 
-				<!-- ══ ROW 3: Суммы по статусам (всё время) ═════════════════════ -->
+				<!-- ══ ROW 4: Суммы по статусам (всё время) ═════════════════════ -->
 				<div class="row m-b-5">
 					<div class="col-12">
 						<p class="hint-text fs-12 text-uppercase m-b-10" style="letter-spacing:.07em;">Всего за всё время</p>
@@ -702,7 +947,7 @@ get_header();
 						</div>
 					<?php endforeach; ?>
 				</div>
-				<!-- /ROW 3 -->
+				<!-- /ROW 4 -->
 
 					<?php endif; ?>
 

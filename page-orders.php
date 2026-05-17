@@ -20,6 +20,58 @@ $create_nonce   = wp_create_nonce( 'me_orders_create' );
 $can_create     = crm_can_access( 'orders.create' );
 $_orders_org    = crm_require_company_page_context();
 $tz_label       = crm_get_timezone_label( $_orders_org );
+$merchant_map   = crm_get_merchants_by_company_ids( [ $_orders_org ] );
+$order_merchants = $merchant_map[ $_orders_org ] ?? [];
+$_orders_allowed_providers  = function_exists( 'crm_fintech_get_allowed_providers' )
+	? array_values( array_filter( array_map( 'sanitize_key', crm_fintech_get_allowed_providers( $_orders_org ) ) ) )
+	: [];
+$_orders_provider_labels    = [];
+
+foreach ( $_orders_allowed_providers as $_orders_provider_code ) {
+	$_orders_provider_labels[ $_orders_provider_code ] = function_exists( 'crm_fintech_provider_label' )
+		? crm_fintech_provider_label( $_orders_provider_code )
+		: $_orders_provider_code;
+}
+
+$_orders_allowed_statuses   = [ 'created', 'pending', 'paid', 'declined', 'cancelled', 'expired', 'error' ];
+$_orders_allowed_contours   = [ 'company', 'merchant' ];
+$_orders_allowed_sources    = [ 'web', 'telegram_operator', 'telegram_merchant', 'telegram_service', 'telegram', 'merchant_mock' ];
+$_orders_allowed_per_page   = [ 25, 50, 100 ];
+$_orders_known_merchant_ids = array_map( static fn( array $merchant ): int => (int) ( $merchant['id'] ?? 0 ), $order_merchants );
+$_orders_validate_date      = static function ( $value ): string {
+	$value = trim( (string) $value );
+	return preg_match( '/^\d{4}-\d{2}-\d{2}$/', $value ) ? $value : '';
+};
+$_orders_initial_filters    = [
+	'search'         => sanitize_text_field( wp_unslash( $_GET['search'] ?? '' ) ),
+	'status'         => sanitize_key( $_GET['status'] ?? '' ),
+	'provider'       => sanitize_key( $_GET['provider'] ?? '' ),
+	'merchant_id'    => max( 0, (int) ( $_GET['merchant_id'] ?? 0 ) ),
+	'contour'        => sanitize_key( $_GET['contour'] ?? '' ),
+	'source_channel' => sanitize_key( $_GET['source_channel'] ?? '' ),
+	'date_from'      => $_orders_validate_date( wp_unslash( $_GET['date_from'] ?? '' ) ),
+	'date_to'        => $_orders_validate_date( wp_unslash( $_GET['date_to'] ?? '' ) ),
+	'per_page'       => max( 0, (int) ( $_GET['per_page'] ?? 25 ) ),
+];
+
+if ( ! in_array( $_orders_initial_filters['status'], $_orders_allowed_statuses, true ) ) {
+	$_orders_initial_filters['status'] = '';
+}
+if ( ! in_array( $_orders_initial_filters['provider'], $_orders_allowed_providers, true ) ) {
+	$_orders_initial_filters['provider'] = '';
+}
+if ( ! in_array( $_orders_initial_filters['contour'], $_orders_allowed_contours, true ) ) {
+	$_orders_initial_filters['contour'] = '';
+}
+if ( ! in_array( $_orders_initial_filters['source_channel'], $_orders_allowed_sources, true ) ) {
+	$_orders_initial_filters['source_channel'] = '';
+}
+if ( ! in_array( $_orders_initial_filters['per_page'], $_orders_allowed_per_page, true ) ) {
+	$_orders_initial_filters['per_page'] = 25;
+}
+if ( $_orders_initial_filters['merchant_id'] > 0 && ! in_array( $_orders_initial_filters['merchant_id'], $_orders_known_merchant_ids, true ) ) {
+	$_orders_initial_filters['merchant_id'] = 0;
+}
 
 get_header();
 ?>
@@ -56,45 +108,84 @@ get_header();
 								<div class="input-group">
 									<span class="input-group-text"><i class="pg-icon">search</i></span>
 									<input type="search" id="of-search" class="form-control"
-									       placeholder="Merchant ID, Provider ID, реф…">
+									       placeholder="Order ID, Provider ID, ref, notes, chat_id…"
+									       value="<?php echo esc_attr( $_orders_initial_filters['search'] ); ?>">
 								</div>
 							</div>
 							<div class="col-6 col-md-2">
 								<select id="of-status" class="full-width" data-init-plugin="select2">
 									<option value="">Все статусы</option>
-									<option value="created">created</option>
-									<option value="pending">pending</option>
-									<option value="paid">paid</option>
-									<option value="declined">declined</option>
-									<option value="cancelled">cancelled</option>
-									<option value="expired">expired</option>
-									<option value="error">error</option>
+									<option value="created" <?php selected( $_orders_initial_filters['status'], 'created' ); ?>>created</option>
+									<option value="pending" <?php selected( $_orders_initial_filters['status'], 'pending' ); ?>>pending</option>
+									<option value="paid" <?php selected( $_orders_initial_filters['status'], 'paid' ); ?>>paid</option>
+									<option value="declined" <?php selected( $_orders_initial_filters['status'], 'declined' ); ?>>declined</option>
+									<option value="cancelled" <?php selected( $_orders_initial_filters['status'], 'cancelled' ); ?>>cancelled</option>
+									<option value="expired" <?php selected( $_orders_initial_filters['status'], 'expired' ); ?>>expired</option>
+									<option value="error" <?php selected( $_orders_initial_filters['status'], 'error' ); ?>>error</option>
 								</select>
 							</div>
 							<div class="col-6 col-md-2">
 								<select id="of-provider" class="full-width" data-init-plugin="select2">
 									<option value="">Все провайдеры</option>
-									<option value="kanyon">kanyon</option>
-									<option value="doverka">doverka</option>
+									<?php foreach ( $_orders_allowed_providers as $_orders_provider_code ) : ?>
+										<option value="<?php echo esc_attr( $_orders_provider_code ); ?>" <?php selected( $_orders_initial_filters['provider'], $_orders_provider_code ); ?>>
+											<?php echo esc_html( $_orders_provider_labels[ $_orders_provider_code ] ?? $_orders_provider_code ); ?>
+										</option>
+									<?php endforeach; ?>
 								</select>
 							</div>
-							<div class="col-6 col-md-2">
-								<input type="date" id="of-date-from" class="form-control" placeholder="Дата с">
-							</div>
-							<div class="col-6 col-md-2">
-								<input type="date" id="of-date-to" class="form-control" placeholder="Дата по">
+							<div class="col-12 col-md-5">
+								<select id="of-merchant" class="full-width" data-init-plugin="select2">
+									<option value="">Все мерчанты</option>
+									<?php foreach ( $order_merchants as $_order_merchant ) : ?>
+										<?php
+										$_order_merchant_id    = (int) ( $_order_merchant['id'] ?? 0 );
+										$_order_merchant_name  = trim( (string) ( $_order_merchant['name'] ?? '' ) );
+										$_order_merchant_chat  = trim( (string) ( $_order_merchant['chat_id'] ?? '' ) );
+										$_order_merchant_label = $_order_merchant_name !== '' ? $_order_merchant_name : ( 'Merchant #' . $_order_merchant_id );
+										if ( $_order_merchant_chat !== '' ) {
+											$_order_merchant_label .= ' [' . $_order_merchant_chat . ']';
+										}
+										?>
+										<option value="<?php echo (int) $_order_merchant_id; ?>" <?php selected( $_orders_initial_filters['merchant_id'], $_order_merchant_id ); ?>><?php echo esc_html( $_order_merchant_label ); ?></option>
+									<?php endforeach; ?>
+								</select>
 							</div>
 						</div>
 
 						<div class="row g-2 align-items-center">
-							<div class="col-4 col-md-1">
-								<select id="of-per-page" class="full-width" data-init-plugin="select2">
-									<option value="25">25</option>
-									<option value="50">50</option>
-									<option value="100">100</option>
+							<div class="col-6 col-md-2">
+								<input type="date" id="of-date-from" class="form-control" placeholder="Дата с" value="<?php echo esc_attr( $_orders_initial_filters['date_from'] ); ?>">
+							</div>
+							<div class="col-6 col-md-2">
+								<input type="date" id="of-date-to" class="form-control" placeholder="Дата по" value="<?php echo esc_attr( $_orders_initial_filters['date_to'] ); ?>">
+							</div>
+							<div class="col-6 col-md-2">
+								<select id="of-contour" class="full-width" data-init-plugin="select2">
+									<option value="">Все контуры</option>
+									<option value="company" <?php selected( $_orders_initial_filters['contour'], 'company' ); ?>>Компания / оператор</option>
+									<option value="merchant" <?php selected( $_orders_initial_filters['contour'], 'merchant' ); ?>>Мерчант</option>
 								</select>
 							</div>
-							<div class="col-8 col-md-3 d-flex gap-2">
+							<div class="col-6 col-md-3">
+								<select id="of-source" class="full-width" data-init-plugin="select2">
+									<option value="">Все источники</option>
+									<option value="web" <?php selected( $_orders_initial_filters['source_channel'], 'web' ); ?>>Web</option>
+									<option value="telegram_operator" <?php selected( $_orders_initial_filters['source_channel'], 'telegram_operator' ); ?>>Telegram operator</option>
+									<option value="telegram_merchant" <?php selected( $_orders_initial_filters['source_channel'], 'telegram_merchant' ); ?>>Telegram merchant</option>
+									<option value="telegram_service" <?php selected( $_orders_initial_filters['source_channel'], 'telegram_service' ); ?>>Telegram service</option>
+									<option value="telegram" <?php selected( $_orders_initial_filters['source_channel'], 'telegram' ); ?>>Telegram legacy</option>
+									<option value="merchant_mock" <?php selected( $_orders_initial_filters['source_channel'], 'merchant_mock' ); ?>>Merchant mock</option>
+								</select>
+							</div>
+							<div class="col-4 col-md-1">
+								<select id="of-per-page" class="full-width" data-init-plugin="select2">
+									<option value="25" <?php selected( $_orders_initial_filters['per_page'], 25 ); ?>>25</option>
+									<option value="50" <?php selected( $_orders_initial_filters['per_page'], 50 ); ?>>50</option>
+									<option value="100" <?php selected( $_orders_initial_filters['per_page'], 100 ); ?>>100</option>
+								</select>
+							</div>
+							<div class="col-8 col-md-2 d-flex gap-2">
 								<button type="button" id="btn-orders-search" class="btn btn-primary">
 									<i class="pg-icon">search</i> Найти
 								</button>
@@ -137,7 +228,8 @@ get_header();
 										<th style="width:60px">#</th>
 										<th style="width:140px">Дата</th>
 										<th style="width:90px">Провайдер</th>
-										<th style="width:200px">Merchant ID</th>
+										<th style="width:200px">Мерчант</th>
+										<th style="width:200px">Order ID</th>
 										<th style="width:90px">Статус</th>
 										<th style="width:110px">Сумма USDT</th>
 										<th style="width:110px">Сумма RUB</th>
@@ -148,7 +240,7 @@ get_header();
 								</thead>
 								<tbody id="orders-tbody">
 									<tr>
-										<td colspan="10" class="text-center p-t-30 p-b-30 text-muted">
+										<td colspan="11" class="text-center p-t-30 p-b-30 text-muted">
 											Нажмите «Найти» для загрузки данных.
 										</td>
 									</tr>
@@ -306,6 +398,22 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 		return '<span class="order-provider-badge">' + escHtml(p) + '</span>';
 	}
 
+	function sourceLabel(source) {
+		var map = {
+			web: 'Web',
+			telegram: 'Telegram legacy',
+			telegram_operator: 'Telegram operator',
+			telegram_merchant: 'Telegram merchant',
+			telegram_service: 'Telegram service',
+			merchant_mock: 'Merchant mock'
+		};
+		return map[source] || (source || '—');
+	}
+
+	function contourLabel(contour) {
+		return contour === 'merchant' ? 'Мерчант' : 'Компания / оператор';
+	}
+
 	function formatDate(dt) {
 		if (!dt) return '—';
 		var parts = dt.split(' ');
@@ -318,6 +426,9 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 			search:     $('#of-search').val(),
 			status:     $('#of-status').val(),
 			provider:   $('#of-provider').val(),
+			merchant_id: $('#of-merchant').val(),
+			contour:    $('#of-contour').val(),
+			source_channel: $('#of-source').val(),
 			date_from:  $('#of-date-from').val(),
 			date_to:    $('#of-date-to').val(),
 			per_page:   $('#of-per-page').val(),
@@ -328,7 +439,7 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 
 	function fetchOrders(page) {
 		$('#orders-loading').removeClass('d-none');
-		$('#orders-tbody').html('<tr><td colspan="10" class="text-center p-t-20 p-b-20 text-muted">Загрузка…</td></tr>');
+		$('#orders-tbody').html('<tr><td colspan="11" class="text-center p-t-20 p-b-20 text-muted">Загрузка…</td></tr>');
 		$('#orders-pagination').html('');
 		$('#orders-stats').html('');
 
@@ -352,11 +463,11 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 					_flashMerchantId = null;
 				}
 			} else {
-				$('#orders-tbody').html('<tr><td colspan="10" class="text-center text-danger p-t-20 p-b-20">' + escHtml(res.data ? res.data.message : 'Ошибка') + '</td></tr>');
+				$('#orders-tbody').html('<tr><td colspan="11" class="text-center text-danger p-t-20 p-b-20">' + escHtml(res.data ? res.data.message : 'Ошибка') + '</td></tr>');
 			}
 		})
 		.fail(function () {
-			$('#orders-tbody').html('<tr><td colspan="10" class="text-center text-danger p-t-20 p-b-20">Сетевая ошибка.</td></tr>');
+			$('#orders-tbody').html('<tr><td colspan="11" class="text-center text-danger p-t-20 p-b-20">Сетевая ошибка.</td></tr>');
 		})
 		.always(function () { $('#orders-loading').addClass('d-none'); });
 	}
@@ -365,7 +476,7 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 
 	function renderTable(rows) {
 		if (!rows || rows.length === 0) {
-			$('#orders-tbody').html('<tr><td colspan="10" class="text-center p-t-30 p-b-30 text-muted">Записей не найдено.</td></tr>');
+			$('#orders-tbody').html('<tr><td colspan="11" class="text-center p-t-30 p-b-30 text-muted">Записей не найдено.</td></tr>');
 			return;
 		}
 
@@ -378,7 +489,17 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 				? '<span class="order-amount">' + parseFloat(r.payment_amount_value).toFixed(2) + ' ' + escHtml(r.payment_currency_code) + '</span>'
 				: '<span class="text-muted">—</span>';
 			var paidAt = r.paid_at ? formatDate(r.paid_at) : '<span class="text-muted">—</span>';
-			var source = r.source_channel ? '<span class="badge badge-light">' + escHtml(r.source_channel) + '</span>' : '<span class="text-muted">—</span>';
+			var source = r.source_channel ? '<span class="badge badge-light">' + escHtml(sourceLabel(r.source_channel)) + '</span>' : '<span class="text-muted">—</span>';
+			var merchantLabel = '<span class="text-muted">Компания</span>';
+
+			if (r.merchant_id) {
+				merchantLabel = '<strong>' + escHtml(r.merchant_name || ('Merchant #' + r.merchant_id)) + '</strong>';
+				if (r.merchant_chat_id) {
+					merchantLabel += '<br><span class="text-muted" style="font-size:11px">' + escHtml(r.merchant_chat_id) + '</span>';
+				} else if (r.merchant_telegram_username) {
+					merchantLabel += '<br><span class="text-muted" style="font-size:11px">@' + escHtml(r.merchant_telegram_username) + '</span>';
+				}
+			}
 
 			var qrBlocked    = ['declined', 'cancelled', 'expired', 'error'].indexOf(r.status_code) !== -1;
 			var checkAllowed = ['created', 'pending'].indexOf(r.status_code) !== -1;
@@ -387,6 +508,7 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 				+ '<td class="text-muted" style="font-size:11px">#' + escHtml(r.id) + '</td>'
 				+ '<td>' + formatDate(r.created_at) + '</td>'
 				+ '<td>' + providerBadge(r.provider_code) + '</td>'
+				+ '<td>' + merchantLabel + '</td>'
 				+ '<td style="font-size:11px;word-break:break-all">' + escHtml(r.merchant_order_id) + '</td>'
 				+ '<td>' + statusBadge(r.status_code) + '</td>'
 				+ '<td>' + amountUsdt + '</td>'
@@ -484,13 +606,15 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 			+ row('ID',              '<code>#' + escHtml(d.id) + '</code>')
 			+ row('Дата',            escHtml(d.created_at))
 			+ row('Провайдер',       providerBadge(d.provider_code))
+			+ row('Контур',          escHtml(contourLabel(d.created_for_type)))
+			+ row('Мерчант',         d.merchant_id ? ('<strong>' + escHtml(d.merchant_name || ('Merchant #' + d.merchant_id)) + '</strong>') : 'Компания')
 			+ row('Статус',          statusBadge(d.status_code))
-			+ row('Merchant ID',     '<code style="word-break:break-all">' + escHtml(d.merchant_order_id) + '</code>')
+			+ row('Order ID',        '<code style="word-break:break-all">' + escHtml(d.merchant_order_id) + '</code>')
 			+ row('Provider ID',     d.provider_order_id ? '<code>' + escHtml(d.provider_order_id) + '</code>' : '—')
 			+ row('Ext Order ID',    d.provider_external_order_id ? '<code>' + escHtml(d.provider_external_order_id) + '</code>' : '—')
 			+ row('Сумма USDT',      '<strong>' + escHtml(amountUsdt) + '</strong>')
 			+ row('Сумма RUB',       '<strong>' + escHtml(amountRub) + '</strong>')
-			+ row('Источник',        escHtml(d.source_channel || '—'))
+			+ row('Источник',        escHtml(sourceLabel(d.source_channel)))
 			+ row('Ссылка оплаты',   payLink)
 			+ row('QRC ID',          d.qrc_id ? '<code>' + escHtml(d.qrc_id) + '</code>' : '—')
 			+ row('Статус провайдера', escHtml(d.provider_status_code || '—'))
@@ -598,7 +722,7 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 	$(document).on('click', '#btn-open-create-receipt', function () {
 		MalibuOrderCreate.reset();
 		getCreateModal().show();
-		setTimeout(function () { $('#moc-amount-usdt').trigger('focus'); }, 250);
+		setTimeout(function () { $('#moc-amount-value').trigger('focus'); }, 250);
 	});
 
 	$(document).on('click', '#btn-create-receipt', function () {
@@ -629,7 +753,7 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 		});
 	});
 
-	$(document).on('keypress', '#moc-amount-usdt, #moc-description', function (e) {
+	$(document).on('keypress', '#moc-amount-value, #moc-description', function (e) {
 		if (e.which === 13 && $('#create-receipt-modal').hasClass('show')) {
 			e.preventDefault();
 			$('#btn-create-receipt').trigger('click');
@@ -643,7 +767,7 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 	$('#btn-orders-reset').on('click', function () {
 		$('#of-search').val('');
 		$('#of-date-from, #of-date-to').val('');
-		$('#of-status, #of-provider').val('').trigger('change');
+		$('#of-status, #of-provider, #of-merchant, #of-contour, #of-source').val('').trigger('change');
 		$('#of-per-page').val('25').trigger('change');
 		currentPage = 1;
 		fetchOrders(1);
@@ -671,7 +795,7 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 		if (!mid) return;
 		$('#orders-tbody tr').each(function () {
 			var $tr = $(this);
-			if ($tr.find('td').eq(3).text().trim() === mid) {
+			if ($tr.find('td').eq(4).text().trim() === mid) {
 				$tr.addClass('row-flash');
 				setTimeout(function () { $tr.removeClass('row-flash'); }, 1500);
 			}
@@ -692,7 +816,7 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 
 		// Визуальный индикатор на строке
 		var $row = $a.closest('tr');
-		var mid  = $row.find('td').eq(3).text().trim();
+		var mid  = $row.find('td').eq(4).text().trim();
 		$row.addClass('row-checking');
 
 		$.post(AJAX_URL, { action: 'me_orders_check_status', _nonce: NONCE, id: id, intent: 'check' })

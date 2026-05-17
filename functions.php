@@ -44,7 +44,10 @@ require_once get_template_directory() . '/inc/ajax/companies.php';
 
 // Настройки системы (crm_settings)
 require_once get_template_directory() . '/inc/settings.php';
+require_once get_template_directory() . '/inc/company-contours.php';
 require_once get_template_directory() . '/inc/telegram-bot.php';
+require_once get_template_directory() . '/inc/telegram-receipts.php';
+require_once get_template_directory() . '/inc/telegram-merchant-commands.php';
 require_once get_template_directory() . '/inc/ajax/settings.php';
 
 // Мерчанты: company-scoped бизнес-сущность + AJAX
@@ -76,6 +79,12 @@ require_once get_template_directory() . '/inc/ajax/orders.php';
 
 // Выплаты ЭП: AJAX-обработчики
 require_once get_template_directory() . '/inc/ajax/payouts.php';
+
+// Выплаты мерчантам: AJAX-обработчики
+require_once get_template_directory() . '/inc/ajax/merchant-payouts.php';
+
+// Вывод средств компании: AJAX-обработчики
+require_once get_template_directory() . '/inc/ajax/company-withdrawals.php';
 
 // Fintech: cron-опрос открытых ордеров + Telegram-уведомления
 require_once get_template_directory() . '/inc/fintech-cron.php';
