@@ -172,9 +172,10 @@ function me_ajax_save_user(): void {
 			$company_id
 		) );
 
-		// CRM-роли (назначать может только пользователь с users.assign_roles)
-		if ( crm_user_has_permission( $current_uid, 'users.assign_roles' ) ) {
-			crm_assign_roles( $user_id, $crm_role_ids, $current_uid );
+		// CRM-роли может назначать только company admin своей компании или root.
+		if ( crm_can_manage_company_roles( $current_uid ) ) {
+			$required_role_codes = crm_company_user_is_admin( $user_id, $company_id ) ? [ 'owner' ] : [];
+			crm_assign_roles_preserving_codes( $user_id, $crm_role_ids, $required_role_codes, $current_uid );
 		}
 
 		crm_log_user( 'user.created', 'create',
@@ -255,8 +256,10 @@ function me_ajax_save_user(): void {
 	] );
 
 	// CRM-роли
-	if ( crm_user_has_permission( $current_uid, 'users.assign_roles' ) ) {
-		crm_assign_roles( $user_id, $crm_role_ids, $current_uid );
+	if ( crm_can_manage_company_roles( $current_uid ) ) {
+		$target_company_id    = crm_get_current_user_company_id( $user_id );
+		$required_role_codes  = crm_company_user_is_admin( $user_id, $target_company_id ) ? [ 'owner' ] : [];
+		crm_assign_roles_preserving_codes( $user_id, $crm_role_ids, $required_role_codes, $current_uid );
 	}
 
 	// Логировать обновление; отдельно — смену пароля
@@ -412,7 +415,7 @@ function me_ajax_delete_user(): void {
 // ════════════════════════════════════════════════════════════════════════════
 add_action( 'wp_ajax_me_save_role_permissions', 'me_ajax_save_role_permissions' );
 function me_ajax_save_role_permissions(): void {
-	if ( ! is_user_logged_in() || ! crm_can_access( 'roles.edit' ) ) {
+	if ( ! is_user_logged_in() || ! crm_can_edit_role_permissions( get_current_user_id() ) ) {
 		_me_ajax_error( 'Недостаточно прав.' );
 	}
 

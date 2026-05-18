@@ -687,3 +687,142 @@ body.menu-pin .page-sidebar:not(.page-sidebar-root) .sidebar-header .sidebar-hea
 		min-height: 0;
 	}
 }
+
+.product-footer-version-link {
+	color: #4f5e6b;
+	font-weight: 600;
+	text-decoration: none;
+}
+
+.product-footer-version-link:hover,
+.product-footer-version-link:focus {
+	color: #1f2d3d;
+	text-decoration: none;
+}
+
+.card-product-hero .card-body {
+	padding: 28px 30px;
+}
+
+.product-page-eyebrow {
+	color: #7e8b96;
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+}
+
+.product-page-hero-copy h1 {
+	font-size: 34px;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+}
+
+.product-page-hero-meta {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 220px;
+}
+
+.product-version-chip {
+	background: linear-gradient(135deg, #f4efe5 0%, #fff9ee 100%);
+	border: 1px solid rgba(186, 154, 102, 0.28);
+	border-radius: 12px;
+	padding: 12px 14px;
+}
+
+.product-version-chip .hint-text {
+	display: block;
+	margin-bottom: 3px;
+}
+
+.product-version-chip__value {
+	color: #8c5a18;
+	font-size: 18px;
+	font-weight: 700;
+	text-decoration: none;
+}
+
+.product-hero-note {
+	color: #6d7780;
+	font-size: 12px;
+}
+
+.product-admin-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.product-rich-content {
+	color: #24313d;
+	font-size: 15px;
+	line-height: 1.7;
+}
+
+.product-rich-content h2,
+.product-rich-content h3,
+.product-rich-content h4 {
+	color: #1f2d3d;
+	font-weight: 700;
+	margin-top: 1.4em;
+}
+
+.product-rich-content h2:first-child,
+.product-rich-content h3:first-child,
+.product-rich-content h4:first-child {
+	margin-top: 0;
+}
+
+.product-rich-content img {
+	border-radius: 10px;
+	height: auto;
+	max-width: 100%;
+}
+
+.product-rich-content ul,
+.product-rule-list {
+	padding-left: 18px;
+}
+
+.product-rule-list li {
+	color: #53606b;
+	line-height: 1.6;
+	margin-bottom: 8px;
+}
+
+.product-shot-card {
+	overflow: hidden;
+}
+
+.product-shot-card__media {
+	background: #f6f8fb;
+	display: block;
+}
+
+.product-shot-card__image {
+	display: block;
+	height: 240px;
+	object-fit: cover;
+	width: 100%;
+}
+
+@media (max-width: 767px) {
+	.card-product-hero .card-body {
+		padding: 22px 20px;
+	}
+
+	.product-page-hero-copy h1 {
+		font-size: 28px;
+	}
+
+	.product-page-hero-meta {
+		min-width: 0;
+		width: 100%;
+	}
+
+	.product-shot-card__image {
+		height: 200px;
+	}
+}

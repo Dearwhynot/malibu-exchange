@@ -220,6 +220,19 @@ function me_ajax_assign_user_company(): void {
 		wp_send_json_error( [ 'message' => 'Компания не найдена или недоступна.' ] );
 	}
 
+	$forced_owner_role = false;
+	if ( crm_company_user_is_admin( $user_id, $company_id ) ) {
+		$current_role_ids = array_map(
+			static fn( $role ): int => (int) $role->id,
+			crm_get_user_roles( $user_id )
+		);
+		$owner_role_id = crm_get_role_id_by_code( 'owner' );
+		if ( $owner_role_id > 0 && ! in_array( $owner_role_id, $current_role_ids, true ) ) {
+			crm_assign_roles_preserving_codes( $user_id, $current_role_ids, [ 'owner' ], get_current_user_id() );
+			$forced_owner_role = true;
+		}
+	}
+
 	global $wpdb;
 	$company_name = (string) $wpdb->get_var( $wpdb->prepare( "SELECT name FROM crm_companies WHERE id = %d", $company_id ) );
 
@@ -234,13 +247,17 @@ function me_ajax_assign_user_company(): void {
 			'company_id'   => $company_id,
 			'company_name' => $company_name,
 			'assigned_by'  => get_current_user_id(),
+			'forced_owner_role' => $forced_owner_role,
 		],
 	] );
 
 	wp_send_json_success( [
-		'message'      => "Назначено в «{$company_name}».",
+		'message'      => $forced_owner_role
+			? "Назначено в «{$company_name}». Пользователь автоматически стал owner этой компании."
+			: "Назначено в «{$company_name}».",
 		'company_id'   => $company_id,
 		'company_name' => $company_name,
+		'forced_owner_role' => $forced_owner_role,
 	] );
 }
 

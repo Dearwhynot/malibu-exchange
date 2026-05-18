@@ -106,6 +106,10 @@ function crm_rbac_permissions(): array {
 		'reports.view'       => [ 'module' => 'reports',   'action' => 'view',         'name' => 'Просмотр отчётов' ],
 		'reports.export'     => [ 'module' => 'reports',   'action' => 'export',       'name' => 'Экспорт отчётов' ],
 
+		// ── Product Communication ────────────────────────────────────────────
+		'roadmap.view'       => [ 'module' => 'roadmap',   'action' => 'view',         'name' => 'Просмотр страницы Roadmap' ],
+		'release_notes.view' => [ 'module' => 'release_notes', 'action' => 'view',     'name' => 'Просмотр страницы Release Notes' ],
+
 		// ── Settings ─────────────────────────────────────────────────────────
 		'settings.view'      => [ 'module' => 'settings',  'action' => 'view',         'name' => 'Просмотр настроек' ],
 		'settings.edit'      => [ 'module' => 'settings',  'action' => 'edit',         'name' => 'Редактирование настроек' ],
@@ -120,10 +124,19 @@ function crm_rbac_permissions(): array {
 		'merchants.block'    => [ 'module' => 'merchants', 'action' => 'block',        'name' => 'Блокировка мерчантов' ],
 		'merchants.invite'   => [ 'module' => 'merchants', 'action' => 'invite',       'name' => 'Управление приглашениями мерчантов' ],
 		'merchants.ledger'   => [ 'module' => 'merchants', 'action' => 'ledger',       'name' => 'Просмотр баланса мерчантов' ],
+		'merchants.manage_api' => [ 'module' => 'merchants', 'action' => 'manage_api', 'name' => 'Управление Merchant API-ключами' ],
 
 		// ── Operator Telegram ─────────────────────────────────────────────────
 		'operators.telegram.view'   => [ 'module' => 'operators', 'action' => 'telegram_view',   'name' => 'Просмотр Telegram-привязок операторов' ],
 		'operators.telegram.invite' => [ 'module' => 'operators', 'action' => 'telegram_invite', 'name' => 'Выдача Telegram-инвайтов операторам' ],
+
+		// ── Service Telegram ──────────────────────────────────────────────────
+		'service.telegram.view'              => [ 'module' => 'service', 'action' => 'telegram_view',              'name' => 'Просмотр Service Telegram ACL' ],
+		'service.telegram.invite'            => [ 'module' => 'service', 'action' => 'telegram_invite',            'name' => 'Выдача Service Telegram invite' ],
+		'service.telegram.merchant_payouts'  => [ 'module' => 'service', 'action' => 'telegram_merchant_payouts',  'name' => 'Service bot: выплаты мерчантам' ],
+		'service.telegram.acquirer_payouts'  => [ 'module' => 'service', 'action' => 'telegram_acquirer_payouts',  'name' => 'Service bot: выплаты ЭП' ],
+		'service.telegram.orders'            => [ 'module' => 'service', 'action' => 'telegram_orders',            'name' => 'Service bot: ордера' ],
+		'service.telegram.rates'             => [ 'module' => 'service', 'action' => 'telegram_rates',             'name' => 'Service bot: курсы' ],
 
 		// ── Logs (операционный журнал событий) ───────────────────────────────
 		'logs.view'          => [ 'module' => 'logs',      'action' => 'view',         'name' => 'Просмотр журнала событий' ],
@@ -156,6 +169,7 @@ function crm_rbac_role_grants(): array {
 		],
 		'senior_operator' => [
 			'dashboard.view',
+			'roadmap.view', 'release_notes.view',
 			'orders.view', 'orders.create', 'orders.edit',
 			'users.view',
 			'payments.view', 'payments.confirm',
@@ -169,12 +183,14 @@ function crm_rbac_role_grants(): array {
 		],
 		'operator' => [
 			'dashboard.view',
+			'roadmap.view', 'release_notes.view',
 			'orders.view', 'orders.create', 'orders.edit',
 			'payments.view',
 			'rates.view',
 		],
 		'cashier' => [
 			'dashboard.view',
+			'roadmap.view', 'release_notes.view',
 			'orders.view',
 			'payments.view', 'payments.confirm',
 			'payouts.view',
@@ -184,6 +200,7 @@ function crm_rbac_role_grants(): array {
 		],
 		'compliance' => [
 			'dashboard.view',
+			'roadmap.view', 'release_notes.view',
 			'orders.view',
 			'kyc.view', 'kyc.review',
 			'aml.view', 'aml.review',
@@ -191,6 +208,7 @@ function crm_rbac_role_grants(): array {
 		],
 		'accountant' => [
 			'dashboard.view',
+			'roadmap.view', 'release_notes.view',
 			'orders.view',
 			'payments.view',
 			'payouts.view', 'payouts.create',
@@ -200,11 +218,13 @@ function crm_rbac_role_grants(): array {
 		],
 		'support' => [
 			'dashboard.view',
+			'roadmap.view', 'release_notes.view',
 			'orders.view',
 			'users.view',
 		],
 		'auditor' => [
 			'dashboard.view',
+			'roadmap.view', 'release_notes.view',
 			'orders.view',
 			'audit.view',
 			'logs.view',
@@ -573,11 +593,70 @@ function crm_assign_roles( int $user_id, array $role_ids, int $assigned_by = 0 )
 }
 
 /**
+ * Назначить роли пользователю, сохранив обязательные role code.
+ */
+function crm_assign_roles_preserving_codes( int $user_id, array $role_ids, array $required_role_codes = [], int $assigned_by = 0 ): void {
+	$role_ids = crm_merge_role_ids_with_codes( $role_ids, $required_role_codes );
+	crm_assign_roles( $user_id, $role_ids, $assigned_by );
+}
+
+/**
  * Все CRM-роли для select-списков.
  */
 function crm_get_all_roles(): array {
 	global $wpdb;
 	return $wpdb->get_results( 'SELECT id, code, name FROM crm_roles ORDER BY id ASC' ) ?: [];
+}
+
+/**
+ * Получить CRM-роль по её code.
+ */
+function crm_get_role_by_code( string $role_code ): ?object {
+	global $wpdb;
+
+	$role_code = sanitize_key( $role_code );
+	if ( $role_code === '' ) {
+		return null;
+	}
+
+	return $wpdb->get_row(
+		$wpdb->prepare(
+			'SELECT id, code, name FROM crm_roles WHERE code = %s LIMIT 1',
+			$role_code
+		)
+	) ?: null;
+}
+
+/**
+ * Получить ID CRM-роли по её code.
+ */
+function crm_get_role_id_by_code( string $role_code ): int {
+	$role = crm_get_role_by_code( $role_code );
+
+	return $role ? (int) $role->id : 0;
+}
+
+/**
+ * Добавляет обязательные role code к набору role_id.
+ */
+function crm_merge_role_ids_with_codes( array $role_ids, array $role_codes ): array {
+	$resolved = array_values(
+		array_unique(
+			array_filter(
+				array_map( 'intval', $role_ids ),
+				static fn( int $role_id ): bool => $role_id > 0
+			)
+		)
+	);
+
+	foreach ( $role_codes as $role_code ) {
+		$role_id = crm_get_role_id_by_code( (string) $role_code );
+		if ( $role_id > 0 && ! in_array( $role_id, $resolved, true ) ) {
+			$resolved[] = $role_id;
+		}
+	}
+
+	return $resolved;
 }
 
 /**

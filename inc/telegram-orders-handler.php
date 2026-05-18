@@ -266,6 +266,14 @@ function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, str
 	$company_id       = (int) ( $runtime['company_id'] ?? 0 );
 	$bot_context      = (string) ( $runtime['bot_context'] ?? 'merchant' );
 	$created_for_type = $bot_context === 'merchant' ? 'merchant' : 'company';
+	$poll_source      = 'telegram_manual';
+	if ( $bot_context === 'merchant' ) {
+		$poll_source = 'telegram_merchant_manual';
+	} elseif ( $bot_context === 'operator' ) {
+		$poll_source = 'telegram_operator_manual';
+	} elseif ( $bot_context === 'service' ) {
+		$poll_source = 'telegram_service_manual';
+	}
 	$order_db_id = (int) $db_id;
 	if ( $order_db_id <= 0 ) {
 		bot_send_message( $telegram, $chat_id, '⚠️ Неверный ID ордера.' );
@@ -304,7 +312,7 @@ function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, str
 	}
 
 	// Запрашиваем актуальный статус у провайдера
-	$poll = crm_fintech_poll_order_status( $order );
+	$poll = crm_fintech_poll_order_status( $order, $poll_source );
 
 	$new_status = $poll['new_status'];
 	$e          = "\n";
@@ -313,6 +321,19 @@ function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, str
 		bot_send_message( $telegram, $chat_id,
 			'⚠️ Не удалось получить статус от провайдера.' . $e . '<code>' . htmlspecialchars( $poll['error'], ENT_QUOTES ) . '</code>'
 		);
+		return;
+	}
+
+	$status_actions = is_array( $poll['status_actions'] ?? null ) ? $poll['status_actions'] : [];
+	$merchant_tg    = is_array( $status_actions['merchant_telegram'] ?? null ) ? $status_actions['merchant_telegram'] : [];
+	$merchant_sync_visible = $bot_context === 'merchant'
+		&& (
+			! empty( $merchant_tg['receipt_updated'] )
+			|| ! empty( $merchant_tg['receipt_replaced'] )
+			|| ! empty( $merchant_tg['notification_sent'] )
+		);
+
+	if ( $merchant_sync_visible && in_array( $new_status, [ 'paid', 'declined', 'cancelled', 'expired', 'error' ], true ) ) {
 		return;
 	}
 

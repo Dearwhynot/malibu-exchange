@@ -204,6 +204,148 @@ function crm_user_has_company_access_or_root( int $user_id = 0 ): bool {
 }
 
 /**
+ * Получить membership пользователя в компании.
+ */
+function crm_get_user_company_membership( int $user_id, int $company_id ): ?object {
+	global $wpdb;
+
+	if ( $user_id <= 0 || $company_id <= 0 || crm_is_root( $user_id ) ) {
+		return null;
+	}
+
+	return $wpdb->get_row(
+		$wpdb->prepare(
+			"SELECT *
+			 FROM crm_user_companies
+			 WHERE user_id = %d
+			   AND company_id = %d
+			 LIMIT 1",
+			$user_id,
+			$company_id
+		)
+	) ?: null;
+}
+
+/**
+ * Сколько active primary-пользователей сейчас есть в компании.
+ */
+function crm_count_company_active_primary_users( int $company_id, int $exclude_user_id = 0 ): int {
+	global $wpdb;
+
+	if ( $company_id <= 0 ) {
+		return 0;
+	}
+
+	$sql    = "SELECT COUNT(*)
+		FROM crm_user_companies
+		WHERE company_id = %d
+		  AND is_primary = 1
+		  AND status = 'active'";
+	$params = [ $company_id ];
+
+	if ( $exclude_user_id > 0 ) {
+		$sql     .= ' AND user_id <> %d';
+		$params[] = $exclude_user_id;
+	}
+
+	return (int) $wpdb->get_var( $wpdb->prepare( $sql, $params ) );
+}
+
+/**
+ * Является ли пользователь company admin в своей primary-компании.
+ */
+function crm_company_user_is_admin( int $user_id, int $company_id = 0 ): bool {
+	if ( $user_id <= 0 || crm_is_root( $user_id ) ) {
+		return false;
+	}
+
+	if ( $company_id <= 0 ) {
+		$company_id = crm_get_current_user_company_id( $user_id );
+	}
+
+	$membership = crm_get_user_company_membership( $user_id, $company_id );
+	if ( ! $membership ) {
+		return false;
+	}
+
+	return (int) ( $membership->is_company_admin ?? 0 ) === 1
+		&& (int) ( $membership->is_primary ?? 0 ) === 1
+		&& (string) ( $membership->status ?? '' ) === 'active';
+}
+
+/**
+ * Только company admin своей компании или root может управлять CRM-ролями.
+ */
+function crm_can_manage_company_roles( int $user_id = 0, int $company_id = 0 ): bool {
+	if ( $user_id <= 0 ) {
+		$user_id = get_current_user_id();
+	}
+
+	if ( $user_id <= 0 ) {
+		return false;
+	}
+
+	if ( crm_is_root( $user_id ) ) {
+		return true;
+	}
+
+	if ( $company_id <= 0 ) {
+		$company_id = crm_get_current_user_company_id( $user_id );
+	}
+
+	if ( $company_id <= 0 ) {
+		return false;
+	}
+
+	return crm_company_user_is_admin( $user_id, $company_id );
+}
+
+/**
+ * Менять матрицу permission внутри ролей может только root.
+ */
+function crm_can_edit_role_permissions( int $user_id = 0 ): bool {
+	if ( $user_id <= 0 ) {
+		$user_id = get_current_user_id();
+	}
+
+	return $user_id > 0 && crm_is_root( $user_id );
+}
+
+/**
+ * Если пользователь стал первым active primary user компании, помечаем его как company admin.
+ */
+function crm_company_ensure_first_admin_membership( int $user_id, int $company_id ): bool {
+	global $wpdb;
+
+	$membership = crm_get_user_company_membership( $user_id, $company_id );
+	if (
+		! $membership
+		|| (int) ( $membership->is_primary ?? 0 ) !== 1
+		|| (string) ( $membership->status ?? '' ) !== 'active'
+	) {
+		return false;
+	}
+
+	if ( (int) ( $membership->is_company_admin ?? 0 ) === 1 ) {
+		return true;
+	}
+
+	if ( crm_count_company_active_primary_users( $company_id, $user_id ) > 0 ) {
+		return false;
+	}
+
+	$wpdb->update(
+		'crm_user_companies',
+		[ 'is_company_admin' => 1 ],
+		[ 'id' => (int) $membership->id ],
+		[ '%d' ],
+		[ '%d' ]
+	);
+
+	return true;
+}
+
+/**
  * Assign user to a company (sets as primary, clears previous primary).
  * Ordinary CRM user must always belong to exactly one active company (> 0).
  *
@@ -274,6 +416,8 @@ function crm_assign_user_to_company( int $user_id, int $company_id, int $assigne
 			[ '%d', '%d', '%d', '%d', '%s', '%d' ]
 		);
 	}
+
+	crm_company_ensure_first_admin_membership( $user_id, $company_id );
 
 	return true;
 }

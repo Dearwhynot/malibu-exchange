@@ -196,6 +196,37 @@ function me_ajax_settings_save(): void {
 		return;
 	}
 
+	if ( $section === 'product_system' ) {
+		if ( ! crm_is_root( $current_uid ) ) {
+			wp_send_json_error( [ 'message' => 'Менять продуктовую версию может только root.' ], 403 );
+		}
+
+		$version = crm_product_sanitize_release_version(
+			(string) wp_unslash( $_POST['product_release_version'] ?? '' )
+		);
+		if ( $version === '' ) {
+			wp_send_json_error( [ 'message' => 'Версия не может быть пустой.' ], 422 );
+		}
+
+		crm_set_setting( 'product_release_version', $version, crm_product_system_org_id() );
+
+		crm_log_entity(
+			'settings.product_version_saved',
+			'settings',
+			'update',
+			'Обновлена системная версия продукта: ' . $version,
+			'settings',
+			0,
+			[ 'context' => [ 'section' => 'product_system', 'product_release_version' => $version ] ]
+		);
+
+		wp_send_json_success( [
+			'message'                 => 'Версия продукта сохранена.',
+			'product_release_version' => $version,
+		] );
+		return;
+	}
+
 	if ( $section === 'rates_coefficient' ) {
 		$pair_code = sanitize_text_field( wp_unslash( $_POST['pair_code'] ?? '' ) );
 		if ( $pair_code === '' ) {
@@ -544,6 +575,9 @@ function me_ajax_settings_save(): void {
 	$current_telegram = crm_telegram_collect_settings( $org_id, $telegram_context );
 	$settings_changed = $current_telegram['bot_token'] !== $token || $current_telegram['bot_username'] !== $username;
 	$duplicate        = crm_telegram_find_duplicate_bot_setting( $org_id, $telegram_context, $username, $token );
+	$old_token        = trim( (string) ( $current_telegram['bot_token'] ?? '' ) );
+	$old_username     = crm_telegram_sanitize_bot_username( (string) ( $current_telegram['bot_username'] ?? '' ) );
+	$old_webhook_drop = null;
 
 	if ( ! empty( $duplicate['has_duplicate'] ) ) {
 		wp_send_json_error( [
@@ -552,6 +586,33 @@ function me_ajax_settings_save(): void {
 			'telegram_status'  => _me_settings_telegram_status_payload( $org_id, $telegram_context ),
 			'telegram_context' => $telegram_context,
 		], 422 );
+	}
+
+	if ( $settings_changed && $old_token !== '' && $old_token !== $token && function_exists( 'crm_telegram_unregister_webhook' ) ) {
+		$old_webhook_drop = crm_telegram_unregister_webhook( $old_token, true );
+
+		crm_log_entity(
+			! empty( $old_webhook_drop['success'] ) ? 'settings.telegram_old_webhook_deleted' : 'settings.telegram_old_webhook_delete_failed',
+			'settings',
+			'update',
+			! empty( $old_webhook_drop['success'] )
+				? 'Старый Telegram webhook отключён автоматически при смене бота'
+				: 'Не удалось автоматически отключить старый Telegram webhook при смене бота',
+			'settings',
+			0,
+			[
+				'org_id'     => $org_id,
+				'is_success' => ! empty( $old_webhook_drop['success'] ),
+				'level'      => ! empty( $old_webhook_drop['success'] ) ? 'info' : 'warning',
+				'context'    => [
+					'bot_context'   => $telegram_context,
+					'old_username'  => $old_username !== '' ? '@' . $old_username : '',
+					'old_token_set' => $old_token !== '',
+					'result_code'   => (string) ( $old_webhook_drop['code'] ?? '' ),
+					'result_message'=> (string) ( $old_webhook_drop['message'] ?? '' ),
+				],
+			]
+		);
 	}
 
 	$ok = crm_set_setting( $token_key, $token, $org_id );
@@ -593,6 +654,14 @@ function me_ajax_settings_save(): void {
 
 	$telegram_status = _me_settings_telegram_status_payload( $org_id, $telegram_context );
 	$message = 'Telegram-настройки «' . $context_label . '» сохранены.';
+	if ( $settings_changed && $old_token !== '' && $old_token !== $token ) {
+		if ( ! empty( $old_webhook_drop['success'] ) ) {
+			$message .= ' Старый webhook отключён автоматически.';
+		} else {
+			$message .= ' Но старый webhook не удалось отключить автоматически.';
+			$message .= ' Обязательно revoke старый токен в BotFather, иначе старый бот может ещё присылать апдейты.';
+		}
+	}
 	if ( ! empty( $telegram_status['is_configured'] ) && empty( $telegram_status['webhook_ready'] ) ) {
 		$message .= ' Теперь нажмите «Подключить callback».';
 	}
@@ -672,14 +741,27 @@ function me_ajax_settings_telegram_connect(): void {
 				'bot_context'  => $telegram_context,
 				'bot_username' => $username !== '' ? '@' . $username : '',
 				'callback_url' => (string) ( $result['callback_url'] ?? '' ),
+				'post_connect' => $result['post_connect'] ?? null,
 			],
 		]
 	);
 
+	$post_connect = is_array( $result['post_connect'] ?? null ) ? $result['post_connect'] : [];
+	$message      = (string) ( crm_telegram_get_context_status_meta( $telegram_context )['connect_message'] ?? 'Telegram callback подключён.' );
+
+	if ( $telegram_context === 'merchant' ) {
+		if ( ! empty( $post_connect['success'] ) ) {
+			$message .= ' Меню команд бота создано/обновлено автоматически.';
+		} elseif ( ! empty( $post_connect['message'] ) ) {
+			$message .= ' Но меню команд не создалось автоматически: ' . (string) $post_connect['message'];
+		}
+	}
+
 	wp_send_json_success( [
-		'message'         => (string) ( crm_telegram_get_context_status_meta( $telegram_context )['connect_message'] ?? 'Telegram callback подключён.' ),
+		'message'          => $message,
 		'telegram_status' => $telegram_status,
 		'telegram_context' => $telegram_context,
+		'post_connect'     => $post_connect,
 	] );
 }
 

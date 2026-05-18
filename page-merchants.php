@@ -26,6 +26,23 @@ $telegram_invite_status = crm_telegram_get_configuration_status( $current_compan
 $companies           = array_values( array_filter( crm_get_all_companies_list(), static fn( $item ) => (int) $item->id === $current_company_id ) );
 $company_ids         = array_map( static fn( $company ) => (int) $company->id, $companies );
 $referrers_by_company = crm_get_merchants_by_company_ids( $company_ids );
+$exchange_pair_definitions = function_exists( 'crm_company_exchange_pair_definitions' ) ? crm_company_exchange_pair_definitions() : [];
+$exchange_pair_definitions = array_map(
+	static function ( array $pair ): array {
+		if ( (string) ( $pair['code'] ?? '' ) === 'RUB_USDT' ) {
+			$pair['title'] = 'RUB/USDT';
+			$pair['label'] = 'RUB -> USDT';
+			$pair['hint']  = 'RUB/USDT направление для связанных расчётов и payout/fintech сценариев.';
+		}
+
+		return $pair;
+	},
+	$exchange_pair_definitions
+);
+$company_enabled_invoice_directions = function_exists( 'crm_company_get_enabled_invoice_directions' )
+	? crm_company_get_enabled_invoice_directions( $current_company_id )
+	: [];
+$company_enabled_invoice_directions_map = array_fill_keys( $company_enabled_invoice_directions, true );
 
 $companies_payload = array_map(
 	static function ( $company ) {
@@ -43,12 +60,15 @@ $nonce_save     = wp_create_nonce( 'me_merchants_save' );
 $nonce_status   = wp_create_nonce( 'me_merchants_status' );
 $nonce_invite   = wp_create_nonce( 'me_merchants_invite' );
 $nonce_ledger   = wp_create_nonce( 'me_merchants_ledger' );
+$nonce_api_create = wp_create_nonce( 'me_merchant_api_client_create' );
+$nonce_api_revoke = wp_create_nonce( 'me_merchant_api_client_revoke' );
 
 $can_edit   = crm_can_access( 'merchants.edit' );
 $can_block  = crm_can_access( 'merchants.block' );
 $can_invite = crm_can_access( 'merchants.invite' );
 $can_ledger = crm_can_access( 'merchants.ledger' );
 $can_orders = crm_can_access( 'orders.view' );
+$can_manage_api = function_exists( 'crm_can_manage_merchant_api' ) && crm_can_manage_merchant_api();
 
 get_header();
 ?>
@@ -169,17 +189,18 @@ get_header();
 										<th style="width:180px">Компания</th>
 										<?php endif; ?>
 										<th style="width:110px">Статус</th>
+										<th style="width:150px">Обмен</th>
 										<th style="width:120px">Наценка</th>
 										<th style="width:130px">К выплате</th>
 										<th style="width:120px">Бонус</th>
 										<th style="width:120px">Рефка</th>
-										<th style="width:150px">Создан</th>
+										<th style="width:160px">Создан</th>
 										<th style="width:200px" class="text-right">Действия</th>
 									</tr>
 								</thead>
 								<tbody id="merchants-tbody">
 									<tr>
-										<td colspan="<?php echo $is_root ? 12 : 11; ?>" class="text-center p-t-30 p-b-30 text-muted">
+										<td colspan="<?php echo $is_root ? 13 : 12; ?>" class="text-center p-t-30 p-b-30 text-muted">
 											Нажмите «Найти» для загрузки данных.
 										</td>
 									</tr>
@@ -249,7 +270,6 @@ get_header();
 										<th>Мерчант / chat_id</th>
 										<th style="width:150px">Payload</th>
 										<th style="width:110px">Статус</th>
-										<th style="width:120px">TTL</th>
 										<th style="width:160px">Активен до</th>
 										<th style="width:160px">Создан</th>
 										<th style="width:190px" class="text-center">Действия</th>
@@ -257,7 +277,7 @@ get_header();
 								</thead>
 								<tbody id="telegram-invite-history-tbody">
 									<tr>
-										<td colspan="9" class="text-center text-muted p-t-25 p-b-25">Нажмите «Найти», чтобы загрузить историю invite-ссылок.</td>
+										<td colspan="8" class="text-center text-muted p-t-25 p-b-25">Нажмите «Найти», чтобы загрузить историю invite-ссылок.</td>
 									</tr>
 								</tbody>
 							</table>
@@ -342,6 +362,37 @@ get_header();
 										</div>
 										<div class="hint-text fs-12 m-t-5">Отдельно: можно увеличивать сумму клиента в RUB на тот же процент.</div>
 									</div>
+									<div class="form-group merchant-directions-group">
+										<label class="d-block m-b-8">Направления обмена мерчанта</label>
+										<div class="hint-text fs-12 m-b-10">Можно выбрать только те направления, которые уже разрешены компании root-настройками.</div>
+										<div class="row">
+											<?php foreach ( $exchange_pair_definitions as $pair ) : ?>
+												<?php
+												$pair_code          = (string) ( $pair['code'] ?? '' );
+												$pair_slug          = sanitize_html_class( strtolower( $pair_code ) );
+												$is_company_enabled = isset( $company_enabled_invoice_directions_map[ $pair_code ] );
+												?>
+												<div class="col-md-6">
+													<div class="merchant-direction-card">
+														<div class="form-check complete m-b-5">
+															<input type="checkbox"
+															       id="tg-invite-direction-<?php echo esc_attr( $pair_slug ); ?>"
+															       class="js-merchant-invite-direction"
+															       value="<?php echo esc_attr( $pair_code ); ?>"
+															       <?php checked( $is_company_enabled ); ?>
+															       <?php disabled( ! $is_company_enabled ); ?>>
+															<label for="tg-invite-direction-<?php echo esc_attr( $pair_slug ); ?>">
+																<?php echo esc_html( (string) ( $pair['title'] ?? $pair_code ) ); ?>
+															</label>
+														</div>
+														<div class="hint-text fs-12">
+															<?php echo esc_html( $is_company_enabled ? (string) ( $pair['hint'] ?? '' ) : 'Сейчас это направление выключено на уровне компании.' ); ?>
+														</div>
+													</div>
+												</div>
+											<?php endforeach; ?>
+										</div>
+									</div>
 									<div class="form-group merchant-invite-note-field">
 										<label for="tg-invite-note">Заметка к будущему мерчанту</label>
 										<textarea id="tg-invite-note" class="form-control" rows="2" placeholder="Например: трафик с группы Phuket / VIP поток"></textarea>
@@ -401,8 +452,25 @@ get_header();
 				</button>
 			</div>
 			<div class="modal-body">
-				<div id="merchant-form-alert" class="alert d-none m-b-15" role="alert"></div>
-				<form id="merchant-form">
+				<?php if ( $can_manage_api ) : ?>
+				<ul class="nav nav-tabs nav-tabs-simple m-b-20" id="merchant-modal-tabs" role="tablist">
+					<li class="nav-item">
+						<a class="active" id="merchant-modal-tab-link-profile" data-bs-toggle="tab" role="tab" data-bs-target="#merchant-modal-tab-profile" href="#merchant-modal-tab-profile" aria-selected="true">
+							Профиль
+						</a>
+					</li>
+					<li class="nav-item">
+						<a id="merchant-modal-tab-link-api" data-bs-toggle="tab" role="tab" data-bs-target="#merchant-modal-tab-api" href="#merchant-modal-tab-api" aria-selected="false">
+							Merchant API
+						</a>
+					</li>
+				</ul>
+				<?php endif; ?>
+
+				<div class="tab-content merchant-modal-tab-content">
+					<div class="tab-pane active" id="merchant-modal-tab-profile" role="tabpanel">
+						<div id="merchant-form-alert" class="alert d-none m-b-15" role="alert"></div>
+						<form id="merchant-form">
 					<input type="hidden" id="merchant-id" name="merchant_id" value="0">
 
 					<?php if ( $is_root ) : ?>
@@ -563,13 +631,105 @@ get_header();
 
 					<div class="row">
 						<div class="col-md-12">
+							<div class="form-group merchant-directions-group">
+								<label class="d-block m-b-8">Направления обмена мерчанта</label>
+								<div class="hint-text fs-12 m-b-10">Ограничивает доступные контуры для конкретного мерчанта внутри текущей компании.</div>
+								<div class="row">
+									<?php foreach ( $exchange_pair_definitions as $pair ) : ?>
+										<?php
+										$pair_code          = (string) ( $pair['code'] ?? '' );
+										$pair_slug          = sanitize_html_class( strtolower( $pair_code ) );
+										$is_company_enabled = isset( $company_enabled_invoice_directions_map[ $pair_code ] );
+										?>
+										<div class="col-md-6">
+											<div class="merchant-direction-card">
+												<div class="form-check complete m-b-5">
+													<input type="checkbox"
+													       id="merchant-direction-<?php echo esc_attr( $pair_slug ); ?>"
+													       class="js-merchant-direction"
+													       value="<?php echo esc_attr( $pair_code ); ?>"
+													       <?php checked( $is_company_enabled ); ?>
+													       <?php disabled( ! $is_company_enabled ); ?>>
+													<label for="merchant-direction-<?php echo esc_attr( $pair_slug ); ?>">
+														<?php echo esc_html( (string) ( $pair['title'] ?? $pair_code ) ); ?>
+													</label>
+												</div>
+												<div class="hint-text fs-12">
+													<?php echo esc_html( $is_company_enabled ? (string) ( $pair['hint'] ?? '' ) : 'Сейчас это направление выключено на уровне компании.' ); ?>
+												</div>
+											</div>
+										</div>
+									<?php endforeach; ?>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<div class="row">
+						<div class="col-md-12">
 							<div class="form-group">
 								<label for="merchant-note">Заметка</label>
 								<textarea id="merchant-note" name="note" class="form-control" rows="3" placeholder="Внутренняя заметка"></textarea>
 							</div>
 						</div>
 					</div>
-				</form>
+						</form>
+					</div>
+
+					<?php if ( $can_manage_api ) : ?>
+					<div class="tab-pane" id="merchant-modal-tab-api" role="tabpanel">
+						<div id="merchant-api-panel" class="merchant-modal-api-pane">
+						<div id="merchant-api-alert" class="alert d-none m-b-15" role="alert"></div>
+						<div id="merchant-api-token-host" class="alert alert-info d-none m-b-15" role="alert">
+							<div class="semi-bold m-b-10">Новый Bearer token. Показывается только один раз.</div>
+							<textarea id="merchant-api-token-output" class="form-control" rows="3" readonly></textarea>
+							<div class="m-t-10">
+								<label class="d-block fs-12 text-uppercase hint-text m-b-5" for="merchant-api-curl-output">Проверка endpoint</label>
+								<textarea id="merchant-api-curl-output" class="form-control" rows="3" readonly></textarea>
+							</div>
+						</div>
+
+						<div class="row g-2 align-items-end m-b-15">
+							<div class="col-md-6">
+								<div class="form-group m-b-0">
+									<label for="merchant-api-client-name">Название интеграции</label>
+									<input type="text" class="form-control" id="merchant-api-client-name" placeholder="Например, Main production">
+								</div>
+							</div>
+							<div class="col-md-6 text-md-end">
+								<button type="button" id="btn-create-merchant-api-client" class="btn btn-primary">
+									<i class="pg-icon m-r-5">key</i>Выпустить ключ
+								</button>
+							</div>
+						</div>
+
+						<div id="merchant-api-mode-summary" class="hint-text fs-12 m-b-15">
+							Режим компании будет показан после загрузки карточки мерчанта.
+						</div>
+
+						<div class="table-responsive">
+							<table class="table table-hover m-b-0">
+								<thead>
+									<tr>
+										<th style="width:220px">Интеграция</th>
+										<th style="width:120px">Статус</th>
+										<th style="width:180px">Token prefix</th>
+										<th>Scopes</th>
+										<th style="width:180px">Последний вызов</th>
+										<th style="width:120px" class="text-right">Действия</th>
+									</tr>
+								</thead>
+								<tbody id="merchant-api-clients-tbody">
+									<tr>
+										<td colspan="6" class="text-center text-muted p-t-20 p-b-20">Откройте карточку мерчанта, чтобы управлять Merchant API.</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+						</div>
+					</div>
+					<?php endif; ?>
+				</div>
 			</div>
 			<div class="modal-footer">
 				<button type="button" class="btn btn-default" data-bs-dismiss="modal">Отмена</button>
@@ -651,8 +811,8 @@ get_header();
 <?php
 add_action(
 	'wp_footer',
-	function () use ( $nonce_list, $nonce_save, $nonce_status, $nonce_invite, $nonce_ledger, $is_root, $can_edit, $can_block, $can_invite, $can_ledger, $can_orders, $companies_payload, $referrers_by_company, $current_company_id, $telegram_invite_status ) {
-?>
+	function () use ( $nonce_list, $nonce_save, $nonce_status, $nonce_invite, $nonce_ledger, $nonce_api_create, $nonce_api_revoke, $is_root, $can_edit, $can_block, $can_invite, $can_ledger, $can_orders, $can_manage_api, $companies_payload, $referrers_by_company, $current_company_id, $telegram_invite_status, $exchange_pair_definitions, $company_enabled_invoice_directions ) {
+	?>
 <style>
 #merchant-telegram-invite-modal .modal-dialog {
 	max-width: 860px;
@@ -750,6 +910,80 @@ add_action(
 #merchant-telegram-invite-modal #tg-invite-note {
 	min-height: 76px;
 	resize: vertical;
+}
+#merchant-telegram-invite-modal .merchant-directions-group,
+#merchant-modal .merchant-directions-group {
+	margin-bottom: 16px;
+}
+#merchant-telegram-invite-modal .merchant-direction-card,
+#merchant-modal .merchant-direction-card {
+	height: 100%;
+	padding: 12px 14px;
+	border: 1px solid #e8edf2;
+	border-radius: 10px;
+	background: #f7fafc;
+}
+#merchant-telegram-invite-modal .merchant-direction-card .form-check,
+#merchant-modal .merchant-direction-card .form-check {
+	margin-bottom: 6px;
+}
+.merchant-direction-summary {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+.merchant-direction-stack {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	min-width: 118px;
+}
+.merchant-direction-pill {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	margin-right: 0;
+	padding: 4px 10px;
+	border-radius: 999px;
+	font-size: 11px;
+	line-height: 1.25;
+	font-weight: 600;
+	letter-spacing: .02em;
+	white-space: nowrap;
+}
+.merchant-direction-pill--rub-thb {
+	background: #dff7ee;
+	color: #0b8f68;
+}
+.merchant-direction-pill--usdt-thb {
+	background: #e2efff;
+	color: #2f6fd6;
+}
+.merchant-direction-pill--usdt-rub {
+	background: #dff7f6;
+	color: #0f8e96;
+}
+.merchant-direction-pill--muted {
+	background: #eef4f8;
+	color: #6c8194;
+}
+.merchant-direction-summary .badge-direction-compact-more {
+	background: #edf7f4;
+	color: #327c74;
+}
+.merchant-created-at {
+	display: inline-flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 0;
+	line-height: 1.4;
+}
+.merchant-created-at__date,
+.merchant-created-at__time {
+	display: block;
+	white-space: nowrap;
 }
 #merchant-telegram-invite-modal #btn-create-telegram-invite {
 	width: 100%;
@@ -872,6 +1106,30 @@ add_action(
 .row-action-menu .dropdown-menu {
 	margin-top: 6px;
 }
+#merchant-modal .nav-tabs {
+	margin-bottom: 18px;
+}
+#merchant-modal .nav-tabs ~ .tab-content {
+	overflow: visible;
+}
+#merchant-modal .merchant-modal-tab-content > .tab-pane {
+	padding: 0;
+}
+#merchant-modal #merchant-modal-tab-link-api.disabled {
+	pointer-events: none;
+	opacity: .45;
+}
+#merchant-modal .merchant-modal-api-pane {
+	padding-top: 4px;
+}
+#merchant-modal #merchant-api-token-output,
+#merchant-modal #merchant-api-curl-output {
+	min-height: 84px;
+	resize: vertical;
+}
+#merchant-modal #merchant-api-mode-summary {
+	line-height: 1.65;
+}
 </style>
 <script>
 (function ($) {
@@ -880,11 +1138,13 @@ add_action(
 	var AJAX_URL = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
 	var ORDERS_PAGE_URL = '<?php echo esc_js( home_url( '/orders/' ) ); ?>';
 	var NONCES = {
-		list:   '<?php echo esc_js( $nonce_list ); ?>',
-		save:   '<?php echo esc_js( $nonce_save ); ?>',
-		status: '<?php echo esc_js( $nonce_status ); ?>',
-		invite: '<?php echo esc_js( $nonce_invite ); ?>',
-		ledger: '<?php echo esc_js( $nonce_ledger ); ?>'
+		list:       '<?php echo esc_js( $nonce_list ); ?>',
+		save:       '<?php echo esc_js( $nonce_save ); ?>',
+		status:     '<?php echo esc_js( $nonce_status ); ?>',
+		invite:     '<?php echo esc_js( $nonce_invite ); ?>',
+		ledger:     '<?php echo esc_js( $nonce_ledger ); ?>',
+		apiCreate:  '<?php echo esc_js( $nonce_api_create ); ?>',
+		apiRevoke:  '<?php echo esc_js( $nonce_api_revoke ); ?>'
 	};
 	var IS_ROOT    = <?php echo $is_root ? 'true' : 'false'; ?>;
 	var CAN_EDIT   = <?php echo $can_edit ? 'true' : 'false'; ?>;
@@ -892,6 +1152,9 @@ add_action(
 	var CAN_INVITE = <?php echo $can_invite ? 'true' : 'false'; ?>;
 	var CAN_LEDGER = <?php echo $can_ledger ? 'true' : 'false'; ?>;
 	var CAN_ORDERS = <?php echo $can_orders ? 'true' : 'false'; ?>;
+	var CAN_MANAGE_API = <?php echo $can_manage_api ? 'true' : 'false'; ?>;
+	var EXCHANGE_PAIR_TITLES = <?php echo crm_json_for_inline_js( array_column( $exchange_pair_definitions, 'title', 'code' ) ); ?> || {};
+	var COMPANY_ENABLED_DIRECTIONS = <?php echo crm_json_for_inline_js( array_values( array_map( 'strval', $company_enabled_invoice_directions ) ) ); ?> || [];
 	var TELEGRAM_INVITE_STATUS = <?php echo crm_json_for_inline_js( $telegram_invite_status ); ?> || {};
 	var TELEGRAM_INVITE_STATUS_LABELS = <?php echo crm_json_for_inline_js( crm_merchant_invite_statuses() ); ?> || {};
 	var TELEGRAM_INVITE_STATUS_BADGES = { new: 'primary', used: 'success', expired: 'warning', revoked: 'secondary' };
@@ -904,6 +1167,7 @@ add_action(
 	var currentTelegramInviteMerchantId = 0;
 	var currentTelegramInviteMerchantName = '';
 	var currentLedgerMerchant = null;
+	var currentMerchantApi = null;
 	var latestTelegramInvite = null;
 	var telegramInviteHistoryMap = {};
 	var telegramInviteServerOffsetMs = 0;
@@ -920,6 +1184,128 @@ add_action(
 		if (window.console && console.warn) {
 			console.warn(message);
 		}
+	}
+
+	function normalizeDirectionCodes(directions) {
+		var seen = {};
+		var normalized = [];
+
+		$.each(directions || [], function (_, direction) {
+			var code = $.trim(String(direction || '')).toUpperCase();
+			if (code === 'THB_RUB') {
+				code = 'RUB_THB';
+			}
+			if (code === 'USDT_RUB') {
+				code = 'RUB_USDT';
+			}
+			if (!code || seen[code] || !EXCHANGE_PAIR_TITLES[code]) {
+				return;
+			}
+			seen[code] = true;
+			normalized.push(code);
+		});
+
+		return normalized;
+	}
+
+	function merchantDirectionLabels(directions) {
+		return $.map(normalizeDirectionCodes(directions), function (code) {
+			return EXCHANGE_PAIR_TITLES[code] || code;
+		});
+	}
+
+	function merchantDirectionThemeClass(code) {
+		var map = {
+			RUB_THB: 'merchant-direction-pill--rub-thb',
+			USDT_THB: 'merchant-direction-pill--usdt-thb',
+			RUB_USDT: 'merchant-direction-pill--usdt-rub'
+		};
+
+		return map[code] || 'merchant-direction-pill--muted';
+	}
+
+	function renderMerchantDirectionPill(code, label, extraClass) {
+		var classes = ['merchant-direction-pill', merchantDirectionThemeClass(code)];
+		if (extraClass) {
+			classes.push(extraClass);
+		}
+
+		return '<span class="' + classes.join(' ') + '">' + escHtml(label) + '</span>';
+	}
+
+	function renderMerchantDirectionCompact(directions) {
+		var normalized = normalizeDirectionCodes(directions);
+		var labels = merchantDirectionLabels(normalized);
+		var title = escHtml(labels.join(', '));
+		var html = '';
+
+		if (!labels.length) {
+			return '<span class="merchant-direction-pill merchant-direction-pill--muted">Нет направлений</span>';
+		}
+
+		html += '<span title="' + title + '">' + renderMerchantDirectionPill(normalized[0], labels[0]) + '</span>';
+		if (labels.length > 1) {
+			html += '<span class="merchant-direction-pill badge-direction-compact-more" title="' + title + '">+' + (labels.length - 1) + '</span>';
+		}
+
+		return html;
+	}
+
+	function renderMerchantDirectionColumn(directions) {
+		var normalized = normalizeDirectionCodes(directions);
+		var html = '';
+
+		if (!normalized.length) {
+			return '<div class="merchant-direction-stack"><span class="merchant-direction-pill merchant-direction-pill--muted">Нет направлений</span></div>';
+		}
+
+		$.each(normalized, function (_, code) {
+			html += renderMerchantDirectionPill(code, EXCHANGE_PAIR_TITLES[code] || code);
+		});
+
+		return '<div class="merchant-direction-stack">' + html + '</div>';
+	}
+
+	function renderMerchantCreatedAt(value) {
+		var raw = $.trim(String(value || ''));
+		var parts;
+
+		if (!raw || raw === '—') {
+			return '<span class="hint-text">—</span>';
+		}
+
+		parts = raw.split(/\s+/, 2);
+		if (parts.length < 2) {
+			return '<div class="merchant-created-at"><span class="merchant-created-at__date">' + escHtml(raw) + '</span></div>';
+		}
+
+		return ''
+			+ '<div class="merchant-created-at">'
+			+ '<span class="merchant-created-at__date">' + escHtml(parts[0]) + '</span>'
+			+ '<span class="merchant-created-at__time">' + escHtml(parts[1]) + '</span>'
+			+ '</div>';
+	}
+
+	function setDirectionCheckboxes(selector, directions) {
+		var normalized = normalizeDirectionCodes(directions);
+		var companyAllowed = normalizeDirectionCodes(COMPANY_ENABLED_DIRECTIONS);
+
+		$(selector).each(function () {
+			var $checkbox = $(this);
+			var code = String($checkbox.val() || '');
+			var isCompanyAllowed = companyAllowed.indexOf(code) !== -1;
+			$checkbox.prop('disabled', !isCompanyAllowed);
+			$checkbox.prop('checked', isCompanyAllowed && normalized.indexOf(code) !== -1);
+		});
+	}
+
+	function collectDirectionCheckboxes(selector) {
+		var selected = [];
+		$(selector + ':checked').each(function () {
+			selected.push($(this).val());
+		});
+
+		return normalizeDirectionCodes(selected);
 	}
 
 	function showConfirm(message, callback, options) {
@@ -1061,6 +1447,234 @@ add_action(
 		}
 	}
 
+	function syncMerchantModalFooter(targetId) {
+		var isApiTab = CAN_MANAGE_API && targetId === '#merchant-modal-tab-api';
+		$('#btn-save-merchant').toggleClass('d-none', isApiTab);
+	}
+
+	function activateMerchantModalTab(targetId) {
+		var $nav = $('#merchant-modal-tabs');
+		if (!$nav.length || !targetId) {
+			syncMerchantModalFooter('#merchant-modal-tab-profile');
+			return;
+		}
+
+		var $links = $nav.find('a[data-bs-toggle="tab"]');
+		var $panes = $('#merchant-modal-tab-profile, #merchant-modal-tab-api');
+		var $activeLink = $links.filter('[data-bs-target="' + targetId + '"]');
+
+		if (!$activeLink.length || $activeLink.hasClass('disabled')) {
+			return;
+		}
+
+		$links.removeClass('active').attr('aria-selected', 'false');
+		$links.parent('.nav-item').removeClass('active');
+		$activeLink.addClass('active').attr('aria-selected', 'true');
+		$activeLink.parent('.nav-item').addClass('active');
+
+		$panes.removeClass('show active');
+		$(targetId).addClass('show active');
+
+		syncMerchantModalFooter(targetId);
+	}
+
+	function setMerchantApiTabEnabled(enabled) {
+		var $apiTabLink = $('#merchant-modal-tab-link-api');
+		if (!$apiTabLink.length) {
+			return;
+		}
+
+		$apiTabLink.toggleClass('disabled', !enabled).attr('aria-disabled', enabled ? 'false' : 'true');
+
+		if (!enabled && $apiTabLink.hasClass('active')) {
+			activateMerchantModalTab('#merchant-modal-tab-profile');
+		}
+	}
+
+	function resetMerchantApiPanel() {
+		currentMerchantApi = null;
+		hideInlineAlert($('#merchant-api-alert'));
+		$('#merchant-api-token-host').addClass('d-none');
+		$('#merchant-api-token-output').val('');
+		$('#merchant-api-curl-output').val('');
+		$('#merchant-api-client-name').val('');
+		$('#btn-create-merchant-api-client').prop('disabled', true);
+		$('#merchant-api-mode-summary').html('Режим компании будет показан после загрузки карточки мерчанта.');
+		$('#merchant-api-clients-tbody').html('<tr><td colspan="6" class="text-center text-muted p-t-20 p-b-20">Откройте карточку мерчанта, чтобы управлять Merchant API.</td></tr>');
+	}
+
+	function renderMerchantApiModeSummary() {
+		var summary = currentMerchantApi && currentMerchantApi.mode_summary ? currentMerchantApi.mode_summary : null;
+		if (!summary || $.isEmptyObject(summary)) {
+			$('#merchant-api-mode-summary').html('Режим компании для Merchant API пока не определён.');
+			return;
+		}
+
+		var lines = [];
+		lines.push(
+			'<span class="semi-bold">Provider mode:</span> <code>' + escHtml(summary.provider_mode || '—') + '</code>'
+			+ ' · <span class="semi-bold">Мерчант задаёт:</span> <code>' + escHtml(summary.requested_amount_currency || '—') + '</code>'
+			+ ' · <span class="semi-bold">Клиент платит:</span> <code>' + escHtml(summary.payment_currency_code || '—') + '</code>'
+			+ ' · <span class="semi-bold">Settlement:</span> <code>' + escHtml(summary.settlement_currency_code || '—') + '</code>'
+		);
+
+		if (summary.active_provider || summary.company_order_currency) {
+			lines.push(
+				'<span class="semi-bold">Провайдер:</span> <code>' + escHtml(summary.active_provider || '—') + '</code>'
+				+ ' · <span class="semi-bold">Company order currency:</span> <code>' + escHtml(summary.company_order_currency || '—') + '</code>'
+			);
+		}
+
+		if ($.isArray(summary.enabled_directions) && summary.enabled_directions.length) {
+			var directionLabels = $.map(normalizeDirectionCodes(summary.enabled_directions), function (code) {
+				return EXCHANGE_PAIR_TITLES[code] || code;
+			});
+			lines.push('<span class="semi-bold">Направления:</span> ' + escHtml(directionLabels.join(', ')));
+		}
+
+		$('#merchant-api-mode-summary').html(lines.join('<br>'));
+	}
+
+	function renderMerchantApiClients(payload) {
+		currentMerchantApi = payload || null;
+		renderMerchantApiModeSummary();
+
+		var merchantId = parseInt($('#merchant-id').val(), 10) || 0;
+		$('#btn-create-merchant-api-client').prop('disabled', merchantId <= 0);
+
+		var clients = (currentMerchantApi && $.isArray(currentMerchantApi.clients)) ? currentMerchantApi.clients : [];
+		var $tbody = $('#merchant-api-clients-tbody').empty();
+
+		if (!clients.length) {
+			$tbody.html('<tr><td colspan="6" class="text-center text-muted p-t-20 p-b-20">API-клиентов пока нет.</td></tr>');
+			return;
+		}
+
+		clients.forEach(function (client) {
+			var scopesLabel = $.isArray(client.scope_labels) && client.scope_labels.length
+				? client.scope_labels.join(', ')
+				: '—';
+			var lastUsedLabel = client.last_used_at ? formatApiDate(client.last_used_at) : 'Не использовался';
+			var createdLabel = client.created_at ? formatApiDate(client.created_at) : '—';
+			var actionHtml = client.status !== 'revoked'
+				? '<button type="button" class="btn btn-link text-danger p-0 fs-12 js-merchant-api-revoke" data-id="' + escHtml(client.id) + '">Отозвать</button>'
+				: '<span class="hint-text fs-12">—</span>';
+
+			var meta = [];
+			meta.push('<span class="badge badge-' + escHtml(client.status_badge || 'secondary') + '">' + escHtml(client.status_label || client.status || '—') + '</span>');
+			meta.push('<span class="hint-text fs-12">Создан: ' + escHtml(createdLabel) + '</span>');
+			if (client.revoked_at) {
+				meta.push('<span class="hint-text fs-12">Отозван: ' + escHtml(formatApiDate(client.revoked_at)) + '</span>');
+			}
+
+			var tokenMeta = '<code>' + escHtml(client.token_prefix || '—') + '</code>';
+			if (client.webhook_url) {
+				tokenMeta += '<div class="hint-text fs-12">Webhook: ' + escHtml(client.webhook_url) + '</div>';
+			}
+
+			$tbody.append(
+				'<tr>'
+				+ '<td class="v-align-middle"><div class="semi-bold">' + escHtml(client.client_name || 'Integration') + '</div><div class="hint-text fs-12">' + meta.join(' · ') + '</div></td>'
+				+ '<td class="v-align-middle"><span class="badge badge-' + escHtml(client.status_badge || 'secondary') + '">' + escHtml(client.status_label || client.status || '—') + '</span></td>'
+				+ '<td class="v-align-middle">' + tokenMeta + '</td>'
+				+ '<td class="v-align-middle fs-12">' + escHtml(scopesLabel) + '</td>'
+				+ '<td class="v-align-middle"><div class="fs-12">' + escHtml(lastUsedLabel) + '</div></td>'
+				+ '<td class="v-align-middle text-right">' + actionHtml + '</td>'
+				+ '</tr>'
+			);
+		});
+	}
+
+	function formatApiDate(value) {
+		if (!value) {
+			return '—';
+		}
+		var date = new Date(value);
+		if (isNaN(date.getTime())) {
+			return String(value);
+		}
+		return date.toLocaleString('ru-RU', {
+			year: 'numeric',
+			month: '2-digit',
+			day: '2-digit',
+			hour: '2-digit',
+			minute: '2-digit'
+		});
+	}
+
+	function createMerchantApiClient() {
+		var merchantId = parseInt($('#merchant-id').val(), 10) || 0;
+		var clientName = $.trim($('#merchant-api-client-name').val() || '');
+		var $btn = $('#btn-create-merchant-api-client');
+
+		hideInlineAlert($('#merchant-api-alert'));
+
+		if (merchantId <= 0) {
+			showInlineAlert($('#merchant-api-alert'), 'Сначала откройте существующего мерчанта.', 'warning');
+			return;
+		}
+
+		$btn.prop('disabled', true);
+
+		$.post(AJAX_URL, {
+			action: 'me_merchant_api_client_create',
+			_nonce: NONCES.apiCreate,
+			merchant_id: merchantId,
+			client_name: clientName
+		}, function (res) {
+			$btn.prop('disabled', false);
+
+			if (!res || !res.success) {
+				showInlineAlert($('#merchant-api-alert'), (res && res.data && res.data.message) || 'Не удалось выпустить Merchant API ключ.', 'danger');
+				return;
+			}
+
+			showInlineAlert($('#merchant-api-alert'), res.data.message || 'Merchant API ключ выпущен.', 'success');
+			$('#merchant-api-client-name').val('');
+			$('#merchant-api-token-host').removeClass('d-none');
+			$('#merchant-api-token-output').val((res.data && res.data.raw_token) || '');
+			$('#merchant-api-curl-output').val((res.data && res.data.test_curl) || '');
+			renderMerchantApiClients((res.data && res.data.merchant_api) || {});
+		}, 'json').fail(function () {
+			$btn.prop('disabled', false);
+			showInlineAlert($('#merchant-api-alert'), 'Ошибка сервера при выпуске Merchant API ключа.', 'danger');
+		});
+	}
+
+	function submitMerchantApiClientRevoke(clientId, merchantId) {
+		hideInlineAlert($('#merchant-api-alert'));
+		$.post(AJAX_URL, {
+			action: 'me_merchant_api_client_revoke',
+			_nonce: NONCES.apiRevoke,
+			merchant_id: merchantId,
+			client_id: clientId
+		}, function (res) {
+			if (!res || !res.success) {
+				showInlineAlert($('#merchant-api-alert'), (res && res.data && res.data.message) || 'Не удалось отозвать Merchant API ключ.', 'danger');
+				return;
+			}
+
+			showInlineAlert($('#merchant-api-alert'), res.data.message || 'Merchant API ключ отозван.', 'success');
+			renderMerchantApiClients((res.data && res.data.merchant_api) || {});
+		}, 'json').fail(function () {
+			showInlineAlert($('#merchant-api-alert'), 'Ошибка сервера при отзыве Merchant API ключа.', 'danger');
+		});
+	}
+
+	function revokeMerchantApiClient(clientId) {
+		var merchantId = parseInt($('#merchant-id').val(), 10) || 0;
+		if (merchantId <= 0 || !clientId) {
+			showInlineAlert($('#merchant-api-alert'), 'Не удалось определить Merchant API client для отзыва.', 'danger');
+			return;
+		}
+
+		if (window.confirm && !window.confirm('Подтвердите: отозвать Merchant API ключ?')) {
+			return;
+		}
+
+		submitMerchantApiClientRevoke(clientId, merchantId);
+	}
+
 	function resetMerchantForm() {
 		$('#merchant-form')[0].reset();
 		hideInlineAlert($('#merchant-form-alert'));
@@ -1069,9 +1683,13 @@ add_action(
 		$('#merchant-markup-basis').val('acquirer_cost').trigger('change.select2');
 		$('#merchant-markup-type').val('percent').trigger('change.select2');
 		$('input[name="rub_invoice_markup_mode"][value="none"]').prop('checked', true);
+		setDirectionCheckboxes('.js-merchant-direction', COMPANY_ENABLED_DIRECTIONS);
 		setMerchantAvatarPreview('', 'TG');
 		var companyId = IS_ROOT ? ($('#merchant-company-id').val() || '') : '<?php echo (int) $current_company_id; ?>';
 		syncMerchantFormOptions(companyId, '', 0);
+		resetMerchantApiPanel();
+		setMerchantApiTabEnabled(false);
+		activateMerchantModalTab('#merchant-modal-tab-profile');
 	}
 
 	function collectMerchantFilters() {
@@ -1154,7 +1772,7 @@ add_action(
 	}
 
 	function renderMerchantsTable(rows) {
-		var colspan = IS_ROOT ? 12 : 11;
+		var colspan = IS_ROOT ? 13 : 12;
 		var $tbody = $('#merchants-tbody').empty();
 
 		if (!rows || !rows.length) {
@@ -1173,6 +1791,7 @@ add_action(
 				? '<div class="hint-text fs-12">ref: ' + escHtml(row.referred_by_name) + '</div>'
 				: '';
 			var statusHtml = '<span class="badge badge-' + escHtml(row.status_badge) + '">' + escHtml(row.status_label) + '</span>';
+			var directionsCellHtml = renderMerchantDirectionColumn(row.enabled_invoice_directions || []);
 
 			var html = '<tr>'
 				+ '<td class="v-align-middle"><span class="hint-text fs-12">#' + row.id + '</span></td>'
@@ -1183,11 +1802,12 @@ add_action(
 				html += '<td class="v-align-middle"><div>' + escHtml(row.company_name || '—') + '</div><div class="hint-text fs-12">' + escHtml(row.company_code || '') + '</div></td>';
 			}
 			html += '<td class="v-align-middle">' + statusHtml + '</td>'
+				+ '<td class="v-align-middle">' + directionsCellHtml + '</td>'
 				+ '<td class="v-align-middle">' + escHtml(row.base_markup_label) + '</td>'
 				+ '<td class="v-align-middle font-montserrat fs-12 semi-bold">' + escHtml(row.main_balance_label) + '</td>'
 				+ '<td class="v-align-middle font-montserrat fs-12">' + escHtml(row.bonus_balance_label) + '</td>'
 				+ '<td class="v-align-middle font-montserrat fs-12">' + escHtml(row.referral_balance_label) + '</td>'
-				+ '<td class="v-align-middle hint-text fs-12">' + escHtml(row.created_at || '—') + '</td>'
+				+ '<td class="v-align-middle hint-text fs-12">' + renderMerchantCreatedAt(row.created_at || '') + '</td>'
 				+ '<td class="v-align-middle text-right">' + renderActionMenu(row) + '</td>'
 				+ '</tr>';
 
@@ -1242,11 +1862,17 @@ add_action(
 			$('#merchant-markup-basis').val(row.base_markup_basis || 'acquirer_cost').trigger('change.select2');
 			$('#merchant-markup-type').val(row.base_markup_type).trigger('change.select2');
 			$('input[name="rub_invoice_markup_mode"][value="' + (row.rub_invoice_markup_mode || 'none') + '"]').prop('checked', true);
+			setDirectionCheckboxes('.js-merchant-direction', row.enabled_invoice_directions || COMPANY_ENABLED_DIRECTIONS);
 			$('#merchant-markup-value').val(row.base_markup_value);
 			$('#merchant-ref-code').val(row.ref_code || '');
 			$('#merchant-note').val(row.note || '');
 			$('#merchant-company-id').val(String(row.company_id));
 			syncMerchantFormOptions(row.company_id, row.referred_by_merchant_id || '', row.id);
+			if (CAN_MANAGE_API) {
+				setMerchantApiTabEnabled(true);
+				renderMerchantApiClients(row.merchant_api || {});
+			}
+			activateMerchantModalTab('#merchant-modal-tab-profile');
 			$('#merchant-modal').modal('show');
 		}, 'json').fail(function () {
 			showToast('Ошибка сервера при загрузке мерчанта.', 'danger');
@@ -1270,14 +1896,20 @@ add_action(
 			base_markup_basis:      $('#merchant-markup-basis').val(),
 			base_markup_type:       $('#merchant-markup-type').val(),
 			rub_invoice_markup_mode: $('input[name="rub_invoice_markup_mode"]:checked').val() || 'none',
+			enabled_invoice_directions: collectDirectionCheckboxes('.js-merchant-direction'),
 			base_markup_value:      $('#merchant-markup-value').val(),
 			ref_code:               $('#merchant-ref-code').val(),
 			referred_by_merchant_id: $('#merchant-referred-by').val(),
 			note:                   $('#merchant-note').val()
 		};
 
-		var $btn = $('#btn-save-merchant').prop('disabled', true);
 		hideInlineAlert($('#merchant-form-alert'));
+		if (!payload.enabled_invoice_directions.length) {
+			showInlineAlert($('#merchant-form-alert'), 'Выберите хотя бы одно направление обмена для мерчанта.', 'warning');
+			return;
+		}
+
+		var $btn = $('#btn-save-merchant').prop('disabled', true);
 
 		$.post(AJAX_URL, payload, function (res) {
 			$btn.prop('disabled', false);
@@ -1339,7 +1971,14 @@ add_action(
 		latestTelegramInvite = invite;
 		$('#telegram-invite-preview').removeClass('d-none');
 		$('#tg-invite-link-preview').val(invite.invite_url || '');
-		$('#tg-invite-preview-meta').text('Payload: ' + (invite.telegram_start_payload || '—') + ' · Активен до: ' + (invite.expires_at || '—'));
+		var directionLabels = $.map(normalizeDirectionCodes(invite.enabled_invoice_directions || []), function (code) {
+			return EXCHANGE_PAIR_TITLES[code] || code;
+		});
+		var previewMeta = 'Payload: ' + (invite.telegram_start_payload || '—') + ' · Активен до: ' + (invite.expires_at || '—');
+		if (directionLabels.length) {
+			previewMeta += ' · Направления: ' + directionLabels.join(', ');
+		}
+		$('#tg-invite-preview-meta').text(previewMeta);
 		$('#tg-invite-qr-preview-wrap').html(
 			invite.qr_url
 				? '<img src="' + escHtml(invite.qr_url) + '" alt="">'
@@ -1469,21 +2108,25 @@ add_action(
 		var $tbody = $('#telegram-invite-history-tbody').empty();
 		telegramInviteHistoryMap = {};
 		if (!rows || !rows.length) {
-			$tbody.html('<tr><td colspan="9" class="text-center text-muted p-t-25 p-b-25">Инвайтов пока нет.</td></tr>');
+			$tbody.html('<tr><td colspan="8" class="text-center text-muted p-t-25 p-b-25">Инвайтов пока нет.</td></tr>');
 			return;
 		}
 
 		rows.forEach(function (row) {
 			var effective = getTelegramInviteEffectiveMeta(row);
 			telegramInviteHistoryMap[String(row.id)] = row;
+			var directionMeta = '<div class="merchant-direction-summary m-t-5"><span class="hint-text fs-11">Обмен:</span>' + renderMerchantDirectionCompact(row.enabled_invoice_directions || []) + '</div>';
 			var merchantHtml = '<span class="hint-text">Ещё не активирован</span>';
 			if (row.merchant_id) {
 				merchantHtml = '<div class="d-flex align-items-center">'
 					+ merchantAvatarHtml(row.merchant_avatar_url || '', row.merchant_name || row.merchant_chat_id || 'TG')
 					+ '<div><div class="semi-bold">' + escHtml(row.merchant_name || ('Merchant #' + row.merchant_id)) + '</div>'
-					+ '<div class="hint-text fs-12">' + escHtml(row.merchant_chat_id || row.used_by_chat_id || '—') + '</div></div></div>';
+					+ '<div class="hint-text fs-12">' + escHtml(row.merchant_chat_id || row.used_by_chat_id || '—') + '</div>'
+					+ directionMeta + '</div></div>';
 			} else if (row.used_by_chat_id) {
-				merchantHtml = '<div class="semi-bold">chat_id ' + escHtml(row.used_by_chat_id) + '</div><div class="hint-text fs-12">Мерчант ещё не привязан в истории</div>';
+				merchantHtml = '<div class="semi-bold">chat_id ' + escHtml(row.used_by_chat_id) + '</div><div class="hint-text fs-12">Мерчант ещё не привязан в истории</div>' + directionMeta;
+			} else {
+				merchantHtml = '<span class="hint-text">Ещё не активирован</span>' + directionMeta;
 			}
 
 			var actions = renderTelegramInviteHistoryActions(row);
@@ -1495,7 +2138,6 @@ add_action(
 				+ '<td>' + merchantHtml + '</td>'
 				+ '<td><code>' + escHtml(row.telegram_start_payload || '—') + '</code></td>'
 				+ '<td><span class="badge badge-' + escHtml(effective.badge) + '">' + escHtml(effective.label) + '</span></td>'
-				+ '<td>' + escHtml((row.ttl_minutes || 0) + ' мин') + '</td>'
 				+ '<td>' + escHtml(row.expires_at || '—') + '</td>'
 				+ '<td>' + escHtml(row.created_at || '—') + '</td>'
 				+ '<td class="text-center">' + actions + '</td>'
@@ -1571,6 +2213,11 @@ add_action(
 
 	function createTelegramInvite() {
 		hideInlineAlert($('#telegram-invite-alert'));
+		var enabledDirections = collectDirectionCheckboxes('.js-merchant-invite-direction');
+		if (!enabledDirections.length) {
+			showInlineAlert($('#telegram-invite-alert'), 'Выберите хотя бы одно направление обмена для invite.', 'warning');
+			return;
+		}
 
 		$.post(AJAX_URL, {
 			action: 'me_merchants_telegram_invite_create',
@@ -1578,6 +2225,7 @@ add_action(
 			base_markup_basis: $('#tg-invite-markup-basis').val(),
 			base_markup_type: $('#tg-invite-markup-type').val(),
 			rub_invoice_markup_mode: $('input[name="tg_invite_rub_invoice_markup_mode"]:checked').val() || 'none',
+			enabled_invoice_directions: enabledDirections,
 			base_markup_value: $('#tg-invite-markup-value').val(),
 			note: $('#tg-invite-note').val()
 		}, function (res) {
@@ -1705,6 +2353,19 @@ add_action(
 		saveMerchant();
 	});
 
+	$('#btn-create-merchant-api-client').on('click', function () {
+		createMerchantApiClient();
+	});
+
+	$(document).on('click.me-merchant-tabs', '#merchant-modal-tabs a[data-bs-toggle="tab"]', function (e) {
+		e.preventDefault();
+		var $link = $(this);
+		if ($link.hasClass('disabled')) {
+			return;
+		}
+		activateMerchantModalTab($link.attr('data-bs-target') || $link.attr('href'));
+	});
+
 	$('#merchant-company-id').on('change', function () {
 		var companyId = $(this).val();
 		var merchantId = $('#merchant-id').val() || 0;
@@ -1762,6 +2423,10 @@ add_action(
 	$(document).on('click', '.js-merchant-orders', function (e) {
 		e.preventDefault();
 		openMerchantOrdersPage($(this).data('id'));
+	});
+
+	$(document).on('click', '.js-merchant-api-revoke', function () {
+		revokeMerchantApiClient(parseInt($(this).data('id'), 10) || 0);
 	});
 
 	$(document).on('click', '.js-invite-status', function (e) {
@@ -1853,6 +2518,7 @@ add_action(
 			$('#merchant-referred-by, #merchant-status, #merchant-markup-basis, #merchant-markup-type, select#merchant-company-id'),
 			$('#merchant-modal')
 		);
+		syncMerchantModalFooter($('#merchant-modal-tab-api').hasClass('active') ? '#merchant-modal-tab-api' : '#merchant-modal-tab-profile');
 	});
 
 	$('#merchant-modal').on('hidden.bs.modal', function () {
@@ -1860,6 +2526,9 @@ add_action(
 			$('#merchant-referred-by, #merchant-status, #merchant-markup-basis, #merchant-markup-type, select#merchant-company-id')
 		);
 		$('#merchant-company-id').prop('disabled', false);
+		setMerchantApiTabEnabled(false);
+		activateMerchantModalTab('#merchant-modal-tab-profile');
+		$('#btn-save-merchant').removeClass('d-none');
 	});
 
 	$('#merchant-telegram-invite-modal').on('shown.bs.modal', function () {
@@ -1881,6 +2550,7 @@ add_action(
 	});
 
 	resetMerchantForm();
+	setDirectionCheckboxes('.js-merchant-invite-direction', COMPANY_ENABLED_DIRECTIONS);
 	renderTelegramInviteHistoryFocus();
 	renderTelegramInviteStatus(TELEGRAM_INVITE_STATUS);
 	setInterval(refreshTelegramInviteHistoryUiState, 15000);

@@ -16,6 +16,10 @@ define( 'CRM_MERCHANT_STATUS_ARCHIVED', 'archived' );
 define( 'CRM_MERCHANT_STATUS_PENDING',  'pending' );
 define( 'CRM_MERCHANT_WALLET_ENTRY_MERCHANT_ACCRUAL', 'merchant_accrual' );
 define( 'CRM_MERCHANT_WALLET_ENTRY_MERCHANT_PAYOUT', 'merchant_payout' );
+define( 'CRM_MERCHANT_WALLET_ENTRY_MERCHANT_PAYOUT_REVERSAL', 'merchant_payout_reversal' );
+define( 'CRM_MERCHANT_PAYOUT_STATUS_PAID', 'paid' );
+define( 'CRM_MERCHANT_PAYOUT_STATUS_CONFIRMED', 'confirmed' );
+define( 'CRM_MERCHANT_PAYOUT_STATUS_CANCELLED', 'cancelled' );
 
 /**
  * Справочник статусов мерчанта.
@@ -29,6 +33,90 @@ function crm_merchant_statuses(): array {
 		CRM_MERCHANT_STATUS_ARCHIVED => 'Архив',
 		CRM_MERCHANT_STATUS_PENDING  => 'Ожидает активации',
 	];
+}
+
+/**
+ * Справочник статусов выплаты мерчанту.
+ *
+ * @return array<string,string>
+ */
+function crm_merchant_payout_statuses(): array {
+	return [
+		CRM_MERCHANT_PAYOUT_STATUS_PAID      => 'Выплата произведена',
+		CRM_MERCHANT_PAYOUT_STATUS_CONFIRMED => 'Подтверждён',
+		CRM_MERCHANT_PAYOUT_STATUS_CANCELLED => 'Отменён',
+	];
+}
+
+/**
+ * Нормализует статус выплаты мерчанту.
+ */
+function crm_merchant_normalize_payout_status( string $status ): string {
+	$status   = sanitize_key( $status );
+	$statuses = crm_merchant_payout_statuses();
+
+	return isset( $statuses[ $status ] ) ? $status : CRM_MERCHANT_PAYOUT_STATUS_PAID;
+}
+
+/**
+ * Label статуса выплаты мерчанту.
+ */
+function crm_merchant_payout_status_label( string $status ): string {
+	$status   = crm_merchant_normalize_payout_status( $status );
+	$statuses = crm_merchant_payout_statuses();
+
+	return $statuses[ $status ] ?? $statuses[ CRM_MERCHANT_PAYOUT_STATUS_PAID ];
+}
+
+/**
+ * Badge-класс статуса выплаты мерчанту.
+ */
+function crm_merchant_payout_status_badge( string $status ): string {
+	$status = crm_merchant_normalize_payout_status( $status );
+
+	if ( $status === CRM_MERCHANT_PAYOUT_STATUS_CONFIRMED ) {
+		return 'success';
+	}
+	if ( $status === CRM_MERCHANT_PAYOUT_STATUS_CANCELLED ) {
+		return 'danger';
+	}
+
+	return 'warning';
+}
+
+/**
+ * Причины отмены выплаты мерчанту.
+ *
+ * @return array<string,string>
+ */
+function crm_merchant_payout_cancellation_reasons(): array {
+	return [
+		'duplicate_entry' => 'Случайно внесена повторная выплата',
+		'wrong_wallet'    => 'Указан неверный адрес кошелька',
+		'tx_not_sent'     => 'Транзакция фактически не была отправлена',
+		'test_entry'      => 'Тестовая или ошибочная запись',
+		'other'           => 'Другая причина',
+	];
+}
+
+/**
+ * Нормализует причину отмены выплаты мерчанту.
+ */
+function crm_merchant_normalize_payout_cancellation_reason( string $reason ): string {
+	$reason  = sanitize_key( $reason );
+	$reasons = crm_merchant_payout_cancellation_reasons();
+
+	return isset( $reasons[ $reason ] ) ? $reason : 'other';
+}
+
+/**
+ * Label причины отмены выплаты мерчанту.
+ */
+function crm_merchant_payout_cancellation_reason_label( string $reason ): string {
+	$reason  = crm_merchant_normalize_payout_cancellation_reason( $reason );
+	$reasons = crm_merchant_payout_cancellation_reasons();
+
+	return $reasons[ $reason ] ?? $reasons['other'];
 }
 
 /**
@@ -171,6 +259,7 @@ function crm_merchant_wallet_entry_types(): array {
 		'manual_debit'        => 'Ручное списание',
 		CRM_MERCHANT_WALLET_ENTRY_MERCHANT_ACCRUAL => 'Начисление по paid order',
 		CRM_MERCHANT_WALLET_ENTRY_MERCHANT_PAYOUT  => 'Выплата мерчанту',
+		CRM_MERCHANT_WALLET_ENTRY_MERCHANT_PAYOUT_REVERSAL => 'Отмена выплаты мерчанту',
 	];
 }
 
@@ -426,6 +515,293 @@ function crm_get_merchant_by_id( int $merchant_id ): ?object {
 }
 
 /**
+ * Нормализует код направления мерчанта.
+ */
+function crm_merchant_normalize_invoice_direction_code( string $code ): string {
+	$code = trim( $code );
+	if ( $code === '' ) {
+		return '';
+	}
+
+	if ( function_exists( 'crm_normalize_legacy_pair_code' ) ) {
+		$code = (string) crm_normalize_legacy_pair_code( $code );
+	} else {
+		$code = strtoupper( $code );
+	}
+
+	if ( function_exists( 'crm_root_get_pair_definition' ) && ! crm_root_get_pair_definition( $code ) ) {
+		return '';
+	}
+
+	return $code;
+}
+
+/**
+ * Парсит список кодов направлений мерчанта из массива / JSON / CSV.
+ *
+ * @param mixed $raw_value
+ * @return string[]
+ */
+function crm_merchant_parse_invoice_direction_codes( $raw_value ): array {
+	if ( is_array( $raw_value ) ) {
+		$items = $raw_value;
+	} else {
+		$raw_text = trim( (string) $raw_value );
+		if ( $raw_text === '' ) {
+			return [];
+		}
+
+		$decoded = json_decode( $raw_text, true );
+		if ( is_array( $decoded ) ) {
+			$items = $decoded;
+		} else {
+			$items = preg_split( '/\s*,\s*/', $raw_text, -1, PREG_SPLIT_NO_EMPTY ) ?: [];
+		}
+	}
+
+	$normalized_map = [];
+	foreach ( $items as $item ) {
+		$code = crm_merchant_normalize_invoice_direction_code( (string) $item );
+		if ( $code !== '' ) {
+			$normalized_map[ $code ] = $code;
+		}
+	}
+
+	$result      = [];
+	$definitions = function_exists( 'crm_company_exchange_pair_definitions' ) ? crm_company_exchange_pair_definitions() : [];
+	if ( ! empty( $definitions ) ) {
+		foreach ( $definitions as $pair ) {
+			$code = (string) ( $pair['code'] ?? '' );
+			if ( $code !== '' && isset( $normalized_map[ $code ] ) ) {
+				$result[] = $code;
+			}
+		}
+
+		return $result;
+	}
+
+	return array_values( $normalized_map );
+}
+
+/**
+ * Возвращает направления, включённые на уровне компании.
+ *
+ * @return string[]
+ */
+function crm_merchant_company_enabled_invoice_directions( int $company_id ): array {
+	if ( $company_id <= 0 ) {
+		return [];
+	}
+
+	if ( function_exists( 'crm_company_get_enabled_invoice_directions' ) ) {
+		return array_values( array_map( 'strval', crm_company_get_enabled_invoice_directions( $company_id ) ) );
+	}
+
+	return [];
+}
+
+/**
+ * Фильтрует merchant directions по company-scoped allowlist.
+ *
+ * @param string[] $direction_codes
+ * @return string[]
+ */
+function crm_merchant_filter_invoice_directions_for_company( int $company_id, array $direction_codes ): array {
+	$company_enabled = crm_merchant_company_enabled_invoice_directions( $company_id );
+	if ( empty( $company_enabled ) ) {
+		return [];
+	}
+
+	$company_enabled_map = array_fill_keys( $company_enabled, true );
+	$requested_map       = [];
+
+	foreach ( $direction_codes as $direction_code ) {
+		$direction_code = crm_merchant_normalize_invoice_direction_code( (string) $direction_code );
+		if ( $direction_code !== '' && isset( $company_enabled_map[ $direction_code ] ) ) {
+			$requested_map[ $direction_code ] = $direction_code;
+		}
+	}
+
+	$filtered = [];
+	foreach ( $company_enabled as $direction_code ) {
+		if ( isset( $requested_map[ $direction_code ] ) ) {
+			$filtered[] = $direction_code;
+		}
+	}
+
+	return $filtered;
+}
+
+/**
+ * Валидирует merchant directions в рамках текущей компании.
+ *
+ * @param mixed $raw_value
+ * @return string[]|WP_Error
+ */
+function crm_merchant_validate_invoice_directions_for_company( int $company_id, $raw_value ) {
+	if ( $company_id <= 0 ) {
+		return new WP_Error( 'invalid_company_scope', 'У мерчанта нет валидной компании.' );
+	}
+
+	$company_enabled = crm_merchant_company_enabled_invoice_directions( $company_id );
+	if ( empty( $company_enabled ) ) {
+		return new WP_Error( 'company_directions_disabled', 'Для компании не включено ни одно направление обмена.' );
+	}
+
+	$parsed   = crm_merchant_parse_invoice_direction_codes( $raw_value );
+	$filtered = crm_merchant_filter_invoice_directions_for_company( $company_id, $parsed );
+
+	if ( empty( $filtered ) ) {
+		return new WP_Error( 'empty_invoice_directions', 'Выберите хотя бы одно направление обмена для мерчанта.' );
+	}
+
+	if ( count( $filtered ) !== count( $parsed ) ) {
+		return new WP_Error( 'invalid_invoice_directions', 'Выбрано направление, которое недоступно в текущей компании.' );
+	}
+
+	return $filtered;
+}
+
+/**
+ * Возвращает effective merchant directions. Если custom allowlist не сохранён, мерчант наследует направления компании.
+ *
+ * @param mixed $raw_value
+ * @return string[]
+ */
+function crm_merchant_resolve_invoice_directions_for_company( int $company_id, $raw_value, bool $fallback_to_company = true ): array {
+	$company_enabled = crm_merchant_company_enabled_invoice_directions( $company_id );
+	if ( empty( $company_enabled ) ) {
+		return [];
+	}
+
+	$has_custom_value = false;
+	if ( is_array( $raw_value ) ) {
+		$has_custom_value = ! empty( $raw_value );
+	} else {
+		$raw_text         = trim( (string) $raw_value );
+		$has_custom_value = $raw_text !== '' && $raw_text !== '[]';
+	}
+
+	if ( ! $has_custom_value ) {
+		return $fallback_to_company ? $company_enabled : [];
+	}
+
+	return crm_merchant_filter_invoice_directions_for_company(
+		$company_id,
+		crm_merchant_parse_invoice_direction_codes( $raw_value )
+	);
+}
+
+/**
+ * Возвращает effective merchant directions из строки мерчанта.
+ *
+ * @param object|array<string,mixed> $merchant
+ * @return string[]
+ */
+function crm_merchant_resolve_invoice_directions_from_row( $merchant, bool $fallback_to_company = true ): array {
+	$row = is_object( $merchant ) ? get_object_vars( $merchant ) : (array) $merchant;
+
+	return crm_merchant_resolve_invoice_directions_for_company(
+		(int) ( $row['company_id'] ?? 0 ),
+		$row['enabled_invoice_directions_json'] ?? null,
+		$fallback_to_company
+	);
+}
+
+/**
+ * Есть ли у мерчанта custom allowlist направлений.
+ *
+ * @param object|array<string,mixed> $merchant
+ */
+function crm_merchant_has_custom_invoice_directions( $merchant ): bool {
+	$row = is_object( $merchant ) ? get_object_vars( $merchant ) : (array) $merchant;
+	$raw = $row['enabled_invoice_directions_json'] ?? null;
+
+	if ( is_array( $raw ) ) {
+		return ! empty( $raw );
+	}
+
+	$raw_text = trim( (string) $raw );
+
+	return $raw_text !== '' && $raw_text !== '[]';
+}
+
+/**
+ * Кодирует merchant directions в JSON для хранения в crm_merchants.
+ *
+ * @param string[] $direction_codes
+ */
+function crm_merchant_encode_invoice_directions( array $direction_codes ): ?string {
+	if ( empty( $direction_codes ) ) {
+		return null;
+	}
+
+	$encoded = wp_json_encode(
+		array_values( array_map( 'strval', $direction_codes ) ),
+		JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+	);
+
+	return is_string( $encoded ) ? $encoded : null;
+}
+
+/**
+ * Возвращает effective directions мерчанта по ID.
+ *
+ * @return string[]
+ */
+function crm_merchant_get_enabled_invoice_directions( int $merchant_id ): array {
+	$merchant = crm_get_merchant_by_id( $merchant_id );
+
+	return $merchant ? crm_merchant_resolve_invoice_directions_from_row( $merchant, true ) : [];
+}
+
+/**
+ * Проверяет, доступно ли направление конкретному мерчанту.
+ *
+ * @param object|array<string,mixed> $merchant
+ */
+function crm_merchant_has_invoice_direction( $merchant, string $direction_code ): bool {
+	$direction_code = crm_merchant_normalize_invoice_direction_code( $direction_code );
+	if ( $direction_code === '' ) {
+		return false;
+	}
+
+	foreach ( crm_merchant_resolve_invoice_directions_from_row( $merchant, true ) as $enabled_code ) {
+		if ( $enabled_code === $direction_code ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Рендерит HTML-бейджи доступных направлений мерчанта.
+ */
+function crm_merchant_render_exchange_pair_badges_html( array $direction_codes ): string {
+	if ( function_exists( 'crm_company_render_exchange_pair_badges_html' ) ) {
+		return crm_company_render_exchange_pair_badges_html( $direction_codes );
+	}
+
+	$direction_codes = array_values( array_filter( array_map( 'strval', $direction_codes ) ) );
+
+	ob_start();
+	if ( empty( $direction_codes ) ) :
+		?>
+		<span class="badge badge-secondary m-r-2">Направления выключены</span>
+		<?php
+	else :
+		foreach ( $direction_codes as $direction_code ) :
+			?>
+			<span class="badge badge-success m-r-2"><?php echo esc_html( $direction_code ); ?></span>
+			<?php
+		endforeach;
+	endif;
+
+	return (string) ob_get_clean();
+}
+
+/**
  * Нормализует RUB-сумму из формы/Telegram.
  */
 function crm_merchant_normalize_rub_amount( $value ): float {
@@ -439,6 +815,22 @@ function crm_merchant_normalize_rub_amount( $value ): float {
 	}
 
 	return round( max( 0, (float) $value ), 2 );
+}
+
+/**
+ * Нормализует USDT-сумму из API/формы.
+ */
+function crm_merchant_normalize_usdt_amount( $value ): float {
+	if ( is_string( $value ) ) {
+		$value = preg_replace( '/\s+/u', '', $value );
+		$value = str_replace( ',', '.', (string) $value );
+	}
+
+	if ( ! is_numeric( $value ) ) {
+		return 0.0;
+	}
+
+	return round( max( 0, (float) $value ), 8 );
 }
 
 /**
@@ -542,6 +934,7 @@ function crm_merchant_validate_rub_invoice_prerequisites( $merchant ): array {
 		'active_provider'          => $active_provider,
 		'acquirer_markup_percent'  => round( max( 0, $company_markup ), 8 ),
 		'config_status'            => $config_status,
+		'error_code'               => 'validation_failed',
 		'error'                    => 'Merchant RUB invoice prerequisites are not satisfied.',
 	];
 
@@ -586,6 +979,11 @@ function crm_merchant_validate_rub_invoice_prerequisites( $merchant ): array {
 		return $result;
 	}
 
+	if ( ! crm_merchant_has_invoice_direction( $merchant, 'RUB_USDT' ) ) {
+		$result['error'] = 'Направление RUB -> USDT отключено для этого мерчанта.';
+		return $result;
+	}
+
 	if ( empty( $config_status['is_configured'] ) ) {
 		$missing_labels = array_map(
 			static fn( $item ) => (string) ( $item['label'] ?? '' ),
@@ -614,6 +1012,334 @@ function crm_merchant_validate_rub_invoice_prerequisites( $merchant ): array {
 }
 
 /**
+ * Проверяет, готов ли мерчант к legacy USDT -> RUB invoice flow через Kanyon orderAmount.
+ *
+ * @param object|array<string,mixed> $merchant
+ * @return array<string,mixed>
+ */
+function crm_merchant_validate_usdt_invoice_prerequisites( $merchant ): array {
+	$row = is_object( $merchant ) ? get_object_vars( $merchant ) : (array) $merchant;
+
+	$merchant_id     = isset( $row['id'] ) ? (int) $row['id'] : 0;
+	$company_id      = isset( $row['company_id'] ) ? (int) $row['company_id'] : 0;
+	$merchant_status = (string) ( $row['status'] ?? '' );
+	$order_currency  = crm_fintech_normalize_kanyon_order_currency(
+		crm_get_setting( 'fintech_pay2day_order_currency', $company_id, '' )
+	);
+	$active_provider = crm_fintech_normalize_provider_code(
+		(string) crm_get_setting( 'fintech_active_provider', $company_id, '' )
+	);
+	$config_status = $company_id > 0 ? crm_fintech_get_configuration_status( $company_id ) : [];
+
+	$result = [
+		'success'                => false,
+		'merchant_id'            => $merchant_id,
+		'company_id'             => $company_id,
+		'merchant_status'        => $merchant_status,
+		'company_order_currency' => $order_currency,
+		'active_provider'        => $active_provider,
+		'config_status'          => $config_status,
+		'error_code'            => 'validation_failed',
+		'error'                  => 'Merchant USDT invoice prerequisites are not satisfied.',
+	];
+
+	if ( $merchant_id <= 0 ) {
+		$result['error'] = 'Мерчант не найден.';
+		return $result;
+	}
+
+	if ( $company_id <= 0 ) {
+		$result['error'] = 'У мерчанта нет валидной компании.';
+		return $result;
+	}
+
+	if ( $merchant_status !== CRM_MERCHANT_STATUS_ACTIVE ) {
+		$result['error'] = 'USDT invoice доступен только для активного мерчанта.';
+		return $result;
+	}
+
+	if ( $order_currency !== 'USDT' ) {
+		$result['error'] = sprintf(
+			'Legacy merchant RUB -> USDT flow через orderAmount доступен только при `fintech_pay2day_order_currency = USDT`. У этой компании сейчас настроена валюта %s.',
+			$order_currency !== '' ? $order_currency : 'не задано'
+		);
+		return $result;
+	}
+
+	if ( $active_provider !== Fintech_Payment_Gateway::PROVIDER_KANYON ) {
+		$result['error'] = sprintf(
+			'Legacy merchant RUB -> USDT flow через orderAmount пока работает только через Kanyon. Сейчас активный провайдер компании: %s.',
+			$active_provider !== '' ? crm_fintech_provider_label( $active_provider ) : 'не выбран'
+		);
+		return $result;
+	}
+
+	if ( ! crm_fintech_is_provider_allowed( $company_id, Fintech_Payment_Gateway::PROVIDER_KANYON ) ) {
+		$result['error'] = 'Kanyon отключён для этой компании. Обратитесь к root-администратору.';
+		return $result;
+	}
+
+	if ( function_exists( 'crm_company_contour_is_enabled' ) && ! crm_company_contour_is_enabled( $company_id, 'RUB_USDT' ) ) {
+		$result['error'] = 'Направление RUB -> USDT не включено для этой компании. Обратитесь к root-администратору.';
+		return $result;
+	}
+
+	if ( ! crm_merchant_has_invoice_direction( $merchant, 'RUB_USDT' ) ) {
+		$result['error'] = 'Направление RUB -> USDT отключено для этого мерчанта.';
+		return $result;
+	}
+
+	if ( empty( $config_status['is_configured'] ) ) {
+		$missing_labels = array_map(
+			static fn( $item ) => (string) ( $item['label'] ?? '' ),
+			$config_status['missing_fields'] ?? []
+		);
+		$missing_labels = array_values( array_filter( $missing_labels ) );
+		$result['error'] = 'Kanyon не настроен для этой компании.'
+			. ( ! empty( $missing_labels ) ? ' Не хватает: ' . implode( ', ', $missing_labels ) . '.' : '' );
+		return $result;
+	}
+
+	$result['success'] = true;
+	$result['error']   = null;
+
+	return $result;
+}
+
+/**
+ * Создаёт merchant invoice в legacy RUB -> USDT contour, где мерчант задаёт сумму в USDT,
+ * а клиент оплачивает счёт в RUB через Kanyon orderAmount.
+ *
+ * @param array<string,mixed> $args
+ * @return array<string,mixed>
+ */
+function crm_merchant_create_usdt_invoice( int $merchant_id, float $requested_usdt, array $args = [] ): array {
+	$source_channel      = sanitize_key( (string) ( $args['source_channel'] ?? 'merchant_api' ) );
+	$created_by_user_id  = isset( $args['created_by_user_id'] ) ? (int) $args['created_by_user_id'] : null;
+	$merchant            = crm_get_merchant_by_id( $merchant_id );
+	$requested_usdt      = crm_merchant_normalize_usdt_amount( $requested_usdt );
+	$external_order_id   = sanitize_text_field( wp_unslash( (string) ( $args['external_order_id'] ?? '' ) ) );
+	$idempotency_key     = sanitize_text_field( wp_unslash( (string) ( $args['idempotency_key'] ?? '' ) ) );
+
+	$result = [
+		'success'                => false,
+		'error_code'             => 'internal_error',
+		'error'                  => 'Не удалось создать merchant invoice.',
+		'warning'                => null,
+		'order_db_id'            => null,
+		'merchant_order_id'      => '',
+		'provider_order_id'      => '',
+		'external_order_id'      => $external_order_id,
+		'payment_link'           => '',
+		'qrc_id'                 => '',
+		'qr_url'                 => null,
+		'provider'               => '',
+		'status_code'            => 'created',
+		'company_id'             => 0,
+		'merchant_id'            => $merchant_id,
+		'requested_usdt'         => $requested_usdt,
+		'merchant_payable_usdt'  => $requested_usdt,
+		'platform_fee_usdt'      => 0.0,
+		'kanyon_gross_usdt'      => $requested_usdt,
+		'payment_amount_rub'     => null,
+		'payment_purpose'        => '',
+	];
+
+	if ( ! $merchant ) {
+		$result['error_code'] = 'not_found';
+		$result['error'] = 'Мерчант не найден.';
+		return $result;
+	}
+
+	$precheck = crm_merchant_validate_usdt_invoice_prerequisites( $merchant );
+	$result['company_id'] = (int) $precheck['company_id'];
+	if ( empty( $precheck['success'] ) ) {
+		$result['error_code'] = (string) ( $precheck['error_code'] ?? 'validation_failed' );
+		$result['error'] = (string) ( $precheck['error'] ?? 'Merchant USDT invoice prerequisites are not satisfied.' );
+		return $result;
+	}
+
+	if ( $requested_usdt <= 0 ) {
+		$result['error_code'] = 'validation_failed';
+		$result['error'] = 'Сумма счёта должна быть больше нуля.';
+		return $result;
+	}
+
+	$company_id              = (int) $precheck['company_id'];
+	$merchant_name           = trim( (string) ( $merchant->name ?? '' ) );
+	$merchant_label          = $merchant_name !== '' ? $merchant_name : 'Merchant #' . $merchant_id;
+	$custom_payment_purpose  = crm_fintech_normalize_payment_purpose( $args['payment_purpose'] ?? '' );
+	$default_payment_purpose = crm_fintech_get_pay2day_default_payment_purpose( $company_id );
+	$payment_purpose         = $custom_payment_purpose !== '' ? $custom_payment_purpose : $default_payment_purpose;
+	$payment_purpose_source  = $custom_payment_purpose !== ''
+		? 'custom'
+		: ( $default_payment_purpose !== '' ? 'default' : 'automatic' );
+
+	$result['payment_purpose'] = $payment_purpose;
+
+	$description = $payment_purpose !== ''
+		? $payment_purpose
+		: sprintf(
+			'%s merchant USDT invoice %s USDT',
+			$merchant_label,
+			number_format( $requested_usdt, 2, '.', '' )
+		);
+
+	Fintech_Payment_Gateway::set_company_id( $company_id );
+	$invoice = fintech_create_invoice( $requested_usdt, null, $description );
+
+	if ( empty( $invoice['success'] ) ) {
+		$result['error_code'] = 'provider_error';
+		crm_log( 'merchant.invoice.gateway_failed', [
+			'category'    => 'payments',
+			'level'       => 'error',
+			'action'      => 'create',
+			'message'     => 'Kanyon не создал merchant USDT invoice.',
+			'target_type' => 'merchant',
+			'target_id'   => $merchant_id,
+			'org_id'      => $company_id,
+			'is_success'  => false,
+			'context'     => [
+				'requested_usdt'    => $requested_usdt,
+				'payment_purpose'   => $payment_purpose,
+				'external_order_id' => $external_order_id !== '' ? $external_order_id : null,
+				'error'             => (string) ( $invoice['error'] ?? '' ),
+			],
+		] );
+
+		$result['error'] = (string) ( $invoice['error'] ?? 'Gateway error' );
+		return $result;
+	}
+
+	$payload_mode       = (string) ( $invoice['payloadMode'] ?? 'orderAmount' );
+	$payment_amount_rub = isset( $invoice['paymentAmountValue'] ) && $invoice['paymentAmountValue'] !== null
+		? round( (float) $invoice['paymentAmountValue'], 2 )
+		: null;
+
+	$result['warning']            = isset( $invoice['warning'] ) ? (string) $invoice['warning'] : null;
+	$result['provider']           = (string) ( $invoice['provider'] ?? Fintech_Payment_Gateway::PROVIDER_KANYON );
+	$result['merchant_order_id']  = (string) ( $invoice['merchantOrderId'] ?? '' );
+	$result['provider_order_id']  = (string) ( $invoice['orderId'] ?? '' );
+	$result['status_code']        = function_exists( '_crm_fintech_map_status' )
+		? _crm_fintech_map_status( (string) ( $invoice['providerStatus'] ?? 'CREATED' ) )
+		: 'created';
+	$result['payment_link']       = (string) ( $invoice['payload'] ?? '' );
+	$result['qrc_id']             = (string) ( $invoice['qrcId'] ?? '' );
+	$result['payment_amount_rub'] = $payment_amount_rub;
+
+	$merchant_meta = [
+		'merchant_flow'           => 'rub_usdt_kanyon_order_amount',
+		'kanyon_payload_mode'     => $payload_mode,
+		'payment_purpose'         => $payment_purpose !== '' ? $payment_purpose : null,
+		'payment_purpose_source'  => $payment_purpose_source,
+		'requested_amount_currency' => 'USDT',
+		'payment_currency_code'   => 'RUB',
+		'settlement_currency_code'=> 'USDT',
+	];
+
+	$order_db_id = crm_fintech_save_order(
+		$invoice,
+		$company_id,
+		$source_channel !== '' ? $source_channel : 'merchant_api',
+		$created_by_user_id,
+		[
+			'merchant_id'                 => $merchant_id,
+			'created_for_type'            => 'merchant',
+			'local_order_ref'             => $external_order_id !== '' ? $external_order_id : null,
+			'idempotency_key'             => $idempotency_key !== '' ? $idempotency_key : null,
+			'amount_asset_code'           => 'USDT',
+			'amount_asset_value'          => number_format( $requested_usdt, 8, '.', '' ),
+			'payment_currency_code'       => 'RUB',
+			'payment_amount_value'        => $payment_amount_rub !== null ? number_format( $payment_amount_rub, 2, '.', '' ) : null,
+			'merchant_requested_rub_value'=> null,
+			'merchant_payable_value'      => number_format( $requested_usdt, 8, '.', '' ),
+			'merchant_markup_value'       => number_format( 0, 8, '.', '' ),
+			'platform_fee_value'          => number_format( 0, 8, '.', '' ),
+			'merchant_profit_value'       => number_format( 0, 8, '.', '' ),
+			'referral_reward_value'       => number_format( 0, 8, '.', '' ),
+			'meta_json'                   => wp_json_encode(
+				[
+					'merchant_flow'      => 'rub_usdt_kanyon_order_amount',
+					'merchant_id'        => $merchant_id,
+					'merchant_name'      => $merchant_label,
+					'external_order_id'  => $external_order_id !== '' ? $external_order_id : null,
+					'payment_purpose'    => $payment_purpose !== '' ? $payment_purpose : null,
+					'payment_purpose_source' => $payment_purpose_source,
+				],
+				JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+			),
+			'merchant_meta_json'          => wp_json_encode(
+				$merchant_meta,
+				JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+			),
+			'notes'                       => 'Merchant RUB -> USDT invoice created via Kanyon orderAmount flow.',
+		]
+	);
+
+	if ( $order_db_id === null || $order_db_id <= 0 ) {
+		$result['error_code'] = 'internal_error';
+		crm_log( 'merchant.invoice.db_save_failed', [
+			'category'    => 'payments',
+			'level'       => 'error',
+			'action'      => 'create',
+			'message'     => 'Merchant USDT invoice создан у провайдера, но не сохранился локально.',
+			'target_type' => 'merchant',
+			'target_id'   => $merchant_id,
+			'org_id'      => $company_id,
+			'is_success'  => false,
+			'context'     => [
+				'merchant_order_id' => (string) ( $invoice['merchantOrderId'] ?? '' ),
+				'provider_order_id' => (string) ( $invoice['orderId'] ?? '' ),
+				'requested_usdt'    => $requested_usdt,
+				'external_order_id' => $external_order_id !== '' ? $external_order_id : null,
+				'payment_purpose'   => $payment_purpose,
+			],
+		] );
+
+		$result['error'] = 'Счёт создан у провайдера, но не сохранился в Malibu.';
+		return $result;
+	}
+
+	$result['order_db_id'] = $order_db_id;
+
+	if ( $result['payment_link'] !== '' && $result['qrc_id'] !== '' ) {
+		$result['qr_url'] = crm_fintech_qr_url(
+			$result['payment_link'],
+			$result['qrc_id'],
+			$result['merchant_order_id'] !== '' ? $result['merchant_order_id'] : (string) $order_db_id
+		);
+	}
+
+	crm_log( 'merchant.invoice.created', [
+		'category'    => 'payments',
+		'level'       => 'info',
+		'action'      => 'create',
+		'message'     => 'Создан merchant RUB -> USDT invoice через Kanyon orderAmount.',
+		'target_type' => 'payment_order',
+		'target_id'   => $order_db_id,
+		'org_id'      => $company_id,
+		'is_success'  => true,
+		'context'     => [
+			'merchant_id'         => $merchant_id,
+			'merchant_order_id'   => $result['merchant_order_id'],
+			'provider_order_id'   => $result['provider_order_id'],
+			'requested_usdt'      => $requested_usdt,
+			'payment_amount_rub'  => $payment_amount_rub,
+			'payload_mode'        => $payload_mode,
+			'external_order_id'   => $external_order_id !== '' ? $external_order_id : null,
+			'payment_purpose'     => $payment_purpose,
+			'payment_purpose_source' => $payment_purpose_source,
+		],
+	] );
+
+	$result['success'] = true;
+	$result['error_code'] = null;
+	$result['error']   = null;
+
+	return $result;
+}
+
+/**
  * Создаёт merchant invoice в новом RUB -> USDT contour.
  *
  * @param array<string,mixed> $args
@@ -624,14 +1350,18 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 	$created_by_user_id  = isset( $args['created_by_user_id'] ) ? (int) $args['created_by_user_id'] : null;
 	$merchant            = crm_get_merchant_by_id( $merchant_id );
 	$requested_rub       = crm_merchant_normalize_rub_amount( $requested_rub );
+	$external_order_id   = sanitize_text_field( wp_unslash( (string) ( $args['external_order_id'] ?? '' ) ) );
+	$idempotency_key     = sanitize_text_field( wp_unslash( (string) ( $args['idempotency_key'] ?? '' ) ) );
 
 	$result = [
 		'success'                => false,
+		'error_code'             => 'internal_error',
 		'error'                  => 'Не удалось создать merchant invoice.',
 		'warning'                => null,
 		'order_db_id'            => null,
 		'merchant_order_id'      => '',
 		'provider_order_id'      => '',
+		'external_order_id'      => $external_order_id,
 		'payment_link'           => '',
 		'qrc_id'                 => '',
 		'qr_url'                 => null,
@@ -654,6 +1384,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 	];
 
 	if ( ! $merchant ) {
+		$result['error_code'] = 'not_found';
 		$result['error'] = 'Мерчант не найден.';
 		return $result;
 	}
@@ -661,11 +1392,13 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 	$precheck = crm_merchant_validate_rub_invoice_prerequisites( $merchant );
 	$result['company_id'] = (int) $precheck['company_id'];
 	if ( empty( $precheck['success'] ) ) {
+		$result['error_code'] = (string) ( $precheck['error_code'] ?? 'validation_failed' );
 		$result['error'] = (string) ( $precheck['error'] ?? 'Merchant RUB invoice prerequisites are not satisfied.' );
 		return $result;
 	}
 
 	if ( $requested_rub <= 0 ) {
+		$result['error_code'] = 'validation_failed';
 		$result['error'] = 'Сумма счёта должна быть больше нуля.';
 		return $result;
 	}
@@ -686,6 +1419,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 	$rapira                   = rates_get_rapira();
 
 	if ( empty( $rapira['ok'] ) || empty( $rapira['ask'] ) || (float) $rapira['ask'] <= 0 ) {
+		$result['error_code'] = 'provider_unavailable';
 		$error_message   = 'Не удалось получить живой курс Rapira USDT/RUB.';
 		$error_message  .= ! empty( $rapira['error'] ) ? ' ' . (string) $rapira['error'] : '';
 
@@ -750,6 +1484,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 	$invoice = fintech_create_invoice_by_payment_amount( $payment_amount_rub, 'RUB', null, $description );
 
 	if ( empty( $invoice['success'] ) ) {
+		$result['error_code'] = 'provider_error';
 		crm_log( 'merchant.invoice.gateway_failed', [
 			'category'    => 'payments',
 			'level'       => 'error',
@@ -837,6 +1572,8 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 			'platform_fee_value'          => number_format( $platform_fee_usdt, 8, '.', '' ),
 			'merchant_profit_value'       => number_format( 0, 8, '.', '' ),
 			'referral_reward_value'       => number_format( 0, 8, '.', '' ),
+			'local_order_ref'             => $external_order_id !== '' ? $external_order_id : null,
+			'idempotency_key'             => $idempotency_key !== '' ? $idempotency_key : null,
 			'meta_json'                   => wp_json_encode(
 				[
 					'merchant_flow' => 'rub_usdt_rapira_kanyon',
@@ -847,6 +1584,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 					'merchant_requested_rub_input' => $requested_rub_input,
 					'payment_amount_rub' => $payment_amount_rub,
 					'merchant_markup_added_rub' => $merchant_markup_added_rub,
+					'external_order_id' => $external_order_id !== '' ? $external_order_id : null,
 					'payment_purpose' => $payment_purpose,
 					'payment_purpose_source' => $payment_purpose_source,
 				],
@@ -863,6 +1601,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 	);
 
 	if ( $order_db_id === null || $order_db_id <= 0 ) {
+		$result['error_code'] = 'internal_error';
 		crm_log( 'merchant.invoice.db_save_failed', [
 			'category'    => 'payments',
 			'level'       => 'error',
@@ -877,6 +1616,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 				'provider_order_id' => (string) ( $invoice['orderId'] ?? '' ),
 				'requested_rub'     => $requested_rub,
 				'payment_amount_rub'=> $payment_amount_rub,
+				'external_order_id' => $external_order_id !== '' ? $external_order_id : null,
 				'merchant_markup_basis' => $merchant_markup_basis,
 				'payment_purpose'   => $payment_purpose,
 			],
@@ -913,6 +1653,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 				'expected_acquirer_gross_usdt'  => $expected_acquirer_gross,
 				'kanyon_gross_usdt'             => $kanyon_gross_usdt,
 				'difference_usdt'               => $gross_difference,
+				'external_order_id'             => $external_order_id !== '' ? $external_order_id : null,
 				'merchant_markup_basis'         => $merchant_markup_basis,
 				'payment_purpose'               => $payment_purpose,
 			],
@@ -937,6 +1678,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 			'merchant_payable_usdt'    => $merchant_payable_usdt,
 			'platform_fee_usdt'        => $platform_fee_usdt,
 			'kanyon_gross_usdt'        => $kanyon_gross_usdt,
+			'external_order_id'        => $external_order_id !== '' ? $external_order_id : null,
 			'rapira_ask'               => $rapira_ask,
 			'acquirer_rate'            => $acquirer_rate,
 			'merchant_rate'            => $merchant_rate,
@@ -951,6 +1693,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 	] );
 
 	$result['success'] = true;
+	$result['error_code'] = null;
 	$result['error']   = null;
 
 	return $result;
@@ -1857,7 +2600,7 @@ function crm_get_merchant_balance_summary_map( array $merchant_ids ): array {
 	$rows    = $wpdb->get_results(
 		"SELECT merchant_id,
 		        SUM(CASE
-		                WHEN entry_type IN ('merchant_accrual','manual_credit')
+		                WHEN entry_type IN ('merchant_accrual','manual_credit','merchant_payout_reversal')
 		                  THEN amount
 		                WHEN entry_type IN ('manual_debit','merchant_payout')
 		                  THEN -ABS(amount)
@@ -1876,7 +2619,7 @@ function crm_get_merchant_balance_summary_map( array $merchant_ids ): array {
 		                ELSE 0
 		            END) AS referral_balance,
 		        SUM(CASE
-		                WHEN entry_type IN ('merchant_accrual','manual_credit','bonus_accrual','bonus_adjustment','referral_accrual','referral_adjustment')
+		                WHEN entry_type IN ('merchant_accrual','manual_credit','merchant_payout_reversal','bonus_accrual','bonus_adjustment','referral_accrual','referral_adjustment')
 		                  THEN amount
 		                WHEN entry_type IN ('manual_debit','merchant_payout','bonus_withdrawal')
 		                  THEN -ABS(amount)
@@ -1900,6 +2643,319 @@ function crm_get_merchant_balance_summary_map( array $merchant_ids ): array {
 	}
 
 	return $map;
+}
+
+/**
+ * Возвращает payout-запись мерчанта в рамках компании.
+ */
+function crm_merchant_get_payout( int $company_id, int $payout_id ): ?object {
+	global $wpdb;
+
+	if ( $company_id <= 0 || $payout_id <= 0 ) {
+		return null;
+	}
+
+	$row = $wpdb->get_row(
+		$wpdb->prepare(
+			"SELECT *
+			 FROM crm_merchant_payouts
+			 WHERE id = %d
+			   AND company_id = %d
+			 LIMIT 1",
+			$payout_id,
+			$company_id
+		)
+	);
+
+	return $row ?: null;
+}
+
+/**
+ * Возвращает payout-запись конкретного мерчанта в рамках компании.
+ */
+function crm_merchant_get_payout_for_merchant( int $company_id, int $merchant_id, int $payout_id ): ?object {
+	$payout = crm_merchant_get_payout( $company_id, $payout_id );
+	if ( ! $payout || (int) ( $payout->merchant_id ?? 0 ) !== $merchant_id ) {
+		return null;
+	}
+
+	return $payout;
+}
+
+/**
+ * Подтверждает payout по кнопке мерчанта.
+ *
+ * @return array<string,mixed>
+ */
+function crm_merchant_confirm_payout( int $company_id, int $merchant_id, int $payout_id ): array {
+	global $wpdb;
+
+	$payout = crm_merchant_get_payout_for_merchant( $company_id, $merchant_id, $payout_id );
+	if ( ! $payout ) {
+		return [
+			'success' => false,
+			'code'    => 'not_found',
+			'error'   => 'Выплата не найдена.',
+		];
+	}
+
+	$status = crm_merchant_normalize_payout_status( (string) ( $payout->status_code ?? '' ) );
+	if ( $status === CRM_MERCHANT_PAYOUT_STATUS_CONFIRMED ) {
+		return [
+			'success' => true,
+			'code'    => 'already_confirmed',
+			'message' => 'Подтверждение уже было получено.',
+			'payout'  => $payout,
+		];
+	}
+	if ( $status === CRM_MERCHANT_PAYOUT_STATUS_CANCELLED ) {
+		return [
+			'success' => false,
+			'code'    => 'cancelled',
+			'error'   => 'Эта выплата была отменена.',
+			'payout'  => $payout,
+		];
+	}
+
+	$now = current_time( 'mysql' );
+	$updated = $wpdb->update(
+		'crm_merchant_payouts',
+		[
+			'status_code'  => CRM_MERCHANT_PAYOUT_STATUS_CONFIRMED,
+			'confirmed_at' => $now,
+			'updated_at'   => $now,
+		],
+		[
+			'id'         => $payout_id,
+			'company_id' => $company_id,
+			'merchant_id'=> $merchant_id,
+			'status_code'=> CRM_MERCHANT_PAYOUT_STATUS_PAID,
+		],
+		[ '%s', '%s', '%s' ],
+		[ '%d', '%d', '%d', '%s' ]
+	);
+
+	if ( $updated === false ) {
+		return [
+			'success' => false,
+			'code'    => 'db_error',
+			'error'   => 'Не удалось зафиксировать подтверждение выплаты.',
+		];
+	}
+	if ( $updated === 0 ) {
+		$actual = crm_merchant_get_payout_for_merchant( $company_id, $merchant_id, $payout_id );
+		if ( ! $actual ) {
+			return [
+				'success' => false,
+				'code'    => 'state_conflict',
+				'error'   => 'Не удалось зафиксировать подтверждение: статус выплаты уже изменился.',
+			];
+		}
+		$actual_status = crm_merchant_normalize_payout_status( (string) ( $actual->status_code ?? '' ) );
+
+		if ( $actual_status === CRM_MERCHANT_PAYOUT_STATUS_CONFIRMED ) {
+			return [
+				'success' => true,
+				'code'    => 'already_confirmed',
+				'message' => 'Подтверждение уже было получено.',
+				'payout'  => $actual,
+			];
+		}
+		if ( $actual_status === CRM_MERCHANT_PAYOUT_STATUS_CANCELLED ) {
+			return [
+				'success' => false,
+				'code'    => 'cancelled',
+				'error'   => 'Эта выплата была отменена.',
+				'payout'  => $actual,
+			];
+		}
+
+		return [
+			'success' => false,
+			'code'    => 'state_conflict',
+			'error'   => 'Не удалось зафиксировать подтверждение: статус выплаты уже изменился.',
+			'payout'  => $actual,
+		];
+	}
+
+	$confirmed = crm_merchant_get_payout_for_merchant( $company_id, $merchant_id, $payout_id );
+
+	return [
+		'success' => true,
+		'code'    => 'confirmed',
+		'message' => 'Спасибо, подтверждение получено.',
+		'payout'  => $confirmed ?: $payout,
+	];
+}
+
+/**
+ * Отменяет payout компании и возвращает сумму на баланс мерчанта.
+ *
+ * @return array<string,mixed>
+ */
+function crm_merchant_cancel_payout( int $company_id, int $payout_id, int $user_id, string $reason_code, string $comment ): array {
+	global $wpdb;
+
+	if ( $company_id <= 0 || $payout_id <= 0 || $user_id <= 0 ) {
+		return [
+			'success' => false,
+			'code'    => 'invalid_context',
+			'error'   => 'Недостаточно данных для отмены выплаты.',
+		];
+	}
+
+	$payout = crm_merchant_get_payout( $company_id, $payout_id );
+	if ( ! $payout ) {
+		return [
+			'success' => false,
+			'code'    => 'not_found',
+			'error'   => 'Выплата не найдена в текущей компании.',
+		];
+	}
+
+	$status = crm_merchant_normalize_payout_status( (string) ( $payout->status_code ?? '' ) );
+	if ( $status === CRM_MERCHANT_PAYOUT_STATUS_CANCELLED ) {
+		return [
+			'success' => true,
+			'code'    => 'already_cancelled',
+			'message' => 'Эта выплата уже отменена.',
+			'payout'  => $payout,
+		];
+	}
+	if ( $status === CRM_MERCHANT_PAYOUT_STATUS_CONFIRMED ) {
+		return [
+			'success' => false,
+			'code'    => 'already_confirmed',
+			'error'   => 'Подтверждённую выплату отменять нельзя.',
+			'payout'  => $payout,
+		];
+	}
+
+	$reason_code = crm_merchant_normalize_payout_cancellation_reason( $reason_code );
+	$comment     = trim( sanitize_textarea_field( $comment ) );
+	if ( $comment === '' ) {
+		return [
+			'success' => false,
+			'code'    => 'empty_comment',
+			'error'   => 'Для отмены выплаты обязателен комментарий.',
+		];
+	}
+
+	$now        = current_time( 'mysql' );
+	$merchant_id = (int) $payout->merchant_id;
+	$amount      = round( (float) ( $payout->amount ?? 0 ), 8 );
+	$currency    = strtoupper( trim( (string) ( $payout->currency_code ?? 'USDT' ) ) );
+
+	$reason_label = crm_merchant_payout_cancellation_reason_label( $reason_code );
+	$ledger_comment_parts = [
+		'Отмена выплаты мерчанту #' . $payout_id,
+		'причина: ' . $reason_label,
+		$comment,
+	];
+
+	$wpdb->query( 'START TRANSACTION' );
+
+	$updated = $wpdb->update(
+		'crm_merchant_payouts',
+		[
+			'status_code'              => CRM_MERCHANT_PAYOUT_STATUS_CANCELLED,
+			'cancelled_at'             => $now,
+			'cancelled_by_user_id'     => $user_id,
+			'cancellation_reason_code' => $reason_code,
+			'cancellation_comment'     => $comment,
+			'updated_at'               => $now,
+		],
+		[
+			'id'         => $payout_id,
+			'company_id' => $company_id,
+			'status_code'=> CRM_MERCHANT_PAYOUT_STATUS_PAID,
+		],
+		[ '%s', '%s', '%d', '%s', '%s', '%s' ],
+		[ '%d', '%d', '%s' ]
+	);
+
+	if ( $updated === false ) {
+		$wpdb->query( 'ROLLBACK' );
+		return [
+			'success' => false,
+			'code'    => 'update_failed',
+			'error'   => 'Не удалось обновить статус выплаты.',
+		];
+	}
+	if ( $updated === 0 ) {
+		$wpdb->query( 'ROLLBACK' );
+		$actual = crm_merchant_get_payout( $company_id, $payout_id );
+		if ( ! $actual ) {
+			return [
+				'success' => false,
+				'code'    => 'state_conflict',
+				'error'   => 'Не удалось отменить выплату: её статус уже изменился.',
+			];
+		}
+		$actual_status = crm_merchant_normalize_payout_status( (string) ( $actual->status_code ?? '' ) );
+
+		if ( $actual_status === CRM_MERCHANT_PAYOUT_STATUS_CONFIRMED ) {
+			return [
+				'success' => false,
+				'code'    => 'already_confirmed',
+				'error'   => 'Подтверждённую выплату отменять нельзя.',
+				'payout'  => $actual,
+			];
+		}
+		if ( $actual_status === CRM_MERCHANT_PAYOUT_STATUS_CANCELLED ) {
+			return [
+				'success' => true,
+				'code'    => 'already_cancelled',
+				'message' => 'Эта выплата уже отменена.',
+				'payout'  => $actual,
+			];
+		}
+
+		return [
+			'success' => false,
+			'code'    => 'state_conflict',
+			'error'   => 'Не удалось отменить выплату: её статус уже изменился.',
+			'payout'  => $actual,
+		];
+	}
+
+	$ledger_inserted = $wpdb->insert(
+		'crm_merchant_wallet_ledger',
+		[
+			'company_id'         => $company_id,
+			'merchant_id'        => $merchant_id,
+			'entry_type'         => CRM_MERCHANT_WALLET_ENTRY_MERCHANT_PAYOUT_REVERSAL,
+			'amount'             => number_format( $amount, 8, '.', '' ),
+			'currency_code'      => $currency !== '' ? $currency : 'USDT',
+			'source_payout_id'   => $payout_id,
+			'comment'            => implode( '; ', $ledger_comment_parts ),
+			'created_by_user_id' => $user_id,
+			'created_at'         => $now,
+		],
+		[ '%d', '%d', '%s', '%s', '%s', '%d', '%s', '%d', '%s' ]
+	);
+
+	if ( $ledger_inserted === false ) {
+		$wpdb->query( 'ROLLBACK' );
+		return [
+			'success' => false,
+			'code'    => 'ledger_failed',
+			'error'   => 'Не удалось вернуть сумму на баланс мерчанта.',
+		];
+	}
+
+	$ledger_id = (int) $wpdb->insert_id;
+	$wpdb->query( 'COMMIT' );
+
+	$cancelled = crm_merchant_get_payout( $company_id, $payout_id );
+
+	return [
+		'success'   => true,
+		'code'      => 'cancelled',
+		'message'   => 'Выплата отменена, сумма возвращена на баланс мерчанта.',
+		'payout'    => $cancelled ?: $payout,
+		'ledger_id' => $ledger_id,
+	];
 }
 
 /**

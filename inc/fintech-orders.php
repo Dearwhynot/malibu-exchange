@@ -499,9 +499,10 @@ function crm_fintech_create_order_by_payment_amount(
  * Запрашивает у провайдера текущий статус ордера, обновляет БД если изменился.
  *
  * @param object $order  Строка из crm_fintech_payment_orders (полный SELECT *)
- * @return array { changed: bool, old_status: string, new_status: string, provider_status: string, error: ?string }
+ * @param string $poll_source Источник проверки: poll|cron|service_bot|web_manual|telegram_merchant_manual|...
+ * @return array { changed: bool, old_status: string, new_status: string, provider_status: string, error: ?string, status_actions: ?array, paid_actions: ?array }
  */
-function crm_fintech_poll_order_status( object $order ): array {
+function crm_fintech_poll_order_status( object $order, string $poll_source = 'poll' ): array {
 	global $wpdb;
 
 	$order_db_id       = (int) $order->id;
@@ -510,7 +511,7 @@ function crm_fintech_poll_order_status( object $order ): array {
 	$now               = current_time( 'mysql' );
 
 	if ( $provider_order_id === '' ) {
-		return [ 'changed' => false, 'old_status' => $old_status, 'new_status' => $old_status, 'provider_status' => '', 'error' => 'No provider_order_id' ];
+		return [ 'changed' => false, 'old_status' => $old_status, 'new_status' => $old_status, 'provider_status' => '', 'error' => 'No provider_order_id', 'status_actions' => null, 'paid_actions' => null ];
 	}
 
 	$company_id = (int) ( $order->company_id ?? 0 );
@@ -521,6 +522,8 @@ function crm_fintech_poll_order_status( object $order ): array {
 			'new_status'      => $old_status,
 			'provider_status' => '',
 			'error'           => 'Order has invalid company scope',
+			'status_actions'  => null,
+			'paid_actions'    => null,
 		];
 	}
 
@@ -541,7 +544,7 @@ function crm_fintech_poll_order_status( object $order ): array {
 			'context'     => [ 'provider_order_id' => $provider_order_id, 'error' => $status_result['error'] ?? null ],
 		] );
 
-		return [ 'changed' => false, 'old_status' => $old_status, 'new_status' => $old_status, 'provider_status' => '', 'error' => $status_result['error'] ?? 'Status check failed' ];
+		return [ 'changed' => false, 'old_status' => $old_status, 'new_status' => $old_status, 'provider_status' => '', 'error' => $status_result['error'] ?? 'Status check failed', 'status_actions' => null, 'paid_actions' => null ];
 	}
 
 	$provider_status = (string) ( $status_result['providerStatus'] ?? '' );
@@ -619,7 +622,7 @@ function crm_fintech_poll_order_status( object $order ): array {
 				'payment_order_id'     => $order_db_id,
 				'status_code'          => $new_status,
 				'provider_status_code' => $provider_status !== '' ? $provider_status : null,
-				'source_code'          => 'poll',
+				'source_code'          => $poll_source !== '' ? $poll_source : 'poll',
 				'message'              => "Статус обновлён при проверке: {$old_status} → {$new_status}",
 				'created_at'           => $now,
 			]
@@ -638,12 +641,15 @@ function crm_fintech_poll_order_status( object $order ): array {
 				'old_status'        => $old_status,
 				'new_status'        => $new_status,
 				'provider_status'   => $provider_status,
+				'poll_source'       => $poll_source,
 			],
 		] );
 	}
 
-	if ( $new_status === 'paid' ) {
-		crm_merchant_create_paid_order_accrual( $order_db_id, 'poll' );
+	$status_actions = null;
+	$terminal_statuses = [ 'paid', 'declined', 'cancelled', 'expired', 'error' ];
+	if ( in_array( $new_status, $terminal_statuses, true ) ) {
+		$status_actions = crm_fintech_run_terminal_order_side_effects( $order_db_id, $new_status, $poll_source );
 	}
 
 	return [
@@ -652,7 +658,47 @@ function crm_fintech_poll_order_status( object $order ): array {
 		'new_status'      => $new_status,
 		'provider_status' => $provider_status,
 		'error'           => null,
+		'status_actions'  => $status_actions,
+		'paid_actions'    => $new_status === 'paid' ? $status_actions : null,
 	];
+}
+
+if ( ! function_exists( 'crm_fintech_run_terminal_order_side_effects' ) ) {
+	function crm_fintech_run_terminal_order_side_effects( int $order_id, string $status_code, string $source_code = 'system' ): array {
+		$status_code = sanitize_key( $status_code );
+		$source_code = sanitize_key( $source_code );
+
+		$result = [
+			'accrual'           => null,
+			'merchant_telegram' => null,
+		];
+
+		if ( $order_id <= 0 ) {
+			return $result;
+		}
+
+		if ( $status_code === 'paid' && function_exists( 'crm_merchant_create_paid_order_accrual' ) ) {
+			$result['accrual'] = crm_merchant_create_paid_order_accrual( $order_id, $source_code !== '' ? $source_code : 'system' );
+		}
+
+		if ( in_array( $status_code, [ 'paid', 'declined', 'cancelled', 'expired', 'error' ], true ) && function_exists( 'crm_merchant_tg_sync_order_status' ) ) {
+			$result['merchant_telegram'] = crm_merchant_tg_sync_order_status(
+				$order_id,
+				[
+					'source_code'       => $source_code !== '' ? $source_code : 'system',
+					'send_notification' => $status_code === 'paid' && ! in_array( $source_code, [ 'telegram_merchant_manual' ], true ),
+				]
+			);
+		}
+
+		return $result;
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_run_paid_order_side_effects' ) ) {
+	function crm_fintech_run_paid_order_side_effects( int $order_id, string $source_code = 'system' ): array {
+		return crm_fintech_run_terminal_order_side_effects( $order_id, 'paid', $source_code );
+	}
 }
 
 // ─── Callback hook subscriber ─────────────────────────────────────────────────
@@ -737,11 +783,9 @@ function crm_fintech_process_callback( array $event, array $payload, array $head
 	$now         = current_time( 'mysql' );
 
 	// Дубликат в терминальном статусе — просто отмечаем как duplicate
-	$terminal = [ 'paid', 'declined', 'cancelled', 'expired' ];
+	$terminal = [ 'paid', 'declined', 'cancelled', 'expired', 'error' ];
 	if ( in_array( $old_status, $terminal, true ) && $old_status === $new_status ) {
-		if ( $new_status === 'paid' ) {
-			crm_merchant_create_paid_order_accrual( $order_db_id, 'callback_duplicate' );
-		}
+		crm_fintech_run_terminal_order_side_effects( $order_db_id, $new_status, 'callback_duplicate' );
 
 		if ( $callback_id ) {
 			$wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
@@ -841,7 +885,7 @@ function crm_fintech_process_callback( array $event, array $payload, array $head
 		],
 	] );
 
-	if ( $new_status === 'paid' ) {
-		crm_merchant_create_paid_order_accrual( $order_db_id, 'callback' );
+	if ( in_array( $new_status, [ 'paid', 'declined', 'cancelled', 'expired', 'error' ], true ) ) {
+		crm_fintech_run_terminal_order_side_effects( $order_db_id, $new_status, 'callback' );
 	}
 }

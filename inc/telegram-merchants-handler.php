@@ -66,7 +66,8 @@ if ( ! function_exists( 'tg_project_should_bypass_acl' ) ) {
 			function_exists( 'crm_telegram_get_callback_bot_context' )
 			&& crm_telegram_get_callback_bot_context() === 'service'
 		) {
-			return false;
+			return function_exists( 'crm_service_tg_should_bypass_acl' )
+				&& crm_service_tg_should_bypass_acl( $data, $ctx );
 		}
 
 		if (
@@ -99,7 +100,8 @@ if ( ! function_exists( 'tg_project_handle_start_command' ) ) {
 			function_exists( 'crm_telegram_get_callback_bot_context' )
 			&& crm_telegram_get_callback_bot_context() === 'service'
 		) {
-			return false;
+			return function_exists( 'crm_service_tg_handle_start_command' )
+				&& crm_service_tg_handle_start_command( $text, $ctx, $telegram, $data );
 		}
 
 		if (
@@ -205,6 +207,9 @@ if ( ! function_exists( 'tg_project_handle_start_command' ) ) {
 		}
 		$markup_basis = crm_merchant_normalize_markup_basis( (string) ( $prefill['base_markup_basis'] ?? 'acquirer_cost' ) );
 		$rub_invoice_markup_mode = crm_merchant_normalize_rub_invoice_markup_mode( (string) ( $prefill['rub_invoice_markup_mode'] ?? 'none' ) );
+		$enabled_invoice_directions = function_exists( 'crm_merchant_resolve_invoice_directions_for_company' )
+			? crm_merchant_resolve_invoice_directions_for_company( $company_id, $prefill['enabled_invoice_directions'] ?? null, true )
+			: [];
 
 		$markup_value = trim( (string) ( $prefill['base_markup_value'] ?? '0' ) );
 		if ( $markup_value === '' || ! is_numeric( $markup_value ) ) {
@@ -397,6 +402,9 @@ if ( ! function_exists( 'tg_project_handle_start_command' ) ) {
 				'base_markup_basis'      => $markup_basis,
 				'rub_invoice_markup_mode'=> $rub_invoice_markup_mode,
 				'base_markup_value'      => $markup_value,
+				'enabled_invoice_directions_json' => function_exists( 'crm_merchant_encode_invoice_directions' )
+					? crm_merchant_encode_invoice_directions( $enabled_invoice_directions )
+					: null,
 				'note'                   => ! empty( $prefill['note'] ) ? sanitize_textarea_field( (string) $prefill['note'] ) : null,
 				'created_by_user_id'     => ! empty( $invite->created_by_user_id ) ? (int) $invite->created_by_user_id : null,
 				'invited_via_invite_id'  => (int) $invite->id,
@@ -406,7 +414,7 @@ if ( ! function_exists( 'tg_project_handle_start_command' ) ) {
 			],
 			[
 				'%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s',
-				'%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s',
+				'%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s',
 			]
 		);
 
@@ -467,6 +475,7 @@ if ( ! function_exists( 'tg_project_handle_start_command' ) ) {
 					'telegram_start_payload'=> $payload,
 					'chat_id'              => $chat_id,
 					'telegram_username'    => ! empty( $ctx['username'] ) ? (string) $ctx['username'] : null,
+					'enabled_invoice_directions' => $enabled_invoice_directions,
 				],
 			]
 		);

@@ -71,7 +71,7 @@ function crm_fintech_cron_poll_orders(): void {
 	$updated  = 0;
 
 	foreach ( $orders as $order ) {
-		$poll = crm_fintech_poll_order_status( $order );
+		$poll = crm_fintech_poll_order_status( $order, 'cron' );
 
 		if ( $poll['changed'] ) {
 			$updated++;
@@ -107,6 +107,10 @@ function crm_fintech_cron_poll_orders(): void {
  * Возвращает true если уведомление успешно отправлено.
  */
 function crm_fintech_cron_notify_telegram( object $order ): bool {
+	if ( (string) ( $order->created_for_type ?? '' ) === 'merchant' ) {
+		return false;
+	}
+
 	$telegram_sources = [ 'telegram', 'telegram_operator', 'telegram_merchant', 'telegram_service' ];
 	if ( ! in_array( (string) ( $order->source_channel ?? '' ), $telegram_sources, true ) ) {
 		return false;

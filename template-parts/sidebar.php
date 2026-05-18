@@ -31,6 +31,10 @@ $root_offices_url = home_url('/root-offices/');
 $root_merchants_url = home_url('/root-merchants/');
 $root_rate_pairs_url = home_url('/root-rate-pairs/');
 $root_fintech_providers_url = home_url('/root-fintech-providers/');
+$roadmap_url = function_exists( 'crm_get_product_roadmap_url' ) ? crm_get_product_roadmap_url() : home_url( '/roadmap/' );
+$release_notes_url = function_exists( 'crm_get_product_release_notes_url' ) ? crm_get_product_release_notes_url() : home_url( '/release-notes/' );
+$can_view_roadmap = function_exists( 'crm_can_access' ) ? crm_can_access( 'roadmap.view' ) : is_user_logged_in();
+$can_view_release_notes = function_exists( 'crm_can_access' ) ? crm_can_access( 'release_notes.view' ) : is_user_logged_in();
 ?>
 
 <nav class="page-sidebar<?php echo $is_root ? ' page-sidebar-root' : ''; ?>" data-pages="sidebar">
@@ -131,6 +135,29 @@ $root_fintech_providers_url = home_url('/root-fintech-providers/');
                 </a>
                 <span class="icon-thumbnail"><i class="pg-icon">card</i></span>
             </li>
+            <?php if ( $can_view_roadmap || $can_view_release_notes ) : ?>
+            <li class="m-b-40">
+                <a href="javascript:;">
+                    <span class="title">Продукт</span>
+                    <span class="arrow"></span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">flag</i></span>
+                <ul class="sub-menu">
+                    <?php if ( $can_view_roadmap ) : ?>
+                    <li>
+                        <a href="<?php echo esc_url( $roadmap_url ); ?>">Roadmap</a>
+                        <span class="icon-thumbnail"><i class="pg-icon">map</i></span>
+                    </li>
+                    <?php endif; ?>
+                    <?php if ( $can_view_release_notes ) : ?>
+                    <li>
+                        <a href="<?php echo esc_url( $release_notes_url ); ?>">Release Notes</a>
+                        <span class="icon-thumbnail"><i class="pg-icon">clipboard</i></span>
+                    </li>
+                    <?php endif; ?>
+                </ul>
+            </li>
+            <?php endif; ?>
             <?php else : ?>
             <li class="m-t-20">
                 <a href="<?php echo esc_url($dashboard_url); ?>">
@@ -208,12 +235,35 @@ $root_fintech_providers_url = home_url('/root-fintech-providers/');
                 </a>
                 <span class="icon-thumbnail"><i class="pg-icon">settings</i></span>
             </li>
-            <li class="m-b-40">
+            <li class="">
                 <a href="<?php echo esc_url(home_url('/logs/')); ?>">
                     <span class="title">Логи</span>
                 </a>
                 <span class="icon-thumbnail"><i class="pg-icon">clipboard</i></span>
             </li>
+            <?php if ( $can_view_roadmap || $can_view_release_notes ) : ?>
+            <li class="m-b-40">
+                <a href="javascript:;">
+                    <span class="title">Продукт</span>
+                    <span class="arrow"></span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">flag</i></span>
+                <ul class="sub-menu">
+                    <?php if ( $can_view_roadmap ) : ?>
+                    <li>
+                        <a href="<?php echo esc_url( $roadmap_url ); ?>">Roadmap</a>
+                        <span class="icon-thumbnail"><i class="pg-icon">map</i></span>
+                    </li>
+                    <?php endif; ?>
+                    <?php if ( $can_view_release_notes ) : ?>
+                    <li>
+                        <a href="<?php echo esc_url( $release_notes_url ); ?>">Release Notes</a>
+                        <span class="icon-thumbnail"><i class="pg-icon">clipboard</i></span>
+                    </li>
+                    <?php endif; ?>
+                </ul>
+            </li>
+            <?php endif; ?>
             <?php endif; ?>
         </ul>
         <div class="clearfix"></div>

@@ -38,6 +38,18 @@ if ( ! function_exists( 'crm_merchant_tg_escape' ) ) {
 	}
 }
 
+if ( ! function_exists( 'crm_merchant_tg_safe_json_decode' ) ) {
+	function crm_merchant_tg_safe_json_decode( $value ): array {
+		if ( ! is_string( $value ) || trim( $value ) === '' || trim( $value ) === 'null' ) {
+			return [];
+		}
+
+		$decoded = json_decode( $value, true );
+
+		return is_array( $decoded ) ? $decoded : [];
+	}
+}
+
 if ( ! function_exists( 'crm_merchant_tg_require_telegram_class' ) ) {
 	function crm_merchant_tg_require_telegram_class(): bool {
 		if ( class_exists( 'Telegram' ) ) {
@@ -338,6 +350,32 @@ if ( ! function_exists( 'crm_merchant_tg_send_message' ) ) {
 	}
 }
 
+if ( ! function_exists( 'crm_merchant_tg_send_photo' ) ) {
+	function crm_merchant_tg_send_photo( $telegram, string $chat_id, string $photo_url, string $caption = '', ?array $keyboard = null ): array {
+		$chat_id   = trim( $chat_id );
+		$photo_url = trim( $photo_url );
+
+		if ( ! $telegram || $chat_id === '' || $photo_url === '' ) {
+			return [ 'ok' => false ];
+		}
+
+		$payload = [
+			'chat_id' => $chat_id,
+			'photo'   => $photo_url,
+		];
+
+		if ( $caption !== '' ) {
+			$payload['caption']    = $caption;
+			$payload['parse_mode'] = 'HTML';
+		}
+		if ( $keyboard !== null ) {
+			$payload['reply_markup'] = wp_json_encode( $keyboard, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
+		}
+
+		return (array) $telegram->sendPhoto( $payload );
+	}
+}
+
 if ( ! function_exists( 'crm_merchant_tg_edit_message' ) ) {
 	function crm_merchant_tg_edit_message( $telegram, string $chat_id, int $message_id, string $text, ?array $keyboard = null ): array {
 		if ( ! $telegram || $chat_id === '' || $message_id <= 0 ) {
@@ -356,6 +394,317 @@ if ( ! function_exists( 'crm_merchant_tg_edit_message' ) ) {
 		}
 
 		return (array) $telegram->editMessageText( $payload );
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_edit_message_caption' ) ) {
+	function crm_merchant_tg_edit_message_caption( $telegram, string $chat_id, int $message_id, string $caption, ?array $keyboard = null ): array {
+		if ( ! $telegram || $chat_id === '' || $message_id <= 0 ) {
+			return [ 'ok' => false ];
+		}
+
+		$payload = [
+			'chat_id'    => $chat_id,
+			'message_id' => $message_id,
+			'caption'    => $caption,
+			'parse_mode' => 'HTML',
+		];
+		if ( $keyboard !== null ) {
+			$payload['reply_markup'] = wp_json_encode( $keyboard, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
+		}
+
+		return (array) $telegram->editMessageCaption( $payload );
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_telegram_response_ok' ) ) {
+	function crm_merchant_tg_telegram_response_ok( array $response ): bool {
+		if ( ! empty( $response['ok'] ) ) {
+			return true;
+		}
+
+		$description = strtolower( trim( (string) ( $response['description'] ?? '' ) ) );
+
+		return $description !== '' && strpos( $description, 'message is not modified' ) !== false;
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_merge_order_meta' ) ) {
+	function crm_merchant_tg_merge_order_meta( int $order_id, int $company_id, array $meta_patch ): array {
+		global $wpdb;
+
+		$result = [
+			'ok'   => false,
+			'meta' => [],
+		];
+
+		if ( $order_id <= 0 || $company_id <= 0 || empty( $meta_patch ) ) {
+			return $result;
+		}
+
+		$raw_meta = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT meta_json FROM crm_fintech_payment_orders WHERE id = %d AND company_id = %d LIMIT 1',
+				$order_id,
+				$company_id
+			)
+		);
+
+		if ( null === $raw_meta ) {
+			return $result;
+		}
+
+		$meta    = crm_merchant_tg_safe_json_decode( (string) $raw_meta );
+		$updated = array_merge( $meta, $meta_patch );
+		$json    = wp_json_encode( $updated, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
+
+		if ( ! is_string( $json ) || $json === '' ) {
+			return $result;
+		}
+
+		$write = $wpdb->update(
+			'crm_fintech_payment_orders',
+			[ 'meta_json' => $json ],
+			[
+				'id'         => $order_id,
+				'company_id' => $company_id,
+			],
+			[ '%s' ],
+			[ '%d', '%d' ]
+		);
+
+		$result['ok']   = false !== $write;
+		$result['meta'] = $updated;
+
+		return $result;
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_get_order_meta' ) ) {
+	function crm_merchant_tg_get_order_meta( int $order_id, int $company_id ): array {
+		global $wpdb;
+
+		if ( $order_id <= 0 || $company_id <= 0 ) {
+			return [];
+		}
+
+		$raw_meta = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT meta_json FROM crm_fintech_payment_orders WHERE id = %d AND company_id = %d LIMIT 1',
+				$order_id,
+				$company_id
+			)
+		);
+
+		if ( null === $raw_meta ) {
+			return [];
+		}
+
+		return crm_merchant_tg_safe_json_decode( (string) $raw_meta );
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_normalize_message_id_list' ) ) {
+	function crm_merchant_tg_normalize_message_id_list( $raw_list ): array {
+		$list = is_array( $raw_list ) ? $raw_list : [];
+		$out  = [];
+
+		foreach ( $list as $message_id ) {
+			$message_id = (int) $message_id;
+			if ( $message_id > 0 ) {
+				$out[] = $message_id;
+			}
+		}
+
+		return array_values( array_unique( $out ) );
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_append_message_id_list' ) ) {
+	function crm_merchant_tg_append_message_id_list( $raw_list, int $message_id ): array {
+		$list = crm_merchant_tg_normalize_message_id_list( $raw_list );
+		if ( $message_id > 0 ) {
+			$list[] = $message_id;
+		}
+
+		return array_values( array_unique( array_filter( array_map( 'intval', $list ) ) ) );
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_store_invoice_message_context' ) ) {
+	function crm_merchant_tg_store_invoice_message_context( int $order_id, int $company_id, int $merchant_id, string $chat_id, string $message_type, array $telegram_response ): array {
+		$message_id = (int) ( $telegram_response['result']['message_id'] ?? 0 );
+		$message_type = sanitize_key( $message_type );
+
+		$result = [
+			'ok'           => false,
+			'message_id'   => $message_id,
+			'message_type' => in_array( $message_type, [ 'photo', 'text' ], true ) ? $message_type : 'text',
+		];
+
+		if ( $order_id <= 0 || $company_id <= 0 || $merchant_id <= 0 || $chat_id === '' || $message_id <= 0 ) {
+			return $result;
+		}
+
+		$current_meta = crm_merchant_tg_get_order_meta( $order_id, $company_id );
+
+		$meta_write = crm_merchant_tg_merge_order_meta(
+			$order_id,
+			$company_id,
+			[
+				'merchant_tg_receipt_chat_id'      => $chat_id,
+				'merchant_tg_receipt_message_id'   => $message_id,
+				'merchant_tg_receipt_message_type' => $result['message_type'],
+				'merchant_tg_receipt_message_ids'  => crm_merchant_tg_append_message_id_list( $current_meta['merchant_tg_receipt_message_ids'] ?? [], $message_id ),
+				'merchant_tg_receipt_stored_at'    => current_time( 'mysql', true ),
+			]
+		);
+
+		$result['ok'] = ! empty( $meta_write['ok'] );
+
+		crm_log(
+			$result['ok'] ? 'merchant.telegram.invoice_message_bound' : 'merchant.telegram.invoice_message_bind_failed',
+			[
+				'category'    => 'payments',
+				'level'       => $result['ok'] ? 'info' : 'warning',
+				'action'      => 'telegram_message_bind',
+				'message'     => $result['ok']
+					? 'Merchant invoice message linked to payment order.'
+					: 'Failed to link merchant invoice message to payment order.',
+				'target_type' => 'payment_order',
+				'target_id'   => $order_id,
+				'org_id'      => $company_id,
+				'is_success'  => $result['ok'],
+				'context'     => [
+					'merchant_id'   => $merchant_id,
+					'chat_id'       => $chat_id,
+					'message_id'    => $message_id,
+					'message_type'  => $result['message_type'],
+				],
+			]
+		);
+
+		return $result;
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_payout_message_html' ) ) {
+	function crm_merchant_tg_payout_message_html( object $merchant, array $payout, string $receipt_link_html = '' ): string {
+		$company_id     = (int) ( $merchant->company_id ?? 0 );
+		$payout_id      = (int) ( $payout['payout_id'] ?? 0 );
+		$amount         = (float) ( $payout['amount'] ?? 0 );
+		$network        = trim( (string) ( $payout['network'] ?? '' ) );
+		$wallet_address = trim( (string) ( $payout['wallet_address'] ?? '' ) );
+		$tx_hash        = trim( (string) ( $payout['tx_hash'] ?? '' ) );
+		$notes          = trim( (string) ( $payout['notes'] ?? '' ) );
+		$paid_at        = trim( (string) ( $payout['paid_at'] ?? '' ) );
+
+		$message = crm_tg_receipt_block(
+			[
+				[
+					'label' => 'AMOUNT:',
+					'value' => $amount > 0 ? crm_tg_receipt_format_amount( $amount, 'USDT', 8, true ) : '—',
+				],
+				[
+					'label' => 'NETWORK:',
+					'value' => $network !== '' ? $network : '—',
+				],
+				[
+					'label' => 'STATUS:',
+					'value' => 'Completed',
+				],
+			],
+			[
+				[
+					'label' => 'TIME:',
+					'value' => $paid_at !== '' ? crm_format_dt( $paid_at, $company_id ) : '—',
+				],
+				[
+					'label' => 'ID:',
+					'value' => $payout_id > 0 ? '#' . $payout_id : '—',
+				],
+			],
+			[
+				'The payout has been recorded',
+				'Please review the details below',
+			],
+			'PAYOUT RECEIPT'
+		);
+
+		$details = [];
+		if ( $wallet_address !== '' ) {
+			$details[] = '<b>WALLET</b>' . "\n" . '<code>' . crm_merchant_tg_escape( $wallet_address ) . '</code>';
+		}
+		if ( $tx_hash !== '' ) {
+			$details[] = '<b>TX HASH</b>' . "\n" . '<code>' . crm_merchant_tg_escape( $tx_hash ) . '</code>';
+		}
+		if ( $notes !== '' ) {
+			$details[] = '<b>COMMENT</b>' . "\n" . nl2br( crm_merchant_tg_escape( $notes ) );
+		}
+		if ( $receipt_link_html !== '' ) {
+			$details[] = '<b>RECEIPT IMAGE</b>' . "\n" . $receipt_link_html;
+		}
+
+		if ( ! empty( $details ) ) {
+			$message .= "\n\n" . implode( "\n\n", $details );
+		}
+
+		$message .= "\n\n<i>"
+			. crm_merchant_tg_escape( 'Пожалуйста, как только средства будут зачислены на ваш кошелёк, подтвердите это кнопкой ниже. До подтверждения следующий платёж может не быть выполнен в автоматическом режиме.' )
+			. '</i>';
+
+		return $message;
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_payout_confirmation_callback_data' ) ) {
+	function crm_merchant_tg_payout_confirmation_callback_data( int $payout_id ): string {
+		return 'm:payout:confirm:' . max( 0, $payout_id );
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_payout_confirmation_keyboard' ) ) {
+	function crm_merchant_tg_payout_confirmation_keyboard( int $payout_id ): ?array {
+		if ( $payout_id <= 0 ) {
+			return null;
+		}
+
+		return [
+			'inline_keyboard' => [
+				[
+					[
+						'text'          => '✅ Подтвердить платёж',
+						'callback_data' => crm_merchant_tg_payout_confirmation_callback_data( $payout_id ),
+					],
+				],
+			],
+		];
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_payout_belongs_to_merchant' ) ) {
+	function crm_merchant_tg_payout_belongs_to_merchant( int $company_id, int $merchant_id, int $payout_id ): bool {
+		global $wpdb;
+
+		if ( $company_id <= 0 || $merchant_id <= 0 || $payout_id <= 0 ) {
+			return false;
+		}
+
+		$exists = (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT id
+				 FROM crm_merchant_payouts
+				 WHERE id = %d
+				   AND company_id = %d
+				   AND merchant_id = %d
+				 LIMIT 1",
+				$payout_id,
+				$company_id,
+				$merchant_id
+			)
+		);
+
+		return $exists > 0;
 	}
 }
 
@@ -489,16 +838,13 @@ if ( ! function_exists( 'crm_merchant_tg_invoice_direction_definitions' ) ) {
 
 if ( ! function_exists( 'crm_merchant_tg_normalize_invoice_direction_code' ) ) {
 	function crm_merchant_tg_normalize_invoice_direction_code( string $code ): string {
+		if ( function_exists( 'crm_merchant_normalize_invoice_direction_code' ) ) {
+			return crm_merchant_normalize_invoice_direction_code( $code );
+		}
+
 		$code = trim( $code );
-		if ( $code === '' ) {
-			return '';
-		}
 
-		if ( function_exists( 'crm_normalize_legacy_pair_code' ) ) {
-			return (string) crm_normalize_legacy_pair_code( $code );
-		}
-
-		return strtoupper( $code );
+		return $code !== '' ? strtoupper( $code ) : '';
 	}
 }
 
@@ -510,8 +856,8 @@ if ( ! function_exists( 'crm_merchant_tg_available_invoice_directions' ) ) {
 		}
 
 		$definitions   = crm_merchant_tg_invoice_direction_definitions();
-		$enabled_codes = function_exists( 'crm_company_get_enabled_invoice_directions' )
-			? crm_company_get_enabled_invoice_directions( $company_id )
+		$enabled_codes = function_exists( 'crm_merchant_resolve_invoice_directions_from_row' )
+			? crm_merchant_resolve_invoice_directions_from_row( $merchant, true )
 			: [];
 		$available = [];
 
@@ -1017,6 +1363,535 @@ if ( ! function_exists( 'crm_merchant_tg_rub_invoice_success_text' ) ) {
 		}
 
 		return $text;
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_rub_invoice_paid_keyboard' ) ) {
+	function crm_merchant_tg_rub_invoice_paid_keyboard(): array {
+		return [
+			'inline_keyboard' => [
+				[
+					[ 'text' => '🟢 Оплачен', 'callback_data' => 'm:orders:paid' ],
+				],
+				[
+					[ 'text' => '📂 Мои счета', 'callback_data' => 'm:orders' ],
+					[ 'text' => '↩ Меню',      'callback_data' => 'm:main' ],
+				],
+			],
+		];
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_rub_invoice_terminal_keyboard' ) ) {
+	function crm_merchant_tg_rub_invoice_terminal_keyboard(): array {
+		return [
+			'inline_keyboard' => [
+				[
+					[ 'text' => '📂 Мои счета', 'callback_data' => 'm:orders' ],
+					[ 'text' => '↩ Меню',      'callback_data' => 'm:main' ],
+				],
+			],
+		];
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_rub_invoice_terminal_descriptor' ) ) {
+	function crm_merchant_tg_rub_invoice_terminal_descriptor( string $status_code ): array {
+		$status_code = sanitize_key( $status_code );
+
+		$map = [
+			'declined'  => [
+				'title'         => '❌ <b>Платёж отклонён</b>',
+				'status_label'  => 'Declined',
+				'info_text'     => 'Провайдер отклонил платёж. Ссылка на оплату больше недействительна.',
+				'timestamp_key' => 'declined_at',
+				'timestamp_label' => 'Отклонён',
+			],
+			'cancelled' => [
+				'title'         => '🚫 <b>Счёт отменён</b>',
+				'status_label'  => 'Cancelled',
+				'info_text'     => 'Счёт отменён. Ссылка на оплату больше недействительна.',
+				'timestamp_key' => 'cancelled_at',
+				'timestamp_label' => 'Отменён',
+			],
+			'expired'   => [
+				'title'         => '⏰ <b>Срок оплаты истёк</b>',
+				'status_label'  => 'Expired',
+				'info_text'     => 'Срок оплаты истёк. Счёт больше недоступен для оплаты.',
+				'timestamp_key' => 'expired_at',
+				'timestamp_label' => 'Истёк',
+			],
+			'error'     => [
+				'title'         => '⚠️ <b>Счёт недоступен</b>',
+				'status_label'  => 'Error',
+				'info_text'     => 'Счёт закрыт из-за ошибки. Ссылка на оплату больше недоступна.',
+				'timestamp_key' => 'updated_at',
+				'timestamp_label' => 'Закрыт',
+			],
+		];
+
+		return $map[ $status_code ] ?? [
+			'title'           => '⚠️ <b>Счёт закрыт</b>',
+			'status_label'    => strtoupper( $status_code !== '' ? $status_code : 'closed' ),
+			'info_text'       => 'Счёт больше недоступен для оплаты.',
+			'timestamp_key'   => 'updated_at',
+			'timestamp_label' => 'Закрыт',
+		];
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_rub_invoice_paid_text_from_order' ) ) {
+	function crm_merchant_tg_rub_invoice_paid_text_from_order( object $order ): string {
+		$order_meta        = crm_merchant_tg_safe_json_decode( (string) ( $order->meta_json ?? '' ) );
+		$merchant_meta     = crm_merchant_tg_safe_json_decode( (string) ( $order->merchant_meta_json ?? '' ) );
+		$payment_link      = trim( (string) ( $order->payment_link ?? '' ) );
+		$payment_amount_rub = $order->payment_amount_value !== null
+			? (float) $order->payment_amount_value
+			: (float) ( $merchant_meta['payment_amount_rub'] ?? 0 );
+		$requested_rub_input = $order->merchant_requested_rub_value !== null
+			? (float) $order->merchant_requested_rub_value
+			: (float) ( $merchant_meta['merchant_requested_rub_input'] ?? 0 );
+		$markup_added_rub = (float) ( $merchant_meta['merchant_markup_added_rub'] ?? $order_meta['merchant_markup_added_rub'] ?? 0 );
+		$rub_invoice_markup_mode = (string) ( $merchant_meta['rub_invoice_markup_mode'] ?? $order_meta['rub_invoice_markup_mode'] ?? 'none' );
+		$merchant_payable = function_exists( 'crm_merchant_order_payable_amount' )
+			? crm_merchant_order_payable_amount( $order )
+			: ( isset( $order->merchant_payable_value ) ? (float) $order->merchant_payable_value : 0.0 );
+		$current_rate      = (float) ( $merchant_meta['merchant_rate'] ?? 0 );
+		$merchant_order_id = trim( (string) ( $order->merchant_order_id ?? '' ) );
+		$receipt_id        = ! empty( $order->id ) ? '#' . (int) $order->id : $merchant_order_id;
+		$payment_purpose   = trim( (string) ( $merchant_meta['payment_purpose'] ?? $order_meta['payment_purpose'] ?? '' ) );
+		$paid_at_label     = ! empty( $order->paid_at )
+			? mysql2date( 'd.m.Y H:i', (string) $order->paid_at )
+			: current_time( 'd.m.Y H:i' );
+
+		$text = crm_tg_receipt_block(
+			[
+				[
+					'label' => 'FROM:',
+					'value' => crm_tg_receipt_format_amount( $payment_amount_rub, 'RUB', 2, true ),
+				],
+				[
+					'label' => 'RATE:',
+					'value' => crm_tg_receipt_format_number( $current_rate, 4, false ),
+				],
+				[
+					'label' => 'TO:',
+					'value' => crm_tg_receipt_format_amount( $merchant_payable, 'USDT', 4, true ),
+				],
+			],
+			[
+				[
+					'label' => 'TIME:',
+					'value' => $paid_at_label,
+				],
+				[
+					'label' => 'ID:',
+					'value' => $receipt_id !== '' ? $receipt_id : '—',
+				],
+				[
+					'label' => 'STATUS:',
+					'value' => 'Paid',
+				],
+				[
+					'label' => 'FEE:',
+					'value' => 'included',
+				],
+			],
+			[
+				'Thank you for choosing us',
+				'Always available for your operations',
+			]
+		);
+
+		if ( $payment_link !== '' ) {
+			$text .= "\n\nPayment link:\n<code>" . crm_merchant_tg_escape( $payment_link ) . '</code>';
+		}
+
+		if ( $payment_purpose !== '' ) {
+			$text .= "\n\nPayment purpose:\n<code>" . crm_merchant_tg_escape( $payment_purpose ) . '</code>';
+		}
+
+		if ( $rub_invoice_markup_mode === 'add_on_top' && $markup_added_rub > 0.000001 && $requested_rub_input > 0 ) {
+			$text .= "\n\nEntered amount:\n<code>" . crm_merchant_tg_escape( crm_merchant_tg_fmt_money( $requested_rub_input, 2 ) ) . " RUB</code>";
+			$text .= "\nMarkup on top:\n<code>+" . crm_merchant_tg_escape( crm_merchant_tg_fmt_money( $markup_added_rub, 2 ) ) . " RUB</code>";
+		}
+
+		return $text;
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_rub_invoice_terminal_text_from_order' ) ) {
+	function crm_merchant_tg_rub_invoice_terminal_text_from_order( object $order, string $status_code ): string {
+		$order_meta         = crm_merchant_tg_safe_json_decode( (string) ( $order->meta_json ?? '' ) );
+		$merchant_meta      = crm_merchant_tg_safe_json_decode( (string) ( $order->merchant_meta_json ?? '' ) );
+		$payment_amount_rub = $order->payment_amount_value !== null
+			? (float) $order->payment_amount_value
+			: (float) ( $merchant_meta['payment_amount_rub'] ?? 0 );
+		$requested_rub_input = $order->merchant_requested_rub_value !== null
+			? (float) $order->merchant_requested_rub_value
+			: (float) ( $merchant_meta['merchant_requested_rub_input'] ?? 0 );
+		$markup_added_rub = (float) ( $merchant_meta['merchant_markup_added_rub'] ?? $order_meta['merchant_markup_added_rub'] ?? 0 );
+		$rub_invoice_markup_mode = (string) ( $merchant_meta['rub_invoice_markup_mode'] ?? $order_meta['rub_invoice_markup_mode'] ?? 'none' );
+		$merchant_payable  = function_exists( 'crm_merchant_order_payable_amount' )
+			? crm_merchant_order_payable_amount( $order )
+			: ( isset( $order->merchant_payable_value ) ? (float) $order->merchant_payable_value : 0.0 );
+		$current_rate      = (float) ( $merchant_meta['merchant_rate'] ?? 0 );
+		$receipt_id        = ! empty( $order->id ) ? '#' . (int) $order->id : trim( (string) ( $order->merchant_order_id ?? '' ) );
+		$payment_purpose   = trim( (string) ( $merchant_meta['payment_purpose'] ?? $order_meta['payment_purpose'] ?? '' ) );
+		$descriptor        = crm_merchant_tg_rub_invoice_terminal_descriptor( $status_code );
+		$timestamp_key     = (string) ( $descriptor['timestamp_key'] ?? 'updated_at' );
+		$timestamp_raw     = trim( (string) ( $order->{$timestamp_key} ?? $order->updated_at ?? '' ) );
+		$timestamp_label   = $timestamp_raw !== ''
+			? mysql2date( 'd.m.Y H:i', $timestamp_raw )
+			: current_time( 'd.m.Y H:i' );
+
+		$text = $descriptor['title'] . "\n\n";
+		$text .= crm_tg_receipt_block(
+			[
+				[
+					'label' => 'FROM:',
+					'value' => crm_tg_receipt_format_amount( $payment_amount_rub, 'RUB', 2, true ),
+				],
+				[
+					'label' => 'RATE:',
+					'value' => crm_tg_receipt_format_number( $current_rate, 4, false ),
+				],
+				[
+					'label' => 'TO:',
+					'value' => crm_tg_receipt_format_amount( $merchant_payable, 'USDT', 4, true ),
+				],
+			],
+			[
+				[
+					'label' => 'TIME:',
+					'value' => $timestamp_label,
+				],
+				[
+					'label' => 'ID:',
+					'value' => $receipt_id !== '' ? $receipt_id : '—',
+				],
+				[
+					'label' => 'STATUS:',
+					'value' => (string) ( $descriptor['status_label'] ?? 'Closed' ),
+				],
+				[
+					'label' => 'NOTE:',
+					'value' => 'inactive',
+				],
+			],
+			[
+				(string) ( $descriptor['info_text'] ?? 'Счёт закрыт.' ),
+			]
+		);
+
+		$text .= "\n\n" . crm_merchant_tg_escape( (string) ( $descriptor['info_text'] ?? 'Счёт закрыт.' ) );
+
+		if ( $payment_purpose !== '' ) {
+			$text .= "\n\nPayment purpose:\n<code>" . crm_merchant_tg_escape( $payment_purpose ) . '</code>';
+		}
+
+		if ( $rub_invoice_markup_mode === 'add_on_top' && $markup_added_rub > 0.000001 && $requested_rub_input > 0 ) {
+			$text .= "\n\nEntered amount:\n<code>" . crm_merchant_tg_escape( crm_merchant_tg_fmt_money( $requested_rub_input, 2 ) ) . " RUB</code>";
+			$text .= "\nMarkup on top:\n<code>+" . crm_merchant_tg_escape( crm_merchant_tg_fmt_money( $markup_added_rub, 2 ) ) . " RUB</code>";
+		}
+
+		return $text;
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_paid_notification_text_from_order' ) ) {
+	function crm_merchant_tg_paid_notification_text_from_order( object $order ): string {
+		$merchant_payable = function_exists( 'crm_merchant_order_payable_amount' )
+			? crm_merchant_order_payable_amount( $order )
+			: ( isset( $order->merchant_payable_value ) ? (float) $order->merchant_payable_value : 0.0 );
+		$paid_at_label = ! empty( $order->paid_at )
+			? mysql2date( 'd.m.Y H:i', (string) $order->paid_at )
+			: current_time( 'd.m.Y H:i' );
+
+		$text  = "✅ <b>Платёж подтверждён</b>\n\n";
+		$text .= 'Счёт: <code>#' . (int) ( $order->id ?? 0 ) . "</code>\n";
+		$text .= 'Order ID: <code>' . crm_merchant_tg_escape( (string) ( $order->merchant_order_id ?? '' ) ) . "</code>\n";
+		$text .= 'К выплате мерчанту: <b>' . crm_tg_receipt_format_amount( $merchant_payable, 'USDT', 4, true ) . "</b>\n";
+		$text .= 'Оплачен: <b>' . crm_merchant_tg_escape( $paid_at_label ) . '</b>';
+
+		return $text;
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_sync_order_status' ) ) {
+	function crm_merchant_tg_sync_order_status( int $order_id, array $args = [] ): array {
+		global $wpdb;
+
+		$source_code       = sanitize_key( (string) ( $args['source_code'] ?? 'system' ) );
+		$send_notification = ! array_key_exists( 'send_notification', $args ) || (bool) $args['send_notification'];
+
+		$result = [
+			'ok'                   => false,
+			'order_id'             => $order_id,
+			'company_id'           => 0,
+			'merchant_id'          => 0,
+			'status_code'          => '',
+			'skipped'              => false,
+			'skip_reason'          => '',
+			'receipt_updated'      => false,
+			'receipt_deleted'      => false,
+			'receipt_replaced'     => false,
+			'replacement_message_id' => 0,
+			'notification_sent'    => false,
+			'notification_skipped' => false,
+			'errors'               => [],
+		];
+
+		if ( $order_id <= 0 ) {
+			$result['errors'][] = 'invalid_order_id';
+			return $result;
+		}
+
+		$order = $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT o.id, o.company_id, o.merchant_id, o.created_for_type, o.status_code, o.source_channel,
+					        o.merchant_order_id, o.payment_link, o.payment_amount_value, o.amount_asset_value,
+					        o.amount_asset_code, o.merchant_requested_rub_value, o.merchant_payable_value,
+					        o.platform_fee_value, o.referral_reward_value, o.meta_json, o.merchant_meta_json,
+					        o.created_at, o.updated_at, o.paid_at, o.declined_at, o.cancelled_at, o.expired_at,
+					        m.chat_id AS merchant_chat_id, m.status AS merchant_status
+					 FROM crm_fintech_payment_orders o
+					 LEFT JOIN crm_merchants m
+					   ON m.id = o.merchant_id
+				  AND m.company_id = o.company_id
+				 WHERE o.id = %d
+				 LIMIT 1",
+				$order_id
+			)
+		);
+
+		if ( ! $order ) {
+			$result['errors'][] = 'order_not_found';
+			return $result;
+		}
+
+		$result['company_id']  = (int) ( $order->company_id ?? 0 );
+		$result['merchant_id'] = (int) ( $order->merchant_id ?? 0 );
+		$result['status_code'] = (string) ( $order->status_code ?? '' );
+
+		if ( (int) $order->company_id <= 0 ) {
+			$result['errors'][] = 'invalid_company';
+			return $result;
+		}
+		if ( (string) $order->created_for_type !== 'merchant' ) {
+			$result['skipped']     = true;
+			$result['skip_reason'] = 'not_merchant_order';
+			return $result;
+		}
+
+		$status_code = sanitize_key( (string) $order->status_code );
+		$terminal_statuses = [ 'paid', 'declined', 'cancelled', 'expired', 'error' ];
+		if ( ! in_array( $status_code, $terminal_statuses, true ) ) {
+			$result['skipped']     = true;
+			$result['skip_reason'] = 'order_not_terminal';
+			return $result;
+		}
+
+		$meta                 = crm_merchant_tg_safe_json_decode( (string) ( $order->meta_json ?? '' ) );
+		$chat_id              = trim( (string) ( $meta['merchant_tg_receipt_chat_id'] ?? $order->merchant_chat_id ?? '' ) );
+		$receipt_message_id   = (int) ( $meta['merchant_tg_receipt_message_id'] ?? 0 );
+		$receipt_message_type = sanitize_key( (string) ( $meta['merchant_tg_receipt_message_type'] ?? '' ) );
+		$receipt_message_ids  = crm_merchant_tg_normalize_message_id_list( $meta['merchant_tg_receipt_message_ids'] ?? [] );
+		$deleted_message_ids  = crm_merchant_tg_normalize_message_id_list( $meta['merchant_tg_receipt_deleted_message_ids'] ?? [] );
+
+		if ( $chat_id === '' ) {
+			$result['errors'][] = 'merchant_chat_missing';
+			return $result;
+		}
+
+		$telegram_settings = function_exists( 'crm_telegram_collect_settings' )
+			? crm_telegram_collect_settings( (int) $order->company_id, 'merchant' )
+			: [];
+		$bot_token = trim( (string) ( $telegram_settings['bot_token'] ?? '' ) );
+		if ( $bot_token === '' || ! crm_merchant_tg_require_telegram_class() ) {
+			$result['errors'][] = 'merchant_bot_not_ready';
+			return $result;
+		}
+
+		$telegram   = new Telegram( $bot_token );
+		$meta_patch = [];
+		$meta_patch['merchant_tg_receipt_last_status_code']        = $status_code;
+		$meta_patch['merchant_tg_receipt_last_status_sync_at']     = current_time( 'mysql', true );
+		$meta_patch['merchant_tg_receipt_last_status_sync_source'] = $source_code !== '' ? $source_code : 'system';
+
+		if ( $status_code === 'paid' ) {
+			$keyboard     = crm_merchant_tg_rub_invoice_paid_keyboard();
+			$receipt_text = crm_merchant_tg_rub_invoice_paid_text_from_order( $order );
+
+			if ( $receipt_message_id > 0 ) {
+				$receipt_response = [ 'ok' => false ];
+
+				if ( $receipt_message_type === 'photo' ) {
+					$receipt_response = crm_merchant_tg_edit_message_caption( $telegram, $chat_id, $receipt_message_id, $receipt_text, $keyboard );
+				} elseif ( $receipt_message_type === 'text' ) {
+					$receipt_response = crm_merchant_tg_edit_message( $telegram, $chat_id, $receipt_message_id, $receipt_text, $keyboard );
+				} else {
+					$receipt_response = crm_merchant_tg_edit_message_caption( $telegram, $chat_id, $receipt_message_id, $receipt_text, $keyboard );
+					if ( ! crm_merchant_tg_telegram_response_ok( $receipt_response ) ) {
+						$receipt_response = crm_merchant_tg_edit_message( $telegram, $chat_id, $receipt_message_id, $receipt_text, $keyboard );
+					}
+				}
+
+				if ( crm_merchant_tg_telegram_response_ok( $receipt_response ) ) {
+					$result['receipt_updated'] = true;
+					$meta_patch['merchant_tg_receipt_message_ids'] = crm_merchant_tg_append_message_id_list( $receipt_message_ids, $receipt_message_id );
+					$meta_patch['merchant_tg_receipt_paid_synced_at'] = current_time( 'mysql', true );
+					$meta_patch['merchant_tg_receipt_paid_sync_source'] = $source_code !== '' ? $source_code : 'system';
+				} else {
+					$result['errors'][] = 'receipt_update_failed:' . trim( (string) ( $receipt_response['description'] ?? 'unknown' ) );
+				}
+			}
+
+			$already_notified = ! empty( $meta['merchant_tg_paid_notify_sent_at'] );
+			if ( $send_notification && ! $already_notified ) {
+				$notify_response = crm_merchant_tg_send_message(
+					$telegram,
+					$chat_id,
+					crm_merchant_tg_paid_notification_text_from_order( $order ),
+					$keyboard
+				);
+
+				if ( crm_merchant_tg_telegram_response_ok( $notify_response ) ) {
+					$result['notification_sent'] = true;
+					$meta_patch['merchant_tg_paid_notify_sent_at'] = current_time( 'mysql', true );
+					$meta_patch['merchant_tg_paid_notify_message_id'] = (int) ( $notify_response['result']['message_id'] ?? 0 );
+					$meta_patch['merchant_tg_paid_notify_source'] = $source_code !== '' ? $source_code : 'system';
+				} else {
+					$result['errors'][] = 'notification_send_failed:' . trim( (string) ( $notify_response['description'] ?? 'unknown' ) );
+				}
+			} else {
+				$result['notification_skipped'] = true;
+			}
+		} else {
+			$keyboard     = crm_merchant_tg_rub_invoice_terminal_keyboard();
+			$receipt_text = crm_merchant_tg_rub_invoice_terminal_text_from_order( $order, $status_code );
+
+			if ( $receipt_message_id > 0 && $receipt_message_type === 'photo' ) {
+				$deleted = crm_merchant_tg_delete_message( $telegram, $chat_id, $receipt_message_id );
+
+				if ( $deleted ) {
+					$result['receipt_deleted'] = true;
+					$deleted_message_ids = crm_merchant_tg_append_message_id_list( $deleted_message_ids, $receipt_message_id );
+					$meta_patch['merchant_tg_receipt_deleted_message_ids'] = $deleted_message_ids;
+					$meta_patch['merchant_tg_receipt_message_id'] = 0;
+					$meta_patch['merchant_tg_receipt_message_type'] = 'text';
+				} else {
+					$receipt_response = crm_merchant_tg_edit_message_caption( $telegram, $chat_id, $receipt_message_id, $receipt_text, $keyboard );
+					if ( crm_merchant_tg_telegram_response_ok( $receipt_response ) ) {
+						$result['receipt_updated'] = true;
+						$meta_patch['merchant_tg_receipt_message_ids'] = crm_merchant_tg_append_message_id_list( $receipt_message_ids, $receipt_message_id );
+					} else {
+						$result['errors'][] = 'receipt_delete_failed:' . trim( (string) ( $receipt_response['description'] ?? 'unknown' ) );
+					}
+				}
+			}
+
+			if ( ! $result['receipt_updated'] && ! $result['receipt_deleted'] && $receipt_message_id > 0 && $receipt_message_type !== 'photo' ) {
+				$receipt_response = [ 'ok' => false ];
+
+				if ( $receipt_message_type === 'text' ) {
+					$receipt_response = crm_merchant_tg_edit_message( $telegram, $chat_id, $receipt_message_id, $receipt_text, $keyboard );
+				} else {
+					$receipt_response = crm_merchant_tg_edit_message( $telegram, $chat_id, $receipt_message_id, $receipt_text, $keyboard );
+					if ( ! crm_merchant_tg_telegram_response_ok( $receipt_response ) ) {
+						$receipt_response = crm_merchant_tg_edit_message_caption( $telegram, $chat_id, $receipt_message_id, $receipt_text, $keyboard );
+					}
+				}
+
+				if ( crm_merchant_tg_telegram_response_ok( $receipt_response ) ) {
+					$result['receipt_updated'] = true;
+					$meta_patch['merchant_tg_receipt_message_ids'] = crm_merchant_tg_append_message_id_list( $receipt_message_ids, $receipt_message_id );
+				}
+			}
+
+			if ( ! $result['receipt_updated'] ) {
+				if ( $receipt_message_id > 0 && ! $result['receipt_deleted'] ) {
+					$deleted = crm_merchant_tg_delete_message( $telegram, $chat_id, $receipt_message_id );
+					if ( $deleted ) {
+						$result['receipt_deleted'] = true;
+						$deleted_message_ids = crm_merchant_tg_append_message_id_list( $deleted_message_ids, $receipt_message_id );
+						$meta_patch['merchant_tg_receipt_deleted_message_ids'] = $deleted_message_ids;
+						$meta_patch['merchant_tg_receipt_message_id'] = 0;
+						$meta_patch['merchant_tg_receipt_message_type'] = 'text';
+					}
+				}
+
+				$replacement_response = crm_merchant_tg_send_message( $telegram, $chat_id, $receipt_text, $keyboard );
+
+				if ( crm_merchant_tg_telegram_response_ok( $replacement_response ) ) {
+					$new_message_id = (int) ( $replacement_response['result']['message_id'] ?? 0 );
+					$result['receipt_replaced'] = true;
+					$result['replacement_message_id'] = $new_message_id;
+					$meta_patch['merchant_tg_receipt_chat_id'] = $chat_id;
+					$meta_patch['merchant_tg_receipt_message_id'] = $new_message_id;
+					$meta_patch['merchant_tg_receipt_message_type'] = 'text';
+					$meta_patch['merchant_tg_receipt_message_ids'] = crm_merchant_tg_append_message_id_list( $receipt_message_ids, $new_message_id );
+					if ( ! empty( $deleted_message_ids ) ) {
+						$meta_patch['merchant_tg_receipt_deleted_message_ids'] = $deleted_message_ids;
+					}
+				} else {
+					$result['errors'][] = 'replacement_send_failed:' . trim( (string) ( $replacement_response['description'] ?? 'unknown' ) );
+				}
+			}
+
+			$result['notification_skipped'] = true;
+		}
+
+		if ( ! empty( $meta_patch ) ) {
+			$meta_write = crm_merchant_tg_merge_order_meta( $order_id, (int) $order->company_id, $meta_patch );
+			if ( empty( $meta_write['ok'] ) ) {
+				$result['errors'][] = 'meta_update_failed';
+			}
+		}
+
+		$result['ok'] = $result['receipt_updated']
+			|| $result['receipt_replaced']
+			|| $result['notification_sent']
+			|| ( $status_code === 'paid' && $result['notification_skipped'] && empty( $result['errors'] ) );
+
+		crm_log(
+			$result['ok'] ? 'merchant.telegram.order_status_synced' : 'merchant.telegram.order_status_sync_failed',
+			[
+				'category'    => 'payments',
+				'level'       => $result['ok'] ? 'info' : 'warning',
+				'action'      => 'telegram_status_sync',
+				'message'     => $result['ok']
+					? 'Merchant order status synced to Telegram.'
+					: 'Merchant order status Telegram sync finished with issues.',
+				'target_type' => 'payment_order',
+				'target_id'   => $order_id,
+				'org_id'      => (int) $order->company_id,
+				'is_success'  => $result['ok'],
+				'context'     => [
+					'status_code'          => $status_code,
+					'merchant_id'          => (int) $order->merchant_id,
+					'chat_id'              => $chat_id,
+					'receipt_message_id'   => $receipt_message_id,
+					'receipt_message_type' => $receipt_message_type,
+					'receipt_updated'      => $result['receipt_updated'],
+					'receipt_deleted'      => $result['receipt_deleted'],
+					'receipt_replaced'     => $result['receipt_replaced'],
+					'replacement_message_id' => $result['replacement_message_id'],
+					'notification_sent'    => $result['notification_sent'],
+					'notification_skipped' => $result['notification_skipped'],
+					'source_code'          => $source_code,
+					'errors'               => $result['errors'],
+				],
+			]
+		);
+
+		return $result;
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_sync_paid_order' ) ) {
+	function crm_merchant_tg_sync_paid_order( int $order_id, array $args = [] ): array {
+		return crm_merchant_tg_sync_order_status( $order_id, $args );
 	}
 }
 
@@ -2244,6 +3119,59 @@ if ( ! function_exists( 'crm_merchant_tg_route_callback' ) ) {
 
 		$session = crm_merchant_tg_session_get( $company_id, $chat_id );
 
+		if ( preg_match( '/^m:payout:confirm:(\d+)$/', $callback_data, $matches ) ) {
+			$payout_id = (int) $matches[1];
+
+			if ( ! crm_merchant_tg_payout_belongs_to_merchant( $company_id, (int) $access['merchant']->id, $payout_id ) ) {
+				if ( function_exists( 'tg_safe_answer_callback' ) ) {
+					tg_safe_answer_callback( $telegram, $ctx['callback_query_id'] ?? null, 'Выплата не найдена.', true );
+				}
+				return true;
+			}
+
+			$confirm_result = function_exists( 'crm_merchant_confirm_payout' )
+				? crm_merchant_confirm_payout( $company_id, (int) $access['merchant']->id, $payout_id )
+				: [
+					'success' => false,
+					'code'    => 'helper_missing',
+					'error'   => 'Подтверждение сейчас недоступно.',
+				];
+
+			$log_success = ! empty( $confirm_result['success'] );
+			$log_message = $log_success
+				? 'Мерчант подтвердил получение выплаты'
+				: 'Не удалось зафиксировать подтверждение выплаты от мерчанта';
+
+			crm_log_entity(
+				$log_success ? 'merchant.telegram.payout_confirmed' : 'merchant.telegram.payout_confirmation_failed',
+				'payouts',
+				'update',
+				$log_message,
+				'merchant_payout',
+				$payout_id,
+				[
+					'org_id'     => $company_id,
+					'is_success' => $log_success,
+					'level'      => $log_success ? 'info' : 'warning',
+					'context'    => [
+						'merchant_id' => (int) $access['merchant']->id,
+						'chat_id'     => $chat_id,
+						'code'        => (string) ( $confirm_result['code'] ?? '' ),
+					],
+				]
+			);
+
+			if ( function_exists( 'tg_safe_answer_callback' ) ) {
+				tg_safe_answer_callback(
+					$telegram,
+					$ctx['callback_query_id'] ?? null,
+					(string) ( $confirm_result['success'] ? ( $confirm_result['message'] ?? 'Спасибо, подтверждение получено.' ) : ( $confirm_result['error'] ?? 'Подтверждение сейчас недоступно.' ) ),
+					! $confirm_result['success']
+				);
+			}
+			return true;
+		}
+
 		if ( $callback_data === 'm:invoice:rub-usdt:purpose' ) {
 			if ( function_exists( 'tg_safe_answer_callback' ) ) {
 				tg_safe_answer_callback( $telegram, $ctx['callback_query_id'] ?? null, 'Жду назначение' );
@@ -2408,11 +3336,28 @@ if ( ! function_exists( 'crm_merchant_tg_route_message' ) ) {
 			$keyboard = crm_merchant_tg_rub_invoice_success_keyboard( (int) ( $result['order_db_id'] ?? 0 ) );
 			$caption  = crm_merchant_tg_rub_invoice_success_text( $result );
 			$qr_url   = trim( (string) ( $result['qr_url'] ?? '' ) );
+			$send_result = [ 'ok' => false ];
+			$message_type = 'text';
 
-			if ( $qr_url !== '' && function_exists( '_tg_orders_send_photo' ) ) {
-				_tg_orders_send_photo( $telegram, $chat_id, $qr_url, $caption, $keyboard );
-			} elseif ( function_exists( 'bot_send_message' ) ) {
-				bot_send_message( $telegram, $chat_id, $caption, $keyboard );
+			if ( $qr_url !== '' ) {
+				$send_result  = crm_merchant_tg_send_photo( $telegram, $chat_id, $qr_url, $caption, $keyboard );
+				$message_type = 'photo';
+			}
+
+			if ( empty( $send_result['ok'] ) ) {
+				$send_result  = crm_merchant_tg_send_message( $telegram, $chat_id, $caption, $keyboard );
+				$message_type = 'text';
+			}
+
+			if ( ! empty( $result['order_db_id'] ) ) {
+				crm_merchant_tg_store_invoice_message_context(
+					(int) $result['order_db_id'],
+					$company_id,
+					(int) $access['merchant']->id,
+					$chat_id,
+					$message_type,
+					$send_result
+				);
 			}
 
 			crm_merchant_tg_close_menu_anchor(
@@ -2563,5 +3508,113 @@ if ( ! function_exists( 'crm_merchant_tg_notify_activation_request_cancelled' ) 
 		);
 
 		return $sent;
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_notify_payout' ) ) {
+	function crm_merchant_tg_notify_payout( object $merchant, array $payout ): array {
+		$company_id  = (int) ( $merchant->company_id ?? 0 );
+		$merchant_id = (int) ( $merchant->id ?? 0 );
+		$chat_id     = trim( (string) ( $merchant->chat_id ?? '' ) );
+		$payout_id   = (int) ( $payout['payout_id'] ?? 0 );
+		$receipt_url = trim( (string) ( $payout['receipt_url'] ?? '' ) );
+		$has_receipt = $receipt_url !== '';
+
+		$result = [
+			'ok'             => false,
+			'message_sent'   => false,
+			'photo_sent'     => ! $has_receipt,
+			'receipt_shared' => ! $has_receipt,
+			'reason'         => '',
+		];
+
+		if ( $company_id <= 0 || $merchant_id <= 0 || $chat_id === '' || $payout_id <= 0 ) {
+			$result['reason'] = 'missing_context';
+			return $result;
+		}
+
+		$telegram_settings = function_exists( 'crm_telegram_collect_settings' ) ? crm_telegram_collect_settings( $company_id ) : [];
+		$bot_token         = trim( (string) ( $telegram_settings['bot_token'] ?? '' ) );
+
+		if ( $bot_token === '' || ! crm_merchant_tg_require_telegram_class() ) {
+			$result['reason'] = 'missing_runtime';
+			crm_log_entity(
+				'merchant.telegram.payout_notify_failed',
+				'payouts',
+				'notify',
+				'Не удалось отправить payout-уведомление мерчанту: отсутствует Telegram runtime или token',
+				'merchant_payout',
+				$payout_id,
+				[
+					'org_id'  => $company_id,
+					'context' => [
+						'merchant_id'     => $merchant_id,
+						'chat_id'         => $chat_id,
+						'receipt_attached'=> $has_receipt,
+					],
+				]
+			);
+			return $result;
+		}
+
+		$telegram          = new Telegram( $bot_token );
+		$receipt_link_html = '';
+
+		if ( $has_receipt ) {
+			$photo_result = crm_merchant_tg_send_photo( $telegram, $chat_id, $receipt_url, 'Payout screenshot' );
+			$result['photo_sent'] = ! empty( $photo_result['ok'] );
+			if ( ! $result['photo_sent'] ) {
+				$receipt_link_html = '<a href="' . esc_url( $receipt_url ) . '">Open screenshot</a>';
+				$result['receipt_shared'] = true;
+			} else {
+				$result['receipt_shared'] = true;
+			}
+		}
+
+		$message_html      = crm_merchant_tg_payout_message_html( $merchant, $payout, $receipt_link_html );
+		$message_keyboard  = crm_merchant_tg_payout_confirmation_keyboard( $payout_id );
+		$message_response  = crm_merchant_tg_send_message( $telegram, $chat_id, $message_html, $message_keyboard );
+		$result['message_sent'] = ! empty( $message_response['ok'] );
+
+		if ( ! $has_receipt ) {
+			$result['receipt_shared'] = true;
+		}
+
+		$result['ok'] = $result['message_sent'] && $result['receipt_shared'];
+		$result['reason'] = $result['ok']
+			? ( $has_receipt && ! $result['photo_sent'] ? 'receipt_link_fallback' : 'sent' )
+			: ( $result['message_sent'] ? 'message_only' : 'send_failed' );
+
+		$log_message = 'Не удалось отправить уведомление о выплате мерчанту.';
+		if ( $result['ok'] ) {
+			$log_message = $has_receipt && ! $result['photo_sent']
+				? 'Мерчанту отправлено уведомление о выплате; скриншот передан ссылкой.'
+				: 'Мерчанту отправлено уведомление о выплате.';
+		}
+
+		crm_log_entity(
+			$result['ok'] ? 'merchant.telegram.payout_notified' : 'merchant.telegram.payout_notify_failed',
+			'payouts',
+			'notify',
+			$log_message,
+			'merchant_payout',
+			$payout_id,
+			[
+				'org_id'     => $company_id,
+				'is_success' => $result['ok'],
+				'level'      => $result['ok'] ? 'info' : 'warning',
+				'context'    => [
+					'merchant_id'      => $merchant_id,
+					'chat_id'          => $chat_id,
+					'receipt_attached' => $has_receipt,
+					'message_sent'     => $result['message_sent'],
+					'photo_sent'       => $result['photo_sent'],
+					'receipt_shared'   => $result['receipt_shared'],
+					'reason'           => $result['reason'],
+				],
+			]
+		);
+
+		return $result;
 	}
 }

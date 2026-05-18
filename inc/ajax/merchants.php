@@ -234,12 +234,15 @@ function _me_merchants_decode_prefill_json( $raw_value ): array {
 	return is_array( $decoded ) ? $decoded : [];
 }
 
-function _me_merchants_prepare_invite_prefill_from_request(): array {
+function _me_merchants_prepare_invite_prefill_from_request( int $company_id ): array {
 	$markup_type  = sanitize_key( wp_unslash( $_POST['base_markup_type'] ?? 'percent' ) );
 	$markup_basis = crm_merchant_normalize_markup_basis( sanitize_key( wp_unslash( $_POST['base_markup_basis'] ?? 'acquirer_cost' ) ) );
 	$rub_invoice_markup_mode = crm_merchant_normalize_rub_invoice_markup_mode( sanitize_key( wp_unslash( $_POST['rub_invoice_markup_mode'] ?? 'none' ) ) );
 	$markup_value = trim( (string) wp_unslash( $_POST['base_markup_value'] ?? '0' ) );
 	$note         = sanitize_textarea_field( wp_unslash( $_POST['note'] ?? '' ) );
+	$directions   = function_exists( 'crm_merchant_validate_invoice_directions_for_company' )
+		? crm_merchant_validate_invoice_directions_for_company( $company_id, wp_unslash( $_POST['enabled_invoice_directions'] ?? [] ) )
+		: [];
 
 	if ( ! isset( crm_merchant_markup_types()[ $markup_type ] ) ) {
 		$markup_type = 'percent';
@@ -247,12 +250,16 @@ function _me_merchants_prepare_invite_prefill_from_request(): array {
 	if ( $markup_value === '' || ! is_numeric( $markup_value ) ) {
 		$markup_value = '0';
 	}
+	if ( is_wp_error( $directions ) ) {
+		_me_merchants_error( $directions->get_error_message(), 422 );
+	}
 
 	return [
 		'base_markup_type'  => $markup_type,
 		'base_markup_basis' => $markup_basis,
 		'rub_invoice_markup_mode' => $rub_invoice_markup_mode,
 		'base_markup_value' => number_format( (float) $markup_value, 8, '.', '' ),
+		'enabled_invoice_directions' => array_values( array_map( 'strval', $directions ) ),
 		'note'              => $note !== '' ? $note : '',
 	];
 }
@@ -285,6 +292,9 @@ function _me_merchants_format_invite_row( object $row ): array {
 	$rub_invoice_markup_mode = crm_merchant_normalize_rub_invoice_markup_mode( (string) ( $prefill['rub_invoice_markup_mode'] ?? 'none' ) );
 	$markup_value  = isset( $prefill['base_markup_value'] ) ? (float) $prefill['base_markup_value'] : 0.0;
 	$markup_label  = crm_merchant_markup_display_label( $markup_type, $markup_value, $markup_basis );
+	$enabled_invoice_directions = function_exists( 'crm_merchant_resolve_invoice_directions_for_company' )
+		? crm_merchant_resolve_invoice_directions_for_company( $company_id, $prefill['enabled_invoice_directions'] ?? null, true )
+		: [];
 
 	return [
 		'id'                    => (int) $row->id,
@@ -318,6 +328,10 @@ function _me_merchants_format_invite_row( object $row ): array {
 		'rub_invoice_markup_mode_label' => crm_merchant_rub_invoice_markup_mode_label( $rub_invoice_markup_mode ),
 		'base_markup_value'     => number_format( $markup_value, 8, '.', '' ),
 		'base_markup_label'     => $markup_label,
+		'enabled_invoice_directions' => $enabled_invoice_directions,
+		'enabled_invoice_directions_badges_html' => function_exists( 'crm_merchant_render_exchange_pair_badges_html' )
+			? crm_merchant_render_exchange_pair_badges_html( $enabled_invoice_directions )
+			: '',
 		'note'                  => (string) ( $prefill['note'] ?? '' ),
 	];
 }
@@ -334,6 +348,9 @@ function _me_merchants_format_row( object $row, array $balance = [] ): array {
 	$markup_basis       = crm_merchant_normalize_markup_basis( (string) ( $row->base_markup_basis ?? 'acquirer_cost' ) );
 	$rub_invoice_markup_mode = crm_merchant_normalize_rub_invoice_markup_mode( (string) ( $row->rub_invoice_markup_mode ?? 'none' ) );
 	$markup_value_label = crm_merchant_markup_display_label( $markup_type, $markup_value, $markup_basis );
+	$enabled_invoice_directions = function_exists( 'crm_merchant_resolve_invoice_directions_from_row' )
+		? crm_merchant_resolve_invoice_directions_from_row( $row, true )
+		: [];
 
 	return [
 		'id'                    => (int) $row->id,
@@ -358,6 +375,13 @@ function _me_merchants_format_row( object $row, array $balance = [] ): array {
 		'rub_invoice_markup_mode_label' => crm_merchant_rub_invoice_markup_mode_label( $rub_invoice_markup_mode ),
 		'base_markup_value'     => number_format( $markup_value, 8, '.', '' ),
 		'base_markup_label'     => $markup_value_label,
+		'enabled_invoice_directions' => $enabled_invoice_directions,
+		'enabled_invoice_directions_badges_html' => function_exists( 'crm_merchant_render_exchange_pair_badges_html' )
+			? crm_merchant_render_exchange_pair_badges_html( $enabled_invoice_directions )
+			: '',
+		'has_custom_invoice_directions' => function_exists( 'crm_merchant_has_custom_invoice_directions' )
+			? crm_merchant_has_custom_invoice_directions( $row )
+			: false,
 		'ref_code'              => (string) ( $row->ref_code ?? '' ),
 		'referred_by_merchant_id' => $row->referred_by_merchant_id ? (int) $row->referred_by_merchant_id : null,
 		'referred_by_name'      => (string) ( $row->referred_by_name ?? '' ),
@@ -515,7 +539,13 @@ function me_ajax_merchants_get(): void {
 	_me_merchants_require_row_scope( $row );
 
 	$balances = crm_get_merchant_balance_summary_map( [ $merchant_id ] );
-	wp_send_json_success( _me_merchants_format_row( $row, $balances[ $merchant_id ] ?? [] ) );
+	$response = _me_merchants_format_row( $row, $balances[ $merchant_id ] ?? [] );
+
+	if ( function_exists( 'crm_can_manage_merchant_api' ) && crm_can_manage_merchant_api() ) {
+		$response['merchant_api'] = crm_merchant_api_admin_payload_for_merchant( $merchant_id );
+	}
+
+	wp_send_json_success( $response );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -579,9 +609,20 @@ function me_ajax_merchants_save(): void {
 		_me_merchants_error( 'Мерчант не найден.', 404 );
 	}
 	_me_merchants_require_row_scope( $existing );
-	$company_id = (int) $existing->company_id;
+	$company_id                  = (int) $existing->company_id;
+	$has_invoice_directions_param = array_key_exists( 'enabled_invoice_directions', $_POST );
+	$enabled_invoice_directions   = null;
 
 	$referred_by = _me_merchants_validate_referred_by( $company_id, $merchant_id, $referred_by );
+	if ( $has_invoice_directions_param && function_exists( 'crm_merchant_validate_invoice_directions_for_company' ) ) {
+		$enabled_invoice_directions = crm_merchant_validate_invoice_directions_for_company(
+			$company_id,
+			wp_unslash( $_POST['enabled_invoice_directions'] )
+		);
+		if ( is_wp_error( $enabled_invoice_directions ) ) {
+			_me_merchants_error( $enabled_invoice_directions->get_error_message(), 422 );
+		}
+	}
 
 	$duplicate_id = (int) $wpdb->get_var(
 		$wpdb->prepare(
@@ -616,14 +657,24 @@ function me_ajax_merchants_save(): void {
 		'ref_code'               => $ref_code !== '' ? $ref_code : null,
 		'referred_by_merchant_id'=> $referred_by,
 		'note'                   => $note !== '' ? $note : null,
-		'updated_by_user_id'     => $current_uid,
 	];
+	$update_format = [ '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s' ];
+
+	if ( $has_invoice_directions_param ) {
+		$data['enabled_invoice_directions_json'] = function_exists( 'crm_merchant_encode_invoice_directions' )
+			? crm_merchant_encode_invoice_directions( is_array( $enabled_invoice_directions ) ? $enabled_invoice_directions : [] )
+			: null;
+		$update_format[] = '%s';
+	}
+
+	$data['updated_by_user_id'] = $current_uid;
+	$update_format[]            = '%d';
 
 	$wpdb->update(
 		'crm_merchants',
 		$data,
 		[ 'id' => $merchant_id ],
-		[ '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%d' ],
+		$update_format,
 		[ '%d' ]
 	);
 
@@ -648,6 +699,7 @@ function me_ajax_merchants_save(): void {
 				'base_markup_basis'  => $markup_basis,
 				'rub_invoice_markup_mode' => $rub_invoice_markup_mode,
 				'base_markup_value'  => $markup_value,
+				'enabled_invoice_directions' => $has_invoice_directions_param ? $enabled_invoice_directions : crm_merchant_resolve_invoice_directions_from_row( $existing, true ),
 				'referred_by_id'     => $referred_by ?: null,
 			],
 		]
@@ -873,7 +925,7 @@ function me_ajax_merchants_telegram_invite_create(): void {
 	$invite_token   = crm_generate_merchant_invite_token();
 	$start_payload  = crm_generate_merchant_invite_start_payload();
 	$expires_at     = gmdate( 'Y-m-d H:i:s', time() + ( $ttl * MINUTE_IN_SECONDS ) );
-	$prefill        = _me_merchants_prepare_invite_prefill_from_request();
+	$prefill        = _me_merchants_prepare_invite_prefill_from_request( $company_id );
 	$prefill_json   = wp_json_encode( $prefill, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
 	$created_by_uid = get_current_user_id();
 
@@ -918,6 +970,7 @@ function me_ajax_merchants_telegram_invite_create(): void {
 				'base_markup_basis' => $prefill['base_markup_basis'] ?? 'acquirer_cost',
 				'rub_invoice_markup_mode' => $prefill['rub_invoice_markup_mode'] ?? 'none',
 				'base_markup_value' => $prefill['base_markup_value'] ?? '0',
+				'enabled_invoice_directions' => $prefill['enabled_invoice_directions'] ?? [],
 			],
 		]
 	);
@@ -1161,6 +1214,9 @@ function me_ajax_merchants_invite_create(): void {
 			'base_markup_basis' => crm_merchant_normalize_markup_basis( (string) ( $merchant->base_markup_basis ?? 'acquirer_cost' ) ),
 			'rub_invoice_markup_mode' => crm_merchant_normalize_rub_invoice_markup_mode( (string) ( $merchant->rub_invoice_markup_mode ?? 'none' ) ),
 			'base_markup_value' => number_format( (float) ( $merchant->base_markup_value ?? 0 ), 8, '.', '' ),
+			'enabled_invoice_directions' => function_exists( 'crm_merchant_resolve_invoice_directions_from_row' )
+				? crm_merchant_resolve_invoice_directions_from_row( $merchant, true )
+				: [],
 			'note'              => (string) ( $merchant->note ?? '' ),
 		],
 		JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
@@ -1206,6 +1262,9 @@ function me_ajax_merchants_invite_create(): void {
 				'base_markup_basis'  => crm_merchant_normalize_markup_basis( (string) ( $merchant->base_markup_basis ?? 'acquirer_cost' ) ),
 				'rub_invoice_markup_mode' => crm_merchant_normalize_rub_invoice_markup_mode( (string) ( $merchant->rub_invoice_markup_mode ?? 'none' ) ),
 				'base_markup_value'  => number_format( (float) ( $merchant->base_markup_value ?? 0 ), 8, '.', '' ),
+				'enabled_invoice_directions' => function_exists( 'crm_merchant_resolve_invoice_directions_from_row' )
+					? crm_merchant_resolve_invoice_directions_from_row( $merchant, true )
+					: [],
 			],
 		]
 	);

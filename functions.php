@@ -16,7 +16,15 @@ if ( ! function_exists( 'crm_json_for_inline_js' ) ) {
 			| JSON_HEX_QUOT
 		);
 
-		return is_string( $encoded ) && $encoded !== '' ? $encoded : 'null';
+		if ( ! is_string( $encoded ) || $encoded === '' ) {
+			return 'null';
+		}
+
+		return str_replace(
+			[ "\u{2028}", "\u{2029}" ],
+			[ '\\u2028', '\\u2029' ],
+			$encoded
+		);
 	}
 }
 
@@ -44,6 +52,7 @@ require_once get_template_directory() . '/inc/ajax/companies.php';
 
 // Настройки системы (crm_settings)
 require_once get_template_directory() . '/inc/settings.php';
+require_once get_template_directory() . '/inc/product-communication.php';
 require_once get_template_directory() . '/inc/company-contours.php';
 require_once get_template_directory() . '/inc/telegram-bot.php';
 require_once get_template_directory() . '/inc/telegram-receipts.php';
@@ -52,12 +61,16 @@ require_once get_template_directory() . '/inc/ajax/settings.php';
 
 // Мерчанты: company-scoped бизнес-сущность + AJAX
 require_once get_template_directory() . '/inc/merchants.php';
+require_once get_template_directory() . '/inc/merchant-api.php';
 require_once get_template_directory() . '/inc/telegram-merchant-menu.php';
 require_once get_template_directory() . '/inc/ajax/merchants.php';
+require_once get_template_directory() . '/inc/ajax/merchant-api.php';
 
 // Операторский Telegram-контур: привязка CRM-пользователей к operator bot
 require_once get_template_directory() . '/inc/operators.php';
 require_once get_template_directory() . '/inc/ajax/operators.php';
+require_once get_template_directory() . '/inc/service-bot.php';
+require_once get_template_directory() . '/inc/ajax/service-bot.php';
 
 // Курсы валют
 require_once get_template_directory() . '/inc/rates.php';
@@ -93,6 +106,7 @@ require_once get_template_directory() . '/inc/fintech-cron.php';
 require_once get_template_directory() . '/inc/telegram-orders-handler.php';
 require_once get_template_directory() . '/inc/telegram-merchants-handler.php';
 require_once get_template_directory() . '/inc/telegram-operators-handler.php';
+require_once get_template_directory() . '/inc/telegram-service-handler.php';
 
 // require_once get_template_directory() . '/inc/menus.php';
 // require_once get_template_directory() . '/inc/enqueue.php';

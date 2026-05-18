@@ -95,3 +95,9 @@ Canonical helpers для этого:
 2. Новый код, работающий с `crm_get_current_user_company_id()`, должен перед проверкой `=== 0` сначала проверить `crm_is_root()`.
 3. Root не добавляется в новые таблицы, списки или UI-элементы.
 4. Документация о root изменяется только в этом файле и `AGENTS.md`.
+
+---
+
+## См. также
+
+- `docs/ROLE_MODEL.md` — разделение `root`, `company admin`, `owner` и `admin`.

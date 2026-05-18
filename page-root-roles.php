@@ -24,7 +24,7 @@ if ( ! crm_user_has_permission( $current_uid, 'roles.view' ) ) {
 
 global $wpdb;
 
-$can_edit_roles = crm_user_has_permission( $current_uid, 'roles.edit' );
+$can_edit_roles = crm_can_edit_role_permissions( $current_uid );
 $nonce_roles    = wp_create_nonce( 'me_roles_save' );
 
 $all_perms_raw          = $wpdb->get_results( 'SELECT * FROM crm_permissions ORDER BY module, action' ) ?: [];
@@ -63,6 +63,10 @@ get_template_part(
 	]
 );
 ?>
+
+<div class="alert alert-info m-b-20" role="alert">
+	Здесь root меняет состав permissions внутри ролей. Company admin в контуре компании только назначает пользователям уже существующие CRM-роли; для company admin роль <code>owner</code> сохраняется автоматически.
+</div>
 
 <div class="card card-default">
 	<div class="card-header">

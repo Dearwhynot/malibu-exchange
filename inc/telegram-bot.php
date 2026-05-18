@@ -505,6 +505,45 @@ if ( ! function_exists( 'crm_telegram_bot_api_request' ) ) {
 	}
 }
 
+if ( ! function_exists( 'crm_telegram_unregister_webhook' ) ) {
+	function crm_telegram_unregister_webhook( string $bot_token, bool $drop_pending_updates = true ): array {
+		$bot_token = trim( $bot_token );
+		if ( $bot_token === '' ) {
+			return [
+				'success' => false,
+				'message' => 'Bot token is missing.',
+				'code'    => 'missing_token',
+			];
+		}
+
+		$response = crm_telegram_bot_api_request(
+			$bot_token,
+			'deleteWebhook',
+			[
+				'drop_pending_updates' => $drop_pending_updates ? 'true' : 'false',
+			]
+		);
+
+		if ( empty( $response['ok'] ) ) {
+			$error_message = trim( (string) ( $response['description'] ?? 'Не удалось отключить старый Telegram webhook.' ) );
+
+			return [
+				'success'  => false,
+				'message'  => $error_message !== '' ? $error_message : 'Не удалось отключить старый Telegram webhook.',
+				'code'     => 'api_error',
+				'response' => $response,
+			];
+		}
+
+		return [
+			'success'  => true,
+			'message'  => trim( (string) ( $response['description'] ?? 'Webhook was deleted.' ) ),
+			'code'     => 'deleted',
+			'response' => $response,
+		];
+	}
+}
+
 if ( ! function_exists( 'crm_telegram_register_webhook' ) ) {
 	function crm_telegram_register_webhook( int $company_id, string $bot_username, string $bot_token, string $context = 'merchant' ): array {
 		$context      = crm_telegram_normalize_bot_context( $context );
@@ -601,13 +640,53 @@ if ( ! function_exists( 'crm_telegram_register_webhook' ) ) {
 		crm_set_setting( crm_telegram_setting_key( $context, 'webhook_last_error' ), '', $company_id );
 		crm_set_setting( crm_telegram_setting_key( $context, 'webhook_lock' ), '1', $company_id );
 
+		$post_connect = function_exists( 'crm_telegram_run_post_connect_tasks' )
+			? crm_telegram_run_post_connect_tasks( $company_id, $context )
+			: [
+				'success' => true,
+				'steps'   => [],
+				'message' => '',
+			];
+
 		return [
 			'success'      => true,
 			'message'      => trim( (string) ( $response['description'] ?? '' ) ),
 			'callback_url' => $callback_url,
 			'context'      => $context,
+			'post_connect' => $post_connect,
 			'response'     => $response,
 		];
+	}
+}
+
+if ( ! function_exists( 'crm_telegram_run_post_connect_tasks' ) ) {
+	function crm_telegram_run_post_connect_tasks( int $company_id, string $context = 'merchant' ): array {
+		$company_id = (int) $company_id;
+		$context    = crm_telegram_normalize_bot_context( $context );
+
+		$result = [
+			'success' => true,
+			'steps'   => [],
+			'message' => '',
+		];
+
+		if ( $company_id <= 0 ) {
+			return $result;
+		}
+
+		if ( $context === 'merchant' && function_exists( 'crm_merchant_tg_set_my_commands' ) ) {
+			$commands_result = crm_merchant_tg_set_my_commands( $company_id );
+			$result['steps']['merchant_commands'] = $commands_result;
+
+			if ( empty( $commands_result['success'] ) ) {
+				$result['success'] = false;
+				$result['message'] = trim( (string) ( $commands_result['message'] ?? 'Не удалось обновить команды merchant-бота.' ) );
+			} else {
+				$result['message'] = 'Команды merchant-бота обновлены.';
+			}
+		}
+
+		return $result;
 	}
 }
 

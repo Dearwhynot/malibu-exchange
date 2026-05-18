@@ -120,11 +120,33 @@ $crm_roles_map     = crm_get_roles_for_users( $user_ids );
 $all_crm_roles     = crm_get_all_roles();
 $crm_companies_map = crm_get_companies_for_users( $user_ids );
 $all_companies     = crm_get_all_companies_list();
+$service_telegram_acl_map = [];
 
 // ─── Вспомогательные данные ──────────────────────────────────────────────────
-$can_assign_roles = crm_user_has_permission( get_current_user_id(), 'users.assign_roles' );
+$can_manage_company_roles = crm_can_manage_company_roles( $current_uid );
+$can_assign_roles = $can_manage_company_roles;
+$can_edit_roles = crm_can_edit_role_permissions( $current_uid );
 $can_hard_delete  = me_users_can_hard_delete();
+$can_manage_service_telegram = crm_can_manage_service_telegram();
+$can_invite_service_telegram = crm_can_invite_service_telegram();
+$can_view_settings = crm_user_has_permission( get_current_user_id(), 'settings.view' );
 $page_url         = get_permalink();
+$service_scope_company_id = 0;
+$service_telegram_company_status = [
+	'is_configured'  => false,
+	'webhook_ready'  => false,
+	'service_ready'  => false,
+	'blocked_reason' => '',
+];
+$service_telegram_settings_url = home_url( '/settings/#telegram_service_settings_form' );
+
+if ( $can_manage_service_telegram && ! empty( $user_ids ) ) {
+	$service_scope_company_id = crm_get_current_user_company_id( $current_uid );
+	if ( $service_scope_company_id > 0 ) {
+		$service_telegram_acl_map = crm_service_telegram_get_user_acl_map( $service_scope_company_id, $user_ids );
+		$service_telegram_company_status = crm_telegram_get_configuration_status( $service_scope_company_id, 'service' );
+	}
+}
 
 // Nonces
 $nonce_save      = wp_create_nonce( 'me_users_save' );
@@ -137,6 +159,7 @@ $nonce_merchant_delete = wp_create_nonce( 'me_merchants_delete' );
 $nonce_create_co     = wp_create_nonce( 'me_create_company' );
 $nonce_create_office = wp_create_nonce( 'me_create_company_office' );
 $nonce_company_settings = wp_create_nonce( 'me_company_contours_save' );
+$nonce_service_telegram = wp_create_nonce( 'me_service_telegram_invite' );
 
 // Данные для вкладки "Компании" — только root
 $all_companies_full         = [];
@@ -177,28 +200,30 @@ $company_offices = $can_manage_offices
 	? crm_get_company_offices_full_by_company_ids( $office_scope_company_ids )
 	: [];
 
-// ─── Данные для вкладки "Роли" ───────────────────────────────────────────────
-$can_edit_roles = crm_user_has_permission( get_current_user_id(), 'roles.edit' );
-
-$all_perms_raw = $wpdb->get_results( 'SELECT * FROM crm_permissions ORDER BY module, action' ) ?: [];
+// ─── Данные для вкладки "Роли" (root-only page, не company Users) ───────────
 $all_permissions_grouped = [];
-foreach ( $all_perms_raw as $_p ) {
-	$all_permissions_grouped[ $_p->module ][] = $_p;
-}
+$role_permissions_map    = [];
+$roles_user_counts       = [];
+$all_crm_roles_full      = [];
 
-$rp_rows = $wpdb->get_results( 'SELECT role_id, permission_id FROM crm_role_permissions' ) ?: [];
-$role_permissions_map = [];
-foreach ( $rp_rows as $_rp ) {
-	$role_permissions_map[ (int) $_rp->role_id ][] = (int) $_rp->permission_id;
-}
+if ( $can_edit_roles ) {
+	$all_perms_raw = $wpdb->get_results( 'SELECT * FROM crm_permissions ORDER BY module, action' ) ?: [];
+	foreach ( $all_perms_raw as $_p ) {
+		$all_permissions_grouped[ $_p->module ][] = $_p;
+	}
 
-$uc_rows = $wpdb->get_results( 'SELECT role_id, COUNT(*) as cnt FROM crm_user_roles GROUP BY role_id' ) ?: [];
-$roles_user_counts = [];
-foreach ( $uc_rows as $_uc ) {
-	$roles_user_counts[ (int) $_uc->role_id ] = (int) $_uc->cnt;
-}
+	$rp_rows = $wpdb->get_results( 'SELECT role_id, permission_id FROM crm_role_permissions' ) ?: [];
+	foreach ( $rp_rows as $_rp ) {
+		$role_permissions_map[ (int) $_rp->role_id ][] = (int) $_rp->permission_id;
+	}
 
-$all_crm_roles_full = $wpdb->get_results( 'SELECT * FROM crm_roles ORDER BY id ASC' ) ?: [];
+	$uc_rows = $wpdb->get_results( 'SELECT role_id, COUNT(*) as cnt FROM crm_user_roles GROUP BY role_id' ) ?: [];
+	foreach ( $uc_rows as $_uc ) {
+		$roles_user_counts[ (int) $_uc->role_id ] = (int) $_uc->cnt;
+	}
+
+	$all_crm_roles_full = $wpdb->get_results( 'SELECT * FROM crm_roles ORDER BY id ASC' ) ?: [];
+}
 
 get_header();
 ?>
@@ -234,11 +259,13 @@ get_header();
 							Пользователи
 						</a>
 					</li>
+					<?php if ( $can_edit_roles ) : ?>
 					<li class="nav-item">
 						<a data-bs-toggle="tab" role="tab" data-bs-target="#tab-roles" data-target="#tab-roles" href="#tab-roles">
 							Роли и права
 						</a>
 					</li>
+					<?php endif; ?>
 					<?php if ( $can_manage_offices ) : ?>
 					<li class="nav-item">
 						<a data-bs-toggle="tab" role="tab" data-bs-target="#tab-offices" data-target="#tab-offices" href="#tab-offices">
@@ -371,6 +398,7 @@ get_header();
 												$last_login    = me_users_get_last_login( $user->ID );
 												$is_super      = crm_is_root( (int) $user->ID );
 												$avatar_letter = me_users_avatar_letter( $user );
+												$service_acl   = $service_telegram_acl_map[ $user->ID ] ?? crm_service_telegram_default_acl_summary();
 
 											// JSON для модалки редактирования
 											$user_company = $crm_companies_map[ $user->ID ] ?? null;
@@ -392,6 +420,9 @@ get_header();
 												'role_ids'         => array_map( function ( $r ) { return (int) $r->id; }, $user_roles ),
 												'company_id'       => $user_company ? (int) $user_company->id : 0,
 												'company_name'     => $user_company ? $user_company->name    : '',
+												'service_status'   => $service_acl['service_status'],
+												'service_status_label' => $service_acl['service_status_label'],
+												'has_active_service_access' => ! empty( $service_acl['has_active_service_access'] ),
 											] ) );
 										?>
 										<tr id="urow-<?php echo (int) $user->ID; ?>">
@@ -467,6 +498,14 @@ get_header();
 														—
 													<?php endif; ?>
 												</span>
+												<?php if ( $can_manage_service_telegram ) : ?>
+												<div class="m-t-5" id="service-badge-wrap-<?php echo (int) $user->ID; ?>">
+													<span class="badge badge-<?php echo esc_attr( $service_acl['service_status_badge'] ); ?>"
+													      id="service-badge-<?php echo (int) $user->ID; ?>">
+														<?php echo esc_html( $service_acl['service_status_label'] ); ?>
+													</span>
+												</div>
+												<?php endif; ?>
 											</td>
 
 											<td class="v-align-middle">
@@ -527,6 +566,54 @@ get_header();
 																<i class="pg-icon m-r-5">grid</i> Компания
 															</a>
 														</li>
+														<?php endif; ?>
+
+														<?php if ( $can_manage_service_telegram && ! $is_super ) : ?>
+														<li><hr class="dropdown-divider"></li>
+														<?php if ( $can_invite_service_telegram ) : ?>
+														<?php if ( ! empty( $service_telegram_company_status['is_configured'] ) ) : ?>
+														<li>
+															<a class="dropdown-item js-service-invite-create" href="#"
+															   data-user-id="<?php echo (int) $user->ID; ?>"
+															   data-user-login="<?php echo esc_attr( $user->user_login ); ?>"
+															   data-user-name="<?php echo esc_attr( $user->display_name ?: $user->user_login ); ?>">
+																<i class="pg-icon m-r-5">link</i> Выдать Service invite
+															</a>
+														</li>
+														<?php elseif ( $can_view_settings ) : ?>
+														<li>
+															<a class="dropdown-item" href="<?php echo esc_url( $service_telegram_settings_url ); ?>">
+																<i class="pg-icon m-r-5">settings</i> Настроить Service bot
+															</a>
+														</li>
+														<?php else : ?>
+														<li>
+															<span class="dropdown-item disabled text-muted">
+																<i class="pg-icon m-r-5">disable</i> Service bot не настроен
+															</span>
+														</li>
+														<?php endif; ?>
+														<?php endif; ?>
+														<li>
+															<a class="dropdown-item js-service-history" href="#"
+															   data-user-id="<?php echo (int) $user->ID; ?>"
+															   data-user-login="<?php echo esc_attr( $user->user_login ); ?>"
+															   data-user-name="<?php echo esc_attr( $user->display_name ?: $user->user_login ); ?>">
+																<i class="pg-icon m-r-5">time</i> История Service invites
+															</a>
+														</li>
+														<?php if ( $can_invite_service_telegram ) : ?>
+														<li>
+															<a class="dropdown-item js-service-revoke <?php echo empty( $service_acl['has_active_service_access'] ) ? 'disabled text-muted' : 'text-warning'; ?>" href="#"
+															   data-user-id="<?php echo (int) $user->ID; ?>"
+															   data-user-login="<?php echo esc_attr( $user->user_login ); ?>"
+															   data-user-name="<?php echo esc_attr( $user->display_name ?: $user->user_login ); ?>"
+															   data-has-access="<?php echo ! empty( $service_acl['has_active_service_access'] ) ? '1' : '0'; ?>"
+															   aria-disabled="<?php echo empty( $service_acl['has_active_service_access'] ) ? 'true' : 'false'; ?>">
+																<i class="pg-icon m-r-5">disable</i> Отозвать Service access
+															</a>
+														</li>
+														<?php endif; ?>
 														<?php endif; ?>
 
 														<?php if ( ! $is_super && $user->ID !== $current_uid ) : ?>
@@ -648,6 +735,7 @@ get_header();
 				</div><!-- /#tab-users -->
 
 				<!-- ─── TAB: ROLES ───────────────────────────────────────────── -->
+				<?php if ( $can_edit_roles ) : ?>
 				<div class="tab-pane" id="tab-roles">
 
 					<div class="card card-default m-t-20">
@@ -724,6 +812,7 @@ get_header();
 					</div>
 
 				</div><!-- /#tab-roles -->
+				<?php endif; ?>
 
 				<!-- ─── TAB: OFFICES ─────────────────────────────────────────── -->
 				<?php if ( $can_manage_offices ) : ?>
@@ -1164,6 +1253,7 @@ get_header();
 						<div class="w-100"></div>
 						<div class="col-12 m-t-5 m-b-10"><div class="b-b b-grey"></div></div>
 
+						<?php if ( $can_manage_company_roles ) : ?>
 						<!-- CRM Roles -->
 						<div class="col-md-6">
 							<div class="form-group form-group-default">
@@ -1176,7 +1266,11 @@ get_header();
 									<?php endforeach; ?>
 								</select>
 							</div>
+							<div class="hint-text small m-t-5">
+								Company admin назначает пользователям существующие роли своей компании. Менять состав прав внутри ролей может только root; для company admin роль <code>owner</code> сохраняется автоматически.
+							</div>
 						</div>
+						<?php endif; ?>
 
 						<!-- Status -->
 						<div class="col-md-6">
@@ -1263,6 +1357,7 @@ get_header();
 <!-- ════════════════════════════════════════════════════════════════════════
      MODAL: ROLE PERMISSIONS
      ════════════════════════════════════════════════════════════════════ -->
+<?php if ( $can_edit_roles ) : ?>
 <div class="modal fade" id="modal-role-perms" tabindex="-1"
      aria-labelledby="modal-role-perms-title" aria-hidden="true">
 	<div class="modal-dialog modal-lg">
@@ -1290,6 +1385,7 @@ get_header();
 		</div>
 	</div>
 </div>
+<?php endif; ?>
 
 <!-- ════════════════════════════════════════════════════════════════════════
      MODAL: CREATE OFFICE
@@ -1500,6 +1596,91 @@ get_header();
 </div>
 <?php endif; ?>
 
+<div class="modal fade" id="modal-service-telegram" tabindex="-1"
+     aria-labelledby="modal-service-telegram-title" aria-hidden="true">
+	<div class="modal-dialog modal-lg">
+		<div class="modal-content">
+			<div class="modal-header clearfix text-left">
+				<button aria-label="Закрыть" type="button" class="close" data-bs-dismiss="modal" aria-hidden="true">
+					<i class="pg-icon">close</i>
+				</button>
+				<h5 class="modal-title" id="modal-service-telegram-title">Service bot access</h5>
+			</div>
+			<div class="modal-body">
+				<div id="service-telegram-error" class="alert alert-danger d-none"></div>
+
+				<div class="row m-b-15">
+					<div class="col-md-4">
+						<div class="card card-default m-b-0">
+							<div class="card-body p-t-15 p-b-15">
+								<div class="hint-text fs-11 m-b-5">Пользователь</div>
+								<div class="semi-bold" id="service-telegram-user-name">—</div>
+								<div class="hint-text fs-12 m-t-10">Статус</div>
+								<div class="m-t-5">
+									<span class="badge badge-secondary" id="service-telegram-user-status">Не привязан</span>
+								</div>
+								<div class="hint-text fs-12 m-t-10">Telegram</div>
+								<div class="fs-12" id="service-telegram-user-profile">—</div>
+								<div class="hint-text fs-12 m-t-10">Chat ID</div>
+								<div class="fs-12" id="service-telegram-user-chat">—</div>
+								<div class="hint-text fs-12 m-t-10">Last seen</div>
+								<div class="fs-12" id="service-telegram-user-seen">—</div>
+							</div>
+						</div>
+					</div>
+					<div class="col-md-8">
+						<div class="card card-default m-b-0">
+							<div class="card-body p-t-15 p-b-15">
+								<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2 m-b-10">
+									<div>
+										<div class="hint-text fs-11">Последний invite</div>
+										<div class="fs-12 text-muted" id="service-telegram-invite-meta">Invite ещё не выдавался.</div>
+									</div>
+									<div class="d-flex gap-2">
+										<?php if ( $can_invite_service_telegram ) : ?>
+										<button type="button" class="btn btn-primary btn-xs" id="btn-service-telegram-create">
+											<i class="pg-icon">link</i> Выдать invite
+										</button>
+										<button type="button" class="btn btn-default btn-xs" id="btn-service-telegram-revoke">
+											<i class="pg-icon">disable</i> Отозвать access
+										</button>
+										<?php endif; ?>
+									</div>
+								</div>
+								<div class="input-group m-b-10">
+									<input type="text" class="form-control" id="service-telegram-invite-url" readonly value="">
+									<a href="#" target="_blank" rel="noopener" class="btn btn-default" id="service-telegram-open-invite">Открыть</a>
+								</div>
+								<div class="hint-text fs-11">Service bot должен активироваться только через `/start svc_...` в контуре своей компании.</div>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="table-responsive">
+					<table class="table table-hover m-b-0">
+						<thead>
+							<tr>
+								<th style="width:70px">ID</th>
+								<th>Invite</th>
+								<th style="width:120px">Статус</th>
+								<th style="width:150px">Выдан</th>
+								<th style="width:150px">Истекает</th>
+								<th style="width:150px">Использован</th>
+							</tr>
+						</thead>
+						<tbody id="service-telegram-history-body">
+							<tr>
+								<td colspan="6" class="text-center hint-text p-t-20 p-b-20">Загрузка…</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+
 <!-- ════════════════════════════════════════════════════════════════════════
      INLINE STYLES
      ════════════════════════════════════════════════════════════════════ -->
@@ -1525,16 +1706,18 @@ get_header();
 @keyframes spin { to { transform:rotate(360deg); } }
 .dropdown-menu .dropdown-item { display:flex; align-items:center; }
 .dropdown-menu .dropdown-item .pg-icon { flex-shrink:0; line-height:1; }
+.dropdown-menu .dropdown-item.disabled { pointer-events:none; opacity:.55; }
 /* ── Tabs ── */
 #tab-users, #tab-roles, #tab-offices, #tab-merchants, #tab-companies { padding: 0; }
 .nav-tabs ~ .tab-content { overflow: visible; }
 .perm-module-title { font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:#aaa; margin:14px 0 6px; padding-bottom:4px; border-bottom:1px solid rgba(0,0,0,.06); }
 .perm-check-label { font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px; margin-bottom:4px; }
 .perm-check-label input { flex-shrink:0; }
+#service-telegram-invite-url[readonly] { background:#fff; }
 </style>
 
 <?php
-add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_delete, $nonce_roles, $nonce_company, $nonce_merchants_list, $nonce_merchant_delete, $nonce_create_co, $nonce_create_office, $nonce_company_settings, $f_status, $can_assign_roles, $can_edit_roles, $all_permissions_grouped, $role_permissions_map, $current_uid, $can_manage_offices ) {
+add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_delete, $nonce_roles, $nonce_company, $nonce_merchants_list, $nonce_merchant_delete, $nonce_create_co, $nonce_create_office, $nonce_company_settings, $nonce_service_telegram, $f_status, $can_assign_roles, $can_edit_roles, $all_permissions_grouped, $role_permissions_map, $current_uid, $can_manage_company_roles, $can_manage_offices, $can_manage_service_telegram, $can_invite_service_telegram, $can_view_settings, $service_telegram_company_status, $service_telegram_settings_url ) {
 ?>
 <script>
 (function ($) {
@@ -1610,13 +1793,24 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 		merchantDelete:'<?php echo esc_js( $nonce_merchant_delete ); ?>',
 		createCo:      '<?php echo esc_js( $nonce_create_co ); ?>',
 		createOffice:  '<?php echo esc_js( $nonce_create_office ); ?>',
-		companySettings: '<?php echo esc_js( $nonce_company_settings ); ?>'
+		companySettings: '<?php echo esc_js( $nonce_company_settings ); ?>',
+		serviceTelegram: '<?php echo esc_js( $nonce_service_telegram ); ?>'
 	};
 	var CAN_ASSIGN_ROLES = <?php echo $can_assign_roles ? 'true' : 'false'; ?>;
 	var CAN_MANAGE_OFFICES = <?php echo $can_manage_offices ? 'true' : 'false'; ?>;
+	var CAN_MANAGE_SERVICE_TELEGRAM = <?php echo $can_manage_service_telegram ? 'true' : 'false'; ?>;
+	var CAN_INVITE_SERVICE_TELEGRAM = <?php echo $can_invite_service_telegram ? 'true' : 'false'; ?>;
+	var CAN_VIEW_SETTINGS = <?php echo $can_view_settings ? 'true' : 'false'; ?>;
 	var IS_ROOT          = <?php echo crm_is_root( $current_uid ) ? 'true' : 'false'; ?>;
 	var FINTECH_PROVIDER_LABELS = <?php echo crm_json_for_inline_js( crm_fintech_provider_labels() ); ?>;
 	var EXCHANGE_PAIR_TITLES = <?php echo crm_json_for_inline_js( array_column( crm_company_exchange_pair_definitions(), 'title', 'code' ) ); ?>;
+	var SERVICE_TELEGRAM_COMPANY_STATUS = <?php echo crm_json_for_inline_js( [
+		'is_configured'  => ! empty( $service_telegram_company_status['is_configured'] ),
+		'webhook_ready'  => ! empty( $service_telegram_company_status['webhook_ready'] ),
+		'service_ready'  => ! empty( $service_telegram_company_status['service_ready'] ),
+		'blocked_reason' => (string) ( $service_telegram_company_status['blocked_reason'] ?? '' ),
+	] ); ?>;
+	var SERVICE_TELEGRAM_SETTINGS_URL = <?php echo crm_json_for_inline_js( $service_telegram_settings_url ); ?>;
 
 	// ── Дропдауны Actions: strategy fixed (fix overflow in .table-responsive) ──
 	function initActionDropdowns($scope) {
@@ -1724,6 +1918,201 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 		});
 
 		return html;
+	}
+
+	var SERVICE_TELEGRAM_MODAL = $('#modal-service-telegram').length
+		? new bootstrap.Modal($('#modal-service-telegram')[0])
+		: null;
+	var SERVICE_TELEGRAM_STATE = {
+		userId: 0,
+		userName: ''
+	};
+
+	function isServiceTelegramCompanyConfigured() {
+		return !!(SERVICE_TELEGRAM_COMPANY_STATUS && SERVICE_TELEGRAM_COMPANY_STATUS.is_configured);
+	}
+
+	function isServiceTelegramWebhookReady() {
+		return !!(SERVICE_TELEGRAM_COMPANY_STATUS && SERVICE_TELEGRAM_COMPANY_STATUS.webhook_ready);
+	}
+
+	function serviceTelegramBlockedReason() {
+		return $.trim((SERVICE_TELEGRAM_COMPANY_STATUS && SERVICE_TELEGRAM_COMPANY_STATUS.blocked_reason) || '');
+	}
+
+	function promptServiceTelegramSettings(message) {
+		message = message || 'Service bot компании ещё не настроен.';
+
+		if (CAN_VIEW_SETTINGS && SERVICE_TELEGRAM_SETTINGS_URL) {
+			showConfirm(
+				message + ' Открыть настройки сервисного бота сейчас?',
+				function () {
+					window.location.href = SERVICE_TELEGRAM_SETTINGS_URL;
+				},
+				{ btnClass: 'btn-primary', btnText: 'Открыть Settings' }
+			);
+			return;
+		}
+
+		showToast(message, 'error');
+	}
+
+	function formatServiceDate(value) {
+		var text = $.trim(String(value || ''));
+		return text || '—';
+	}
+
+	function fillServiceLatestInvite(invite) {
+		var hasInvite = invite && invite.invite_url;
+		var inviteUrl = hasInvite ? invite.invite_url : '';
+		var inviteMeta = 'Invite ещё не выдавался.';
+
+		if (invite) {
+			var parts = [];
+			if (invite.status_label) {
+				parts.push(invite.status_label);
+			}
+			if (invite.created_at) {
+				parts.push('выдан ' + invite.created_at);
+			}
+			if (invite.expires_at) {
+				parts.push('истекает ' + invite.expires_at);
+			}
+			inviteMeta = parts.join(' · ') || inviteMeta;
+		}
+
+		$('#service-telegram-invite-meta').text(inviteMeta);
+		$('#service-telegram-invite-url').val(inviteUrl);
+		$('#service-telegram-open-invite')
+			.attr('href', inviteUrl || '#')
+			.toggleClass('disabled', !hasInvite)
+			.attr('aria-disabled', hasInvite ? 'false' : 'true');
+	}
+
+	function applyServiceAclToModal(acl) {
+		acl = acl || {};
+		$('#service-telegram-user-status')
+			.removeClass('badge-success badge-danger badge-secondary badge-warning badge-info badge-primary')
+			.addClass('badge-' + (acl.service_status_badge || 'secondary'))
+			.text(acl.service_status_label || 'Не привязан');
+		$('#service-telegram-user-profile').text(acl.service_profile_name || (acl.service_telegram_username ? '@' + acl.service_telegram_username : '—'));
+		$('#service-telegram-user-chat').text(acl.service_chat_id || '—');
+		$('#service-telegram-user-seen').text(formatServiceDate(acl.service_access_last_seen_at));
+		$('#btn-service-telegram-revoke')
+			.prop('disabled', !acl.has_active_service_access)
+			.toggleClass('disabled', !acl.has_active_service_access);
+	}
+
+	function applyServiceAclToRow(userId, acl) {
+		if (!userId || !acl) {
+			return;
+		}
+
+		$('#service-badge-' + userId)
+			.removeClass('badge-success badge-danger badge-secondary badge-warning badge-info badge-primary')
+			.addClass('badge-' + (acl.service_status_badge || 'secondary'))
+			.text(acl.service_status_label || 'Не привязан');
+
+		var $revoke = $('.js-service-revoke[data-user-id="' + userId + '"]');
+		$revoke.attr('data-has-access', acl.has_active_service_access ? '1' : '0');
+		if (acl.has_active_service_access) {
+			$revoke.removeClass('disabled text-muted').addClass('text-warning').attr('aria-disabled', 'false');
+		} else {
+			$revoke.addClass('disabled text-muted').removeClass('text-warning').attr('aria-disabled', 'true');
+		}
+	}
+
+	function renderServiceHistoryRows(rows) {
+		var $tbody = $('#service-telegram-history-body').empty();
+
+		if (!rows || !rows.length) {
+			$tbody.html('<tr><td colspan="6" class="text-center hint-text p-t-20 p-b-20">История invite пока пуста.</td></tr>');
+			return;
+		}
+
+		$.each(rows, function (_, row) {
+			var inviteLink = row.invite_url
+				? '<a href="' + escapeHtml(row.invite_url) + '" target="_blank" rel="noopener">Открыть invite</a>'
+				: '<span class="hint-text">—</span>';
+			var payload = row.telegram_start_payload
+				? '<div class="hint-text fs-11"><code>' + escapeHtml(row.telegram_start_payload) + '</code></div>'
+				: '';
+
+			$tbody.append(
+				'<tr>'
+				+ '<td class="v-align-middle"><span class="hint-text fs-12">#' + escapeHtml(row.id) + '</span></td>'
+				+ '<td class="v-align-middle">' + inviteLink + payload + '</td>'
+				+ '<td class="v-align-middle"><span class="badge badge-' + escapeHtml(row.status_badge || 'secondary') + '">' + escapeHtml(row.status_label || row.status || '—') + '</span></td>'
+				+ '<td class="v-align-middle hint-text fs-12">' + escapeHtml(formatServiceDate(row.created_at)) + '</td>'
+				+ '<td class="v-align-middle hint-text fs-12">' + escapeHtml(formatServiceDate(row.expires_at)) + '</td>'
+				+ '<td class="v-align-middle hint-text fs-12">' + escapeHtml(formatServiceDate(row.used_at)) + '</td>'
+				+ '</tr>'
+			);
+		});
+	}
+
+	function setServiceTelegramError(message) {
+		$('#service-telegram-error')
+			.toggleClass('d-none', !message)
+			.text(message || '');
+	}
+
+	function loadServiceTelegramHistory() {
+		if (!CAN_MANAGE_SERVICE_TELEGRAM || !SERVICE_TELEGRAM_STATE.userId) {
+			return;
+		}
+
+		setServiceTelegramError('');
+		$('#service-telegram-history-body').html('<tr><td colspan="6" class="text-center hint-text p-t-20 p-b-20">Загрузка…</td></tr>');
+
+		$.get(AJAX_URL, {
+			action: 'me_service_telegram_invites_history',
+			user_id: SERVICE_TELEGRAM_STATE.userId,
+			per_page: 10,
+			_nonce: NONCES.serviceTelegram
+		})
+		.done(function (res) {
+			if (!res || !res.success) {
+				setServiceTelegramError((res && res.data && res.data.message) || 'Не удалось загрузить историю service invite.');
+				renderServiceHistoryRows([]);
+				return;
+			}
+
+			applyServiceAclToModal(res.data.acl || {});
+			applyServiceAclToRow(SERVICE_TELEGRAM_STATE.userId, res.data.acl || {});
+			fillServiceLatestInvite((res.data.rows && res.data.rows.length) ? res.data.rows[0] : null);
+			renderServiceHistoryRows(res.data.rows || []);
+		})
+		.fail(function (xhr) {
+			var message = 'Ошибка сервера при загрузке service invite history.';
+			if (xhr && xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
+				message = xhr.responseJSON.data.message;
+			}
+			setServiceTelegramError(message);
+			renderServiceHistoryRows([]);
+		});
+	}
+
+	function openServiceTelegramModal(userId, userName) {
+		if (!SERVICE_TELEGRAM_MODAL) {
+			return;
+		}
+
+		SERVICE_TELEGRAM_STATE.userId = userId;
+		SERVICE_TELEGRAM_STATE.userName = userName || ('User #' + userId);
+		$('#service-telegram-user-name').text(SERVICE_TELEGRAM_STATE.userName);
+		$('#modal-service-telegram-title').text('Service bot access: ' + SERVICE_TELEGRAM_STATE.userName);
+		$('#btn-service-telegram-create').prop('disabled', !CAN_INVITE_SERVICE_TELEGRAM || !isServiceTelegramCompanyConfigured());
+		$('#btn-service-telegram-revoke').prop('disabled', true).addClass('disabled');
+		applyServiceAclToModal({});
+		fillServiceLatestInvite(null);
+		SERVICE_TELEGRAM_MODAL.show();
+		if (!isServiceTelegramCompanyConfigured()) {
+			setServiceTelegramError((serviceTelegramBlockedReason() || 'Service bot компании ещё не готов к работе.') + (CAN_VIEW_SETTINGS ? ' Сначала завершите настройку в Settings.' : ' Обратитесь к администратору компании.'));
+		} else if (!isServiceTelegramWebhookReady()) {
+			setServiceTelegramError('Username и token сервисного бота сохранены, invite можно выдать уже сейчас. Но /start svc_... заработает только после нажатия «Подключить callback» в Settings.');
+		}
+		loadServiceTelegramHistory();
 	}
 
 	function buildCompanyActionsDropdown(company) {
@@ -1952,6 +2341,139 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 		_confirmModal.hide();
 		if (_confirmCb) { _confirmCb(); _confirmCb = null; }
 	});
+
+	if (CAN_MANAGE_SERVICE_TELEGRAM) {
+		$(document).on('click', '.js-service-history', function (e) {
+			e.preventDefault();
+			openServiceTelegramModal(parseInt($(this).data('user-id'), 10) || 0, $(this).data('user-name') || $(this).data('user-login') || '');
+		});
+
+		$(document).on('click', '.js-service-invite-create', function (e) {
+			e.preventDefault();
+
+			var userId = parseInt($(this).data('user-id'), 10) || 0;
+			var userName = $(this).data('user-name') || $(this).data('user-login') || ('User #' + userId);
+
+			if (!CAN_INVITE_SERVICE_TELEGRAM || !userId) {
+				return;
+			}
+			if (!isServiceTelegramCompanyConfigured()) {
+				promptServiceTelegramSettings(serviceTelegramBlockedReason() || 'Service bot компании ещё не готов к работе.');
+				return;
+			}
+
+			$.post(AJAX_URL, {
+				action: 'me_service_telegram_invite_create',
+				user_id: userId,
+				_nonce: NONCES.serviceTelegram
+			})
+			.done(function (res) {
+				if (!res || !res.success) {
+					showToast((res && res.data && res.data.message) || 'Не удалось создать service invite.', 'error');
+					return;
+				}
+
+				showToast((res.data && res.data.message) || 'Service invite создан.', 'success');
+				applyServiceAclToRow(userId, res.data.acl || {});
+				openServiceTelegramModal(userId, userName);
+				fillServiceLatestInvite(res.data.invite || null);
+				applyServiceAclToModal(res.data.acl || {});
+				loadServiceTelegramHistory();
+			})
+			.fail(function (xhr) {
+				var message = 'Ошибка сервера при создании service invite.';
+				var settingsUrl = '';
+				if (xhr && xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
+					message = xhr.responseJSON.data.message;
+					settingsUrl = xhr.responseJSON.data.settings_url || '';
+				}
+				if (settingsUrl) {
+					SERVICE_TELEGRAM_SETTINGS_URL = settingsUrl;
+					promptServiceTelegramSettings(message);
+					return;
+				}
+				showToast(message, 'error');
+			});
+		});
+
+		$(document).on('click', '.js-service-revoke', function (e) {
+			e.preventDefault();
+
+			if ($(this).hasClass('disabled') || String($(this).data('has-access')) !== '1') {
+				return;
+			}
+
+			var userId = parseInt($(this).data('user-id'), 10) || 0;
+			var userName = $(this).data('user-name') || $(this).data('user-login') || ('User #' + userId);
+			if (!userId || !CAN_INVITE_SERVICE_TELEGRAM) {
+				return;
+			}
+
+			showConfirm(
+				'Отозвать Service access для «' + userName + '»?',
+				function () {
+					$.post(AJAX_URL, {
+						action: 'me_service_telegram_access_revoke',
+						user_id: userId,
+						_nonce: NONCES.serviceTelegram
+					})
+					.done(function (res) {
+						if (!res || !res.success) {
+							showToast((res && res.data && res.data.message) || 'Не удалось отозвать Service access.', 'error');
+							return;
+						}
+
+						showToast((res.data && res.data.message) || 'Service access отозван.', 'success');
+						applyServiceAclToRow(userId, res.data.acl || {});
+						if (SERVICE_TELEGRAM_STATE.userId === userId) {
+							applyServiceAclToModal(res.data.acl || {});
+							loadServiceTelegramHistory();
+						}
+					})
+					.fail(function (xhr) {
+						var message = 'Ошибка сервера при отзыве Service access.';
+						if (xhr && xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
+							message = xhr.responseJSON.data.message;
+						}
+						showToast(message, 'error');
+					});
+				},
+				{ btnClass: 'btn-warning', btnText: 'Отозвать access' }
+			);
+		});
+
+		$('#btn-service-telegram-create').on('click', function () {
+			if (!CAN_INVITE_SERVICE_TELEGRAM || !SERVICE_TELEGRAM_STATE.userId) {
+				return;
+			}
+			if (!isServiceTelegramCompanyConfigured()) {
+				promptServiceTelegramSettings(serviceTelegramBlockedReason() || 'Service bot компании ещё не готов к работе.');
+				return;
+			}
+			$('.js-service-invite-create[data-user-id="' + SERVICE_TELEGRAM_STATE.userId + '"]').first().trigger('click');
+		});
+
+		$('#btn-service-telegram-revoke').on('click', function () {
+			if (!SERVICE_TELEGRAM_STATE.userId) {
+				return;
+			}
+			$('.js-service-revoke[data-user-id="' + SERVICE_TELEGRAM_STATE.userId + '"]').first().trigger('click');
+		});
+
+		$('#service-telegram-open-invite').on('click', function (e) {
+			if ($(this).hasClass('disabled')) {
+				e.preventDefault();
+			}
+		});
+
+		$('#modal-service-telegram').on('hidden.bs.modal', function () {
+			SERVICE_TELEGRAM_STATE.userId = 0;
+			SERVICE_TELEGRAM_STATE.userName = '';
+			setServiceTelegramError('');
+			$('#service-telegram-history-body').html('<tr><td colspan="6" class="text-center hint-text p-t-20 p-b-20">Загрузка…</td></tr>');
+			fillServiceLatestInvite(null);
+		});
+	}
 
 	// ── Spinner ───────────────────────────────────────────────────────────────
 	function setLoading($btn, loading) {
@@ -2248,6 +2770,7 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 	});
 
 
+	<?php if ( $can_edit_roles ) : ?>
 	// ── Roles: permissions modal ──────────────────────────────────────────────
 	var PERMS_GROUPED  = <?php echo crm_json_for_inline_js( $all_permissions_grouped ); ?>;
 	var NONCE_ROLES    = '<?php echo esc_js( $nonce_roles ); ?>';
@@ -2318,6 +2841,7 @@ add_action( 'wp_footer', function () use ( $nonce_save, $nonce_status, $nonce_de
 				.end().find('#btn-role-perms-spinner').addClass('d-none');
 		});
 	});
+	<?php endif; ?>
 
 	if (CAN_MANAGE_OFFICES) {
 		var $createOfficeModal = $('#modal-create-office');

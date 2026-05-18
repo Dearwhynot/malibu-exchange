@@ -17,8 +17,16 @@ if ( ! crm_user_has_permission( get_current_user_id(), 'settings.view' ) ) {
 
 // Root (uid=1) имеет org_id = 0 — системный контекст, отдельный от всех компаний.
 // Обычный пользователь — org_id его компании.
-$org_id   = crm_is_root( get_current_user_id() ) ? 0 : crm_get_current_user_company_id( get_current_user_id() );
+$is_root_settings_context = crm_is_root( get_current_user_id() );
+$org_id   = $is_root_settings_context ? 0 : crm_get_current_user_company_id( get_current_user_id() );
 $settings = crm_get_all_settings( $org_id );
+$product_release_version = function_exists( 'crm_get_product_release_version' ) ? crm_get_product_release_version() : '';
+$product_roadmap_page    = function_exists( 'crm_get_product_roadmap_page' ) ? crm_get_product_roadmap_page() : null;
+$product_release_page    = function_exists( 'crm_get_product_release_notes_page' ) ? crm_get_product_release_notes_page() : null;
+$product_roadmap_url     = function_exists( 'crm_get_product_roadmap_url' ) ? crm_get_product_roadmap_url() : home_url( '/roadmap/' );
+$product_release_url     = function_exists( 'crm_get_product_release_notes_url' ) ? crm_get_product_release_notes_url() : home_url( '/release-notes/' );
+$product_roadmap_edit_url = function_exists( 'crm_get_product_page_edit_url' ) ? crm_get_product_page_edit_url( $product_roadmap_page ) : '';
+$product_release_edit_url = function_exists( 'crm_get_product_page_edit_url' ) ? crm_get_product_page_edit_url( $product_release_page ) : '';
 $telegram_contexts = crm_telegram_bot_context_labels();
 $telegram_states   = [];
 
@@ -457,6 +465,86 @@ get_header();
 						</form>
 					</div>
 				</div>
+
+				<?php if ( $is_root_settings_context ) : ?>
+				<div class="card card-default m-b-30">
+					<div class="card-header">
+						<div class="card-title">Product — Roadmap / Release Notes</div>
+					</div>
+					<div class="card-body">
+						<form id="product-settings-form">
+							<div class="row">
+								<div class="col-md-4 col-lg-3">
+									<div class="form-group">
+										<label for="product_release_version">Версия в футере</label>
+										<input type="text"
+										       class="form-control"
+										       id="product_release_version"
+										       name="product_release_version"
+										       value="<?php echo esc_attr( $product_release_version ); ?>"
+										       placeholder="0.1.0">
+										<p class="hint-text m-t-5">
+											Показывается в футере на всех backoffice-страницах и ведёт на Release Notes.
+										</p>
+									</div>
+								</div>
+							</div>
+							<button type="submit" class="btn btn-primary btn-cons">
+								Сохранить версию
+							</button>
+						</form>
+
+						<hr class="m-t-25 m-b-25">
+
+						<div class="row">
+							<div class="col-md-6 m-b-20">
+								<div class="card card-default m-b-0">
+									<div class="card-header">
+										<div class="card-title">Roadmap</div>
+									</div>
+									<div class="card-body">
+										<p class="text-muted">
+											Планы по разработке. Скриншоты здесь опциональны.
+										</p>
+										<div class="d-flex flex-wrap gap-2">
+											<a href="<?php echo esc_url( $product_roadmap_url ); ?>" class="btn btn-default btn-sm">
+												Открыть
+											</a>
+											<?php if ( $product_roadmap_edit_url !== '' ) : ?>
+												<a href="<?php echo esc_url( $product_roadmap_edit_url ); ?>" class="btn btn-primary btn-sm" target="_blank" rel="noopener">
+													Редактировать
+												</a>
+											<?php endif; ?>
+										</div>
+									</div>
+								</div>
+							</div>
+							<div class="col-md-6 m-b-20">
+								<div class="card card-default m-b-0">
+									<div class="card-header">
+										<div class="card-title">Release Notes</div>
+									</div>
+									<div class="card-body">
+										<p class="text-muted">
+											Журнал выпущенных изменений. Для заметных функциональных правок прикладывайте screenshot изменённого узла.
+										</p>
+										<div class="d-flex flex-wrap gap-2">
+											<a href="<?php echo esc_url( $product_release_url ); ?>" class="btn btn-default btn-sm">
+												Открыть
+											</a>
+											<?php if ( $product_release_edit_url !== '' ) : ?>
+												<a href="<?php echo esc_url( $product_release_edit_url ); ?>" class="btn btn-primary btn-sm" target="_blank" rel="noopener">
+													Редактировать
+												</a>
+											<?php endif; ?>
+										</div>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+				<?php endif; ?>
 
 				<!-- ─── Telegram ───────────────────────────────────────────────────── -->
 				<?php foreach ( $telegram_states as $telegram_context => $telegram_state ) : ?>
@@ -1568,6 +1656,13 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 		$('#settings-alert'),
 		function () { return { section: 'system', timezone: $('#timezone').val() }; },
 		'Сохранить'
+	);
+
+	handleSettingsForm(
+		$('#product-settings-form'),
+		$('#settings-alert'),
+		function () { return { section: 'product_system', product_release_version: $('#product_release_version').val() }; },
+		'Сохранить версию'
 	);
 
 	$('.telegram-settings-form').each(function () {

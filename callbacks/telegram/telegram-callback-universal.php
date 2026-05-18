@@ -1474,6 +1474,13 @@ if (!function_exists('tg_route_command')) {
             return false;
         }
 
+        if (function_exists('crm_service_tg_route_command')) {
+            $service_handled = (bool) crm_service_tg_route_command($command, $text, $ctx, $telegram, $data);
+            if ($service_handled) {
+                return true;
+            }
+        }
+
         if (function_exists('crm_operator_tg_route_command')) {
             $operator_handled = (bool) crm_operator_tg_route_command($command, $text, $ctx, $telegram, $data);
             if ($operator_handled) {
@@ -1606,6 +1613,13 @@ if (!function_exists('tg_route_callback')) {
     {
         $chat_id = $ctx['chat_id'];
         $actor_id = isset($ctx['actor_id']) ? $ctx['actor_id'] : null;
+
+        if (function_exists('crm_service_tg_route_callback')) {
+            $service_handled = (bool) crm_service_tg_route_callback($callback_data, $ctx, $telegram, $data);
+            if ($service_handled) {
+                return true;
+            }
+        }
 
         if (function_exists('crm_merchant_tg_route_callback')) {
             $merchant_handled = (bool) crm_merchant_tg_route_callback($callback_data, $ctx, $telegram, $data);

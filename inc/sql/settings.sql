@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS `crm_settings` (
 -- ─── Seed: дефолтные настройки для org_id = 1 ───────────────────────────────
 
 INSERT IGNORE INTO `crm_settings` (`org_id`, `setting_key`, `setting_value`) VALUES
+(0, 'product_release_version', '0.1.0');
+
+INSERT IGNORE INTO `crm_settings` (`org_id`, `setting_key`, `setting_value`) VALUES
 (1, 'telegram_bot_token', ''),
 (1, 'telegram_bot_username', ''),
 (1, 'telegram_webhook_url', ''),

@@ -534,7 +534,7 @@ function me_ajax_orders_check_status(): void {
 		] );
 	}
 
-	$poll = crm_fintech_poll_order_status( $order );
+	$poll = crm_fintech_poll_order_status( $order, 'web_manual' );
 
 	if ( $poll['error'] ) {
 		wp_send_json_error( [ 'message' => 'Ошибка проверки статуса: ' . $poll['error'] ] );
