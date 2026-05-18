@@ -80,7 +80,7 @@ if ( $company_id > 0 && function_exists( 'crm_fintech_get_pay2day_default_paymen
 </div>
 
 <?php
-add_action( 'wp_footer', function () {
+add_action( 'wp_footer', function () use ( $default_payment_purpose, $amount_error ) {
 ?>
 <script>
 (function ($) {

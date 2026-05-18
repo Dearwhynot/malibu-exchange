@@ -937,6 +937,7 @@ class Fintech_Payment_Gateway {
 		if ( $description === '' ) {
 			$description = self::build_default_pay2day_description( $merchant_order_id );
 		}
+		$external_order_id = crm_fintech_normalize_payment_purpose( $description );
 
 		$token_response = self::pay2day_get_access_token();
 		if ( empty( $token_response['success'] ) || empty( $token_response['token'] ) ) {
@@ -954,6 +955,7 @@ class Fintech_Payment_Gateway {
 				'orderCurrency'   => $order_currency,
 				'tspId'           => $tsp_id,
 				'description'     => $description,
+				'externalOrderId' => $external_order_id,
 				'callbackUrl'     => self::get_callback_url(),
 			]
 		);
@@ -1107,6 +1109,7 @@ class Fintech_Payment_Gateway {
 		if ( $description === '' ) {
 			$description = self::build_default_pay2day_description( $merchant_order_id );
 		}
+		$external_order_id = crm_fintech_normalize_payment_purpose( $description );
 
 		$token_response = self::pay2day_get_access_token();
 		if ( empty( $token_response['success'] ) || empty( $token_response['token'] ) ) {
@@ -1128,6 +1131,7 @@ class Fintech_Payment_Gateway {
 				'paymentCurrency' => $payment_currency,
 				'tspId'           => $tsp_id,
 				'description'     => $description,
+				'externalOrderId' => $external_order_id,
 				'callbackUrl'     => self::get_callback_url(),
 			]
 		);

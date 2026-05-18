@@ -194,6 +194,26 @@ function malibu_exchange_require_login(): void
     exit;
 }
 
+function malibu_exchange_get_public_page_templates(): array
+{
+    return [
+        'page-login.php',
+        'page-merchant-api.php',
+        'page-merchant-api-console.php',
+    ];
+}
+
+function malibu_exchange_is_public_page_template_request(): bool
+{
+    foreach (malibu_exchange_get_public_page_templates() as $template) {
+        if (is_page_template($template)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function malibu_exchange_handle_login_submission(): array
 {
     $state = [
@@ -270,7 +290,7 @@ add_action('template_redirect', function () {
         return;
     }
 
-    if (is_page_template('page-login.php')) {
+    if (malibu_exchange_is_public_page_template_request()) {
         return;
     }
 

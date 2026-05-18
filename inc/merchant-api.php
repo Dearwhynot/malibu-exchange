@@ -7,6 +7,42 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+function crm_merchant_api_openapi_relative_path(): string {
+	return 'docs/api/merchant/openapi.yaml';
+}
+
+function crm_merchant_api_openapi_file_path(): string {
+	return trailingslashit( get_template_directory() ) . ltrim( crm_merchant_api_openapi_relative_path(), '/' );
+}
+
+function crm_get_merchant_api_spec_url(): string {
+	return trailingslashit( get_stylesheet_directory_uri() ) . ltrim( crm_merchant_api_openapi_relative_path(), '/' );
+}
+
+function crm_get_merchant_api_docs_page(): ?WP_Post {
+	$page = get_page_by_path( 'merchant-api', OBJECT, 'page' );
+
+	return $page instanceof WP_Post ? $page : null;
+}
+
+function crm_get_merchant_api_console_page(): ?WP_Post {
+	$page = get_page_by_path( 'merchant-api-console', OBJECT, 'page' );
+
+	return $page instanceof WP_Post ? $page : null;
+}
+
+function crm_get_merchant_api_docs_url(): string {
+	$page = crm_get_merchant_api_docs_page();
+
+	return $page ? (string) get_permalink( $page ) : home_url( '/merchant-api/' );
+}
+
+function crm_get_merchant_api_console_url(): string {
+	$page = crm_get_merchant_api_console_page();
+
+	return $page ? (string) get_permalink( $page ) : home_url( '/merchant-api-console/' );
+}
+
 function crm_merchant_api_permission_code(): string {
 	return 'merchants.manage_api';
 }
@@ -176,6 +212,130 @@ function crm_merchant_api_secret_prefix( string $secret ): string {
 
 function crm_merchant_api_request_id(): string {
 	return 'req_' . bin2hex( random_bytes( 8 ) );
+}
+
+function crm_merchant_api_rate_limit_policies(): array {
+	return [
+		'read'  => [
+			'limit'  => 120,
+			'window' => 60,
+		],
+		'write' => [
+			'limit'  => 20,
+			'window' => 60,
+		],
+	];
+}
+
+function crm_merchant_api_rate_limit_bucket( string $required_scope ): string {
+	return $required_scope === 'orders:write' ? 'write' : 'read';
+}
+
+function crm_merchant_api_rate_limit_key( int $client_id, string $bucket ): string {
+	return 'crm_mapi_rl_' . $bucket . '_' . $client_id;
+}
+
+function crm_merchant_api_rate_limit_headers( WP_REST_Response $response, int $limit, int $remaining, int $retry_after ): WP_REST_Response {
+	$response->header( 'Retry-After', (string) max( 1, $retry_after ) );
+	$response->header( 'X-RateLimit-Limit', (string) max( 1, $limit ) );
+	$response->header( 'X-RateLimit-Remaining', (string) max( 0, $remaining ) );
+
+	return $response;
+}
+
+function crm_merchant_api_rate_limit_error_response(
+	string $request_id,
+	string $message,
+	int $limit,
+	int $remaining,
+	int $retry_after
+): WP_REST_Response {
+	$response = crm_merchant_api_error_response( $request_id, 'rate_limit_exceeded', $message, 429 );
+
+	return crm_merchant_api_rate_limit_headers( $response, $limit, $remaining, $retry_after );
+}
+
+function crm_merchant_api_enforce_rate_limit( WP_REST_Request $request, array $context, string $required_scope ) {
+	$client_id = (int) ( $context['client']->id ?? 0 );
+	if ( $client_id <= 0 ) {
+		return null;
+	}
+
+	$bucket   = crm_merchant_api_rate_limit_bucket( $required_scope );
+	$policies = crm_merchant_api_rate_limit_policies();
+	$policy   = $policies[ $bucket ] ?? $policies['read'];
+	$limit    = max( 1, (int) ( $policy['limit'] ?? 60 ) );
+	$window   = max( 1, (int) ( $policy['window'] ?? 60 ) );
+	$key      = crm_merchant_api_rate_limit_key( $client_id, $bucket );
+	$now      = time();
+	$state    = get_transient( $key );
+
+	if ( ! is_array( $state ) ) {
+		$state = [
+			'count'      => 0,
+			'started_at' => $now,
+		];
+	}
+
+	$count      = max( 0, (int) ( $state['count'] ?? 0 ) );
+	$started_at = max( 0, (int) ( $state['started_at'] ?? $now ) );
+	if ( $started_at <= 0 || ( $started_at + $window ) <= $now ) {
+		$count      = 0;
+		$started_at = $now;
+	}
+
+	$retry_after = max( 1, ( $started_at + $window ) - $now );
+	if ( $count >= $limit ) {
+		$remaining = 0;
+
+		crm_log( 'merchant_api_rate_limit_exceeded', [
+			'category'    => 'security',
+			'level'       => 'warning',
+			'action'      => 'auth',
+			'message'     => 'Merchant API rate limit exceeded.',
+			'is_success'  => false,
+			'target_type' => 'merchant',
+			'target_id'   => (int) ( $context['merchant']->id ?? 0 ),
+			'org_id'      => (int) ( $context['company']->id ?? 0 ),
+			'context'     => [
+				'request_id'    => (string) ( $context['request_id'] ?? '' ),
+				'client_id'     => $client_id,
+				'client_name'   => (string) ( $context['client']->client_name ?? '' ),
+				'token_prefix'  => (string) ( $context['client']->token_prefix ?? '' ),
+				'bucket'        => $bucket,
+				'limit'         => $limit,
+				'window_seconds'=> $window,
+				'request_route' => $request->get_route(),
+				'request_method'=> $request->get_method(),
+			],
+		] );
+
+		return crm_merchant_api_rate_limit_error_response(
+			(string) $context['request_id'],
+			'Rate limit exceeded. Retry later.',
+			$limit,
+			$remaining,
+			$retry_after
+		);
+	}
+
+	$count++;
+	set_transient(
+		$key,
+		[
+			'count'      => $count,
+			'started_at' => $started_at,
+		],
+		$window
+	);
+
+	$remaining = max( 0, $limit - $count );
+
+	return [
+		'limit'       => $limit,
+		'remaining'   => $remaining,
+		'retry_after' => $retry_after,
+	];
 }
 
 function crm_merchant_api_iso8601( ?string $mysql_datetime ): ?string {
@@ -539,6 +699,22 @@ function crm_merchant_api_success_response( string $request_id, array $data, arr
 	);
 }
 
+function crm_merchant_api_apply_context_headers( WP_REST_Response $response, array $context ): WP_REST_Response {
+	$response->header( 'X-Request-Id', (string) ( $context['request_id'] ?? '' ) );
+
+	$rate_limit = is_array( $context['rate_limit'] ?? null ) ? $context['rate_limit'] : [];
+	if ( ! empty( $rate_limit ) ) {
+		$response = crm_merchant_api_rate_limit_headers(
+			$response,
+			(int) ( $rate_limit['limit'] ?? 0 ),
+			(int) ( $rate_limit['remaining'] ?? 0 ),
+			(int) ( $rate_limit['retry_after'] ?? 0 )
+		);
+	}
+
+	return $response;
+}
+
 function crm_merchant_api_auth_context( WP_REST_Request $request, string $required_scope = '' ) {
 	$request_id = crm_merchant_api_request_id();
 	$token      = crm_merchant_api_extract_bearer_token( $request );
@@ -575,6 +751,19 @@ function crm_merchant_api_auth_context( WP_REST_Request $request, string $requir
 
 	$merchant = function_exists( 'crm_get_merchant_by_id' ) ? crm_get_merchant_by_id( (int) $client->merchant_id ) : null;
 	if ( ! $merchant ) {
+		crm_log( 'merchant_api_access_denied', [
+			'category'   => 'security',
+			'level'      => 'error',
+			'action'     => 'auth',
+			'message'    => 'Merchant API token points to missing merchant.',
+			'is_success' => false,
+			'context'    => [
+				'request_id'  => $request_id,
+				'client_id'   => (int) $client->id,
+				'token_prefix'=> (string) $client->token_prefix,
+			],
+		] );
+
 		return crm_merchant_api_error_response( $request_id, 'not_found', 'Merchant record was not found.', 404 );
 	}
 
@@ -599,17 +788,73 @@ function crm_merchant_api_auth_context( WP_REST_Request $request, string $requir
 
 	$company = function_exists( 'crm_get_company_by_id' ) ? crm_get_company_by_id( $company_id ) : null;
 	if ( ! $company || (string) ( $company->status ?? '' ) !== 'active' ) {
+		crm_log( 'merchant_api_access_denied', [
+			'category'   => 'security',
+			'level'      => 'warning',
+			'action'     => 'auth',
+			'message'    => 'Merchant API company is inactive.',
+			'is_success' => false,
+			'context'    => [
+				'request_id'   => $request_id,
+				'client_id'    => (int) $client->id,
+				'company_id'   => $company_id,
+				'token_prefix' => (string) $client->token_prefix,
+			],
+		] );
+
 		return crm_merchant_api_error_response( $request_id, 'company_inactive', 'Company is not active.', 403 );
 	}
 
 	$merchant_status = sanitize_key( (string) ( $merchant->status ?? '' ) );
 	if ( $merchant_status === CRM_MERCHANT_STATUS_BLOCKED ) {
+		crm_log( 'merchant_api_access_denied', [
+			'category'   => 'security',
+			'level'      => 'warning',
+			'action'     => 'auth',
+			'message'    => 'Merchant API merchant is blocked.',
+			'is_success' => false,
+			'context'    => [
+				'request_id'   => $request_id,
+				'client_id'    => (int) $client->id,
+				'merchant_id'  => (int) $merchant->id,
+				'token_prefix' => (string) $client->token_prefix,
+			],
+		] );
+
 		return crm_merchant_api_error_response( $request_id, 'merchant_blocked', 'Merchant is blocked.', 403 );
 	}
 	if ( $merchant_status === CRM_MERCHANT_STATUS_PENDING ) {
+		crm_log( 'merchant_api_access_denied', [
+			'category'   => 'security',
+			'level'      => 'warning',
+			'action'     => 'auth',
+			'message'    => 'Merchant API merchant is pending.',
+			'is_success' => false,
+			'context'    => [
+				'request_id'   => $request_id,
+				'client_id'    => (int) $client->id,
+				'merchant_id'  => (int) $merchant->id,
+				'token_prefix' => (string) $client->token_prefix,
+			],
+		] );
+
 		return crm_merchant_api_error_response( $request_id, 'merchant_pending', 'Merchant is pending activation.', 403 );
 	}
 	if ( $merchant_status === CRM_MERCHANT_STATUS_ARCHIVED ) {
+		crm_log( 'merchant_api_access_denied', [
+			'category'   => 'security',
+			'level'      => 'warning',
+			'action'     => 'auth',
+			'message'    => 'Merchant API merchant is archived.',
+			'is_success' => false,
+			'context'    => [
+				'request_id'   => $request_id,
+				'client_id'    => (int) $client->id,
+				'merchant_id'  => (int) $merchant->id,
+				'token_prefix' => (string) $client->token_prefix,
+			],
+		] );
+
 		return crm_merchant_api_error_response( $request_id, 'forbidden', 'Merchant is archived.', 403 );
 	}
 
@@ -632,6 +877,16 @@ function crm_merchant_api_auth_context( WP_REST_Request $request, string $requir
 		return crm_merchant_api_error_response( $request_id, 'forbidden', 'Scope is not allowed for this token.', 403 );
 	}
 
+	$rate_limit = crm_merchant_api_enforce_rate_limit( $request, [
+		'request_id' => $request_id,
+		'client'     => $client,
+		'merchant'   => $merchant,
+		'company'    => $company,
+	], $required_scope );
+	if ( $rate_limit instanceof WP_REST_Response ) {
+		return $rate_limit;
+	}
+
 	crm_merchant_api_touch_client_usage( (int) $client->id );
 
 	return [
@@ -640,6 +895,7 @@ function crm_merchant_api_auth_context( WP_REST_Request $request, string $requir
 		'merchant'   => $merchant,
 		'company'    => $company,
 		'scopes'     => $scopes,
+		'rate_limit' => is_array( $rate_limit ) ? $rate_limit : [],
 	];
 }
 
@@ -1459,7 +1715,8 @@ function crm_merchant_api_rest_create_invoice( WP_REST_Request $request ): WP_RE
 			]
 		);
 
-		return crm_merchant_api_success_response(
+		return crm_merchant_api_apply_context_headers(
+			crm_merchant_api_success_response(
 			$context['request_id'],
 			[
 				'merchant_id'        => (int) $context['merchant']->id,
@@ -1471,6 +1728,8 @@ function crm_merchant_api_rest_create_invoice( WP_REST_Request $request ): WP_RE
 			],
 			[],
 			200
+			),
+			$context
 		);
 	}
 
@@ -1522,7 +1781,10 @@ function crm_merchant_api_rest_create_invoice( WP_REST_Request $request ): WP_RE
 			]
 		);
 
-		return crm_merchant_api_write_error_response( $context['request_id'], $create );
+		return crm_merchant_api_apply_context_headers(
+			crm_merchant_api_write_error_response( $context['request_id'], $create ),
+			$context
+		);
 	}
 
 	$order = crm_merchant_api_get_order(
@@ -1531,7 +1793,10 @@ function crm_merchant_api_rest_create_invoice( WP_REST_Request $request ): WP_RE
 		(int) ( $create['order_db_id'] ?? 0 )
 	);
 	if ( ! $order ) {
-		return crm_merchant_api_error_response( $context['request_id'], 'internal_error', 'Invoice was created but could not be reloaded from storage.', 500 );
+		return crm_merchant_api_apply_context_headers(
+			crm_merchant_api_error_response( $context['request_id'], 'internal_error', 'Invoice was created but could not be reloaded from storage.', 500 ),
+			$context
+		);
 	}
 
 	crm_merchant_api_log_write_event(
@@ -1550,7 +1815,8 @@ function crm_merchant_api_rest_create_invoice( WP_REST_Request $request ): WP_RE
 		]
 	);
 
-	return crm_merchant_api_success_response(
+	return crm_merchant_api_apply_context_headers(
+		crm_merchant_api_success_response(
 		$context['request_id'],
 		[
 			'merchant_id'       => (int) $context['merchant']->id,
@@ -1562,6 +1828,8 @@ function crm_merchant_api_rest_create_invoice( WP_REST_Request $request ): WP_RE
 		],
 		[],
 		201
+		),
+		$context
 	);
 }
 
@@ -1591,7 +1859,8 @@ function crm_merchant_api_rest_me( WP_REST_Request $request ): WP_REST_Response 
 		],
 	] );
 
-	return crm_merchant_api_success_response(
+	return crm_merchant_api_apply_context_headers(
+		crm_merchant_api_success_response(
 		$context['request_id'],
 		[
 			'merchant' => [
@@ -1617,6 +1886,8 @@ function crm_merchant_api_rest_me( WP_REST_Request $request ): WP_REST_Response 
 			],
 			'capabilities' => crm_merchant_api_get_company_mode_summary( (int) $company->id, $merchant ),
 		]
+		),
+		$context
 	);
 }
 
@@ -1628,7 +1899,8 @@ function crm_merchant_api_rest_balances( WP_REST_Request $request ): WP_REST_Res
 
 	crm_merchant_api_log_read_event( 'merchant_api_balances_read', $context, 'Merchant API balances endpoint accessed.' );
 
-	return crm_merchant_api_success_response(
+	return crm_merchant_api_apply_context_headers(
+		crm_merchant_api_success_response(
 		$context['request_id'],
 		[
 			'merchant_id' => (int) $context['merchant']->id,
@@ -1638,6 +1910,8 @@ function crm_merchant_api_rest_balances( WP_REST_Request $request ): WP_REST_Res
 				(int) $context['merchant']->id
 			),
 		]
+		),
+		$context
 	);
 }
 
@@ -1650,7 +1924,8 @@ function crm_merchant_api_rest_rates( WP_REST_Request $request ): WP_REST_Respon
 	crm_merchant_api_log_read_event( 'merchant_api_rates_read', $context, 'Merchant API rates endpoint accessed.' );
 	$rates = crm_merchant_api_rates_snapshot( (int) $context['company']->id, $context['merchant'] );
 
-	return crm_merchant_api_success_response(
+	return crm_merchant_api_apply_context_headers(
+		crm_merchant_api_success_response(
 		$context['request_id'],
 		[
 			'merchant_id'   => (int) $context['merchant']->id,
@@ -1658,6 +1933,8 @@ function crm_merchant_api_rest_rates( WP_REST_Request $request ): WP_REST_Respon
 			'mode_summary'  => $rates['mode_summary'],
 			'directions'    => $rates['items'],
 		]
+		),
+		$context
 	);
 }
 
@@ -1679,7 +1956,8 @@ function crm_merchant_api_rest_orders( WP_REST_Request $request ): WP_REST_Respo
 
 	crm_merchant_api_log_read_event( 'merchant_api_orders_read', $context, 'Merchant API orders list endpoint accessed.' );
 
-	return crm_merchant_api_success_response(
+	return crm_merchant_api_apply_context_headers(
+		crm_merchant_api_success_response(
 		$context['request_id'],
 		[
 			'items' => array_values( array_map( 'crm_merchant_api_order_summary', $orders['items'] ) ),
@@ -1691,6 +1969,8 @@ function crm_merchant_api_rest_orders( WP_REST_Request $request ): WP_REST_Respo
 			'total_pages' => (int) $orders['total_pages'],
 			'statuses'    => $statuses,
 		]
+		),
+		$context
 	);
 }
 
@@ -1708,16 +1988,22 @@ function crm_merchant_api_rest_order_detail( WP_REST_Request $request ): WP_REST
 	);
 
 	if ( ! $order ) {
-		return crm_merchant_api_error_response( $context['request_id'], 'not_found', 'Order was not found.', 404 );
+		return crm_merchant_api_apply_context_headers(
+			crm_merchant_api_error_response( $context['request_id'], 'not_found', 'Order was not found.', 404 ),
+			$context
+		);
 	}
 
 	crm_merchant_api_log_read_event( 'merchant_api_order_read', $context, 'Merchant API order detail endpoint accessed.' );
 
-	return crm_merchant_api_success_response(
+	return crm_merchant_api_apply_context_headers(
+		crm_merchant_api_success_response(
 		$context['request_id'],
 		[
 			'order' => crm_merchant_api_order_detail( $order ),
 		]
+		),
+		$context
 	);
 }
 
@@ -1737,7 +2023,8 @@ function crm_merchant_api_rest_payouts( WP_REST_Request $request ): WP_REST_Resp
 
 	crm_merchant_api_log_read_event( 'merchant_api_payouts_read', $context, 'Merchant API payouts list endpoint accessed.' );
 
-	return crm_merchant_api_success_response(
+	return crm_merchant_api_apply_context_headers(
+		crm_merchant_api_success_response(
 		$context['request_id'],
 		[
 			'items' => array_values( array_map( 'crm_merchant_api_format_payout', $payouts['items'] ) ),
@@ -1748,6 +2035,8 @@ function crm_merchant_api_rest_payouts( WP_REST_Request $request ): WP_REST_Resp
 			'total'       => (int) $payouts['total'],
 			'total_pages' => (int) $payouts['total_pages'],
 		]
+		),
+		$context
 	);
 }
 
@@ -1765,16 +2054,22 @@ function crm_merchant_api_rest_payout_detail( WP_REST_Request $request ): WP_RES
 	);
 
 	if ( ! $payout ) {
-		return crm_merchant_api_error_response( $context['request_id'], 'not_found', 'Payout was not found.', 404 );
+		return crm_merchant_api_apply_context_headers(
+			crm_merchant_api_error_response( $context['request_id'], 'not_found', 'Payout was not found.', 404 ),
+			$context
+		);
 	}
 
 	crm_merchant_api_log_read_event( 'merchant_api_payout_read', $context, 'Merchant API payout detail endpoint accessed.' );
 
-	return crm_merchant_api_success_response(
+	return crm_merchant_api_apply_context_headers(
+		crm_merchant_api_success_response(
 		$context['request_id'],
 		[
 			'payout' => crm_merchant_api_format_payout( $payout ),
 		]
+		),
+		$context
 	);
 }
 

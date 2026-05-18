@@ -1,0 +1,355 @@
+.merchant-api-public-body {
+	margin: 0;
+	min-height: 100vh;
+	overflow-y: auto !important;
+	overflow-x: hidden;
+	background:
+		radial-gradient(circle at top left, rgba(255, 208, 126, 0.32), transparent 32%),
+		radial-gradient(circle at top right, rgba(75, 181, 177, 0.18), transparent 28%),
+		linear-gradient(180deg, #f6f8fb 0%, #eef3f7 100%);
+}
+
+.merchant-api-public-page {
+	background:
+		radial-gradient(circle at top left, rgba(255, 208, 126, 0.32), transparent 32%),
+		radial-gradient(circle at top right, rgba(75, 181, 177, 0.18), transparent 28%),
+		linear-gradient(180deg, #f6f8fb 0%, #eef3f7 100%);
+	min-height: 100vh;
+	padding: 32px 0 72px;
+}
+
+.merchant-api-public-shell {
+	max-width: 1480px;
+	margin: 0 auto;
+	padding: 0 20px;
+}
+
+.merchant-api-public-topbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 20px;
+}
+
+.merchant-api-public-brand {
+	display: inline-flex;
+	align-items: center;
+	gap: 12px;
+	color: #10212f;
+	text-decoration: none;
+}
+
+.merchant-api-public-brand__mark {
+	width: 42px;
+	height: 42px;
+	border-radius: 14px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	background: linear-gradient(135deg, #0c7c8f 0%, #11a6a1 100%);
+	color: #fff;
+	font-size: 18px;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+}
+
+.merchant-api-public-brand__copy {
+	display: flex;
+	flex-direction: column;
+}
+
+.merchant-api-public-brand__eyebrow {
+	font-size: 11px;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: #6c8090;
+}
+
+.merchant-api-public-brand__title {
+	font-size: 18px;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+}
+
+.merchant-api-public-nav {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+
+.merchant-api-public-nav a {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 40px;
+	padding: 0 16px;
+	border-radius: 999px;
+	border: 1px solid rgba(16, 33, 47, 0.1);
+	background: rgba(255, 255, 255, 0.82);
+	color: #18354a;
+	text-decoration: none;
+	font-size: 13px;
+	font-weight: 600;
+	transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.merchant-api-public-nav a:hover,
+.merchant-api-public-nav a:focus {
+	background: #fff;
+	border-color: rgba(12, 124, 143, 0.34);
+	transform: translateY(-1px);
+}
+
+.merchant-api-public-nav a.is-active {
+	background: #10212f;
+	border-color: #10212f;
+	color: #fff;
+}
+
+.merchant-api-public-hero {
+	background: linear-gradient(135deg, #10212f 0%, #0f3b53 46%, #0c7c8f 100%);
+	color: #fff;
+	border-radius: 28px;
+	padding: 28px 30px;
+	box-shadow: 0 30px 70px rgba(16, 33, 47, 0.18);
+	margin-bottom: 22px;
+}
+
+.merchant-api-public-hero__eyebrow {
+	font-size: 12px;
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	opacity: 0.76;
+	margin-bottom: 10px;
+}
+
+.merchant-api-public-hero__headline {
+	font-size: 40px;
+	line-height: 1.08;
+	letter-spacing: -0.03em;
+	margin: 0 0 12px;
+	max-width: 760px;
+}
+
+.merchant-api-public-hero__lead {
+	max-width: 860px;
+	font-size: 16px;
+	line-height: 1.65;
+	color: rgba(255, 255, 255, 0.86);
+	margin: 0;
+}
+
+.merchant-api-public-chip-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-top: 18px;
+}
+
+.merchant-api-public-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 34px;
+	padding: 0 14px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.12);
+	border: 1px solid rgba(255, 255, 255, 0.16);
+	font-size: 13px;
+	color: rgba(255, 255, 255, 0.9);
+}
+
+.merchant-api-public-chip code {
+	background: rgba(255, 255, 255, 0.12);
+	color: #fff;
+	padding: 2px 6px;
+	border-radius: 8px;
+}
+
+.merchant-api-public-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-top: 22px;
+}
+
+.merchant-api-public-actions a {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 44px;
+	padding: 0 18px;
+	border-radius: 14px;
+	text-decoration: none;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
+}
+
+.merchant-api-public-actions a:hover,
+.merchant-api-public-actions a:focus {
+	transform: translateY(-1px);
+}
+
+.merchant-api-public-actions .is-primary {
+	background: #fff;
+	color: #10212f;
+	box-shadow: 0 18px 40px rgba(0, 0, 0, 0.16);
+}
+
+.merchant-api-public-actions .is-secondary {
+	background: rgba(255, 255, 255, 0.12);
+	color: #fff;
+	border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.merchant-api-public-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 14px;
+	margin-bottom: 22px;
+}
+
+.merchant-api-public-kpi {
+	background: rgba(255, 255, 255, 0.84);
+	border: 1px solid rgba(16, 33, 47, 0.08);
+	border-radius: 20px;
+	padding: 18px 18px 16px;
+	box-shadow: 0 18px 36px rgba(16, 33, 47, 0.08);
+}
+
+.merchant-api-public-kpi__label {
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.12em;
+	color: #607384;
+	margin-bottom: 8px;
+}
+
+.merchant-api-public-kpi__value {
+	font-size: 18px;
+	line-height: 1.45;
+	color: #10212f;
+	word-break: break-word;
+}
+
+.merchant-api-public-kpi code {
+	background: rgba(16, 33, 47, 0.06);
+	padding: 2px 6px;
+	border-radius: 8px;
+}
+
+.merchant-api-public-card {
+	background: #fff;
+	border-radius: 28px;
+	border: 1px solid rgba(16, 33, 47, 0.08);
+	box-shadow: 0 28px 56px rgba(16, 33, 47, 0.08);
+	overflow: visible;
+}
+
+.merchant-api-public-note {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	align-items: center;
+	justify-content: space-between;
+	padding: 18px 22px;
+	border-bottom: 1px solid rgba(16, 33, 47, 0.08);
+	background: #f8fbfd;
+	color: #29465c;
+	font-size: 14px;
+	line-height: 1.6;
+}
+
+.merchant-api-public-note code {
+	background: rgba(16, 33, 47, 0.06);
+	padding: 2px 6px;
+	border-radius: 8px;
+}
+
+.merchant-api-public-note strong {
+	color: #10212f;
+}
+
+.merchant-api-public-host {
+	min-height: 920px;
+}
+
+.merchant-api-public-host .redoc-wrap,
+.merchant-api-public-host .swagger-ui {
+	background: #fff;
+}
+
+.merchant-api-public-host h1,
+.merchant-api-public-host h2,
+.merchant-api-public-host h3,
+.merchant-api-public-host h4,
+.merchant-api-public-host h5,
+.merchant-api-public-host [id] {
+	scroll-margin-top: 24px;
+}
+
+.merchant-api-public-error {
+	margin: 24px;
+	padding: 18px 20px;
+	border-radius: 16px;
+	border: 1px solid rgba(201, 54, 54, 0.18);
+	background: #fff4f4;
+	color: #8a1c1c;
+	font-size: 14px;
+	line-height: 1.6;
+}
+
+.merchant-api-public-footer-note {
+	margin-top: 16px;
+	color: #5d7284;
+	font-size: 13px;
+	line-height: 1.65;
+}
+
+@media (max-width: 1080px) {
+	.merchant-api-public-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.merchant-api-public-hero__headline {
+		font-size: 32px;
+	}
+}
+
+@media (max-width: 720px) {
+	.merchant-api-public-page {
+		padding-top: 20px;
+	}
+
+	.merchant-api-public-shell {
+		padding: 0 14px;
+	}
+
+	.merchant-api-public-topbar {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.merchant-api-public-nav {
+		width: 100%;
+	}
+
+	.merchant-api-public-nav a {
+		flex: 1 1 auto;
+	}
+
+	.merchant-api-public-hero {
+		padding: 22px 18px;
+		border-radius: 22px;
+	}
+
+	.merchant-api-public-hero__headline {
+		font-size: 28px;
+	}
+
+	.merchant-api-public-note {
+		padding: 16px 16px;
+	}
+}

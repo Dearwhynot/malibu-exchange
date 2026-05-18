@@ -28,6 +28,8 @@ const MC_LOGIN_PATH = '/authorization';
  */
 const MC_PUBLIC_PATHS = [
     '/authorization',
+    '/merchant-api',
+    '/merchant-api-console',
     // '/cron-one-min',
     // '/test2',
     // '/telegramaoe',
