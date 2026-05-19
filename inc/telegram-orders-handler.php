@@ -617,7 +617,7 @@ if ( ! function_exists( 'tg_project_handle_message' ) ) {
 		$keyboard = [
 			'inline_keyboard' => [
 				[
-					[ 'text' => '✅ Оплачено',  'callback_data' => 'kanyon_paid:'   . $order_db_id ],
+					[ 'text' => '✅ Проверить оплату', 'callback_data' => 'kanyon_paid:' . $order_db_id ],
 					[ 'text' => '❌ Отмена',     'callback_data' => 'kanyon_cancel:' . $order_db_id ],
 				],
 				[

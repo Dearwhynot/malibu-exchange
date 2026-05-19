@@ -261,22 +261,48 @@ if (!function_exists('fifo_bot_menu')) {
             return bot_send_message($telegram, $chat_id, '⛔ Доступ к меню ордеров разрешен только авторизованным пользователям.');
         }
 
-        $keyboard = [
-            'inline_keyboard' => [
-                [
-                    ['text' => '🔄 Обновить курс', 'callback_data' => 'orders_refresh_rate'],
-                    ['text' => '🆕 Новый ордер', 'callback_data' => 'orders_new'],
-                ],
-                [
-                    ['text' => '📂 Список открытых ордеров', 'callback_data' => 'orders_open'],
-                ],
-                [
-                    ['text' => '✅ Список закрытых ордеров', 'callback_data' => 'orders_closed'],
-                ],
-                [
-                    ['text' => '❌ Список отмененных ордеров', 'callback_data' => 'orders_canceled'],
-                ],
+        $company_id = function_exists('crm_telegram_get_callback_company_id') ? (int) crm_telegram_get_callback_company_id() : 0;
+        $miniapp_url = '';
+        if (
+            $company_id > 0
+            && function_exists('crm_fintech_company_create_order_input_mode')
+            && crm_fintech_company_create_order_input_mode($company_id) === 'rub'
+            && function_exists('crm_tg_miniapp_url_for_operator_chat')
+        ) {
+            $miniapp_url = crm_tg_miniapp_url_for_operator_chat($company_id, (string) $chat_id);
+        }
+
+        $rows = [
+            [
+                ['text' => '🔄 Обновить курс', 'callback_data' => 'orders_refresh_rate'],
             ],
+        ];
+
+        if ($miniapp_url !== '') {
+            $rows[] = [
+                ['text' => '🪄 Новый ордер', 'web_app' => ['url' => $miniapp_url]],
+            ];
+            $rows[] = [
+                ['text' => '✍️ Ввести текстом', 'callback_data' => 'orders_new'],
+            ];
+        } else {
+            $rows[] = [
+                ['text' => '🆕 Новый ордер', 'callback_data' => 'orders_new'],
+            ];
+        }
+
+        $rows[] = [
+            ['text' => '📂 Список открытых ордеров', 'callback_data' => 'orders_open'],
+        ];
+        $rows[] = [
+            ['text' => '✅ Список закрытых ордеров', 'callback_data' => 'orders_closed'],
+        ];
+        $rows[] = [
+            ['text' => '❌ Список отмененных ордеров', 'callback_data' => 'orders_canceled'],
+        ];
+
+        $keyboard = [
+            'inline_keyboard' => $rows,
         ];
 
         return bot_send_message($telegram, $chat_id, '📌 Выберите действие:', $keyboard);

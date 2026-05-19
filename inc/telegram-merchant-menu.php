@@ -267,7 +267,7 @@ if ( ! function_exists( 'crm_merchant_tg_close_menu_anchor' ) ) {
 }
 
 if ( ! function_exists( 'crm_merchant_tg_present_anchor_message' ) ) {
-	function crm_merchant_tg_present_anchor_message( $telegram, object $merchant, array $ctx, string $text, ?array $keyboard = null, array $session_fields = [] ): bool {
+	function crm_merchant_tg_present_anchor_message( $telegram, object $merchant, array $ctx, string $text, ?array $keyboard = null, array $session_fields = [], bool $force_new = false, bool $delete_previous = false ): bool {
 		$company_id = (int) ( $merchant->company_id ?? 0 );
 		$merchant_id = (int) ( $merchant->id ?? 0 );
 		$chat_id = trim( (string) ( $ctx['chat_id'] ?? $merchant->chat_id ?? '' ) );
@@ -279,10 +279,19 @@ if ( ! function_exists( 'crm_merchant_tg_present_anchor_message' ) ) {
 		$stored_message_id  = ! empty( $session['last_menu_message_id'] ) ? (int) $session['last_menu_message_id'] : 0;
 		$current_message_id = ! empty( $ctx['message_id'] ) ? (int) $ctx['message_id'] : 0;
 		$is_callback_context = ! empty( $ctx['callback_query_id'] );
-		$target_message_id  = $is_callback_context && $current_message_id > 0 ? $current_message_id : $stored_message_id;
+		$target_message_id  = 0;
 		$response           = [ 'ok' => false ];
 
-		if ( $target_message_id > 0 ) {
+		if ( $delete_previous && $stored_message_id > 0 ) {
+			crm_merchant_tg_delete_message( $telegram, $chat_id, $stored_message_id );
+			$stored_message_id = 0;
+		}
+
+		if ( ! $force_new ) {
+			$target_message_id = $is_callback_context && $current_message_id > 0 ? $current_message_id : $stored_message_id;
+		}
+
+		if ( ! $force_new && $target_message_id > 0 ) {
 			$response = crm_merchant_tg_edit_message( $telegram, $chat_id, $target_message_id, $text, $keyboard );
 			if ( crm_merchant_tg_is_not_modified_response( $response ) ) {
 				$response['ok'] = true;
@@ -813,6 +822,53 @@ if ( ! function_exists( 'crm_merchant_tg_rub_invoice_pipeline_code' ) ) {
 	}
 }
 
+if ( ! function_exists( 'crm_merchant_tg_rub_usdt_mode_summary' ) ) {
+	function crm_merchant_tg_rub_usdt_mode_summary( object $merchant ): array {
+		$company_id = (int) ( $merchant->company_id ?? 0 );
+		$summary    = $company_id > 0 && function_exists( 'crm_merchant_api_get_company_mode_summary' )
+			? crm_merchant_api_get_company_mode_summary( $company_id, $merchant )
+			: [];
+
+		$provider_mode             = (string) ( $summary['provider_mode'] ?? '' );
+		$requested_amount_currency = strtoupper( trim( (string) ( $summary['requested_amount_currency'] ?? '' ) ) );
+		$payment_currency_code     = strtoupper( trim( (string) ( $summary['payment_currency_code'] ?? 'RUB' ) ) );
+		$settlement_currency_code  = strtoupper( trim( (string) ( $summary['settlement_currency_code'] ?? 'USDT' ) ) );
+
+		$summary['provider_mode']             = in_array( $provider_mode, [ 'paymentAmount', 'orderAmount' ], true ) ? $provider_mode : '';
+		$summary['requested_amount_currency'] = in_array( $requested_amount_currency, [ 'RUB', 'USDT' ], true ) ? $requested_amount_currency : '';
+		$summary['payment_currency_code']     = $payment_currency_code !== '' ? $payment_currency_code : 'RUB';
+		$summary['settlement_currency_code']  = $settlement_currency_code !== '' ? $settlement_currency_code : 'USDT';
+		$summary['invoice_supported']         = crm_merchant_tg_invoice_direction_is_available( $merchant, 'RUB_USDT' )
+			&& $summary['provider_mode'] !== ''
+			&& $summary['requested_amount_currency'] !== '';
+
+		return $summary;
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_rub_usdt_precheck' ) ) {
+	function crm_merchant_tg_rub_usdt_precheck( object $merchant ): array {
+		$mode_summary = crm_merchant_tg_rub_usdt_mode_summary( $merchant );
+
+		if ( empty( $mode_summary['invoice_supported'] ) ) {
+			return array_merge(
+				$mode_summary,
+				[
+					'success'    => false,
+					'error_code' => 'contour_not_supported',
+					'error'      => 'Выставление счёта RUB → USDT сейчас не поддерживается для текущего контура компании.',
+				]
+			);
+		}
+
+		$precheck = (string) $mode_summary['provider_mode'] === 'orderAmount'
+			? crm_merchant_validate_usdt_invoice_prerequisites( $merchant )
+			: crm_merchant_validate_rub_invoice_prerequisites( $merchant );
+
+		return array_merge( $mode_summary, $precheck );
+	}
+}
+
 if ( ! function_exists( 'crm_merchant_tg_invoice_direction_definitions' ) ) {
 	function crm_merchant_tg_invoice_direction_definitions(): array {
 		return [
@@ -910,7 +966,7 @@ if ( ! function_exists( 'crm_merchant_tg_open_invoice_entrypoint' ) ) {
 		if ( count( $available_directions ) === 1 ) {
 			$single_direction = $available_directions[0];
 			if ( (string) ( $single_direction['entry_mode'] ?? '' ) === 'rub_usdt_pipeline' ) {
-				return crm_merchant_tg_begin_rub_invoice_pipeline( $telegram, $merchant, $ctx );
+				return crm_merchant_tg_begin_rub_invoice_pipeline( $telegram, $merchant, $ctx, $force_new, $delete_previous );
 			}
 
 			return crm_merchant_tg_present_screen(
@@ -1144,16 +1200,28 @@ if ( ! function_exists( 'crm_merchant_tg_rub_invoice_effective_payment_purpose' 
 }
 
 if ( ! function_exists( 'crm_merchant_tg_rub_invoice_prompt_keyboard' ) ) {
-	function crm_merchant_tg_rub_invoice_prompt_keyboard(): array {
+	function crm_merchant_tg_rub_invoice_prompt_keyboard( ?object $merchant = null ): array {
+		$rows = [];
+		$miniapp_url = is_object( $merchant ) ? crm_tg_miniapp_url_for_merchant( $merchant ) : '';
+
+		if ( $miniapp_url !== '' ) {
+			$rows[] = [
+				[
+					'text'   => 'Приложение',
+					'web_app'=> [ 'url' => $miniapp_url ],
+				],
+			];
+		}
+
+		$rows[] = [
+			[ 'text' => '✏️ Заменить на своё', 'callback_data' => 'm:invoice:rub-usdt:purpose' ],
+		];
+		$rows[] = [
+			[ 'text' => '📋 Menu', 'callback_data' => 'm:main' ],
+		];
+
 		return [
-			'inline_keyboard' => [
-				[
-					[ 'text' => '✏️ Заменить на своё', 'callback_data' => 'm:invoice:rub-usdt:purpose' ],
-				],
-				[
-					[ 'text' => '📋 Menu', 'callback_data' => 'm:main' ],
-				],
-			],
+			'inline_keyboard' => $rows,
 		];
 	}
 }
@@ -1175,12 +1243,54 @@ if ( ! function_exists( 'crm_merchant_tg_rub_invoice_purpose_keyboard' ) ) {
 
 if ( ! function_exists( 'crm_merchant_tg_rub_invoice_prompt_text' ) ) {
 	function crm_merchant_tg_rub_invoice_prompt_text( object $merchant, string $warning_text = '', array $state = [] ): string {
+		$mode_summary = crm_merchant_tg_rub_usdt_mode_summary( $merchant );
+		$precheck     = crm_merchant_tg_rub_usdt_precheck( $merchant );
+		$state = crm_merchant_tg_rub_invoice_pipeline_state( $state );
+		$requested_currency = (string) ( $mode_summary['requested_amount_currency'] ?? 'RUB' );
+
+		if ( empty( $precheck['success'] ) ) {
+			return "🧾 <b>Счёт ₽ → ₮</b>\n\n" . crm_merchant_tg_escape( (string) ( $precheck['error'] ?? 'Контур счёта сейчас недоступен.' ) );
+		}
+
+		if ( (string) ( $mode_summary['provider_mode'] ?? '' ) === 'orderAmount' && $requested_currency === 'USDT' ) {
+			$payment_purpose = crm_merchant_tg_rub_invoice_effective_payment_purpose( $merchant, $state );
+			$purpose_hint    = $payment_purpose !== ''
+				? "📝 Назначение платежа:\n<code>" . crm_merchant_tg_escape( $payment_purpose ) . "</code>\n\n"
+					. "Если хотите заменить назначение,\nнажмите кнопку ниже\n"
+				: "📝 Назначение платежа можно задать отдельно.\n"
+					. "Если хотите указать своё значение,\nнажмите кнопку ниже\n";
+
+			$text = '';
+			if ( $warning_text !== '' ) {
+				$text .= "⚠️ " . crm_merchant_tg_escape( $warning_text ) . "\n\n";
+			}
+
+			$text .= "🧾 <b>PRELIMINARY CALCULATION</b>\n"
+				. "━━━━━━━━━━━━━━━━━━━\n"
+				. "💳 Клиент оплачивает сумму в RUB,\n"
+				. "💵 вы задаёте сумму счёта в USDT\n"
+				. "━━━━━━━━━━━━━━━━━━━\n"
+				. "📦 У компании сейчас активен\n"
+				. "Kanyon contour через <b>orderAmount</b>\n"
+				. "━━━━━━━━━━━━━━━━━━━\n"
+				. $purpose_hint
+				. "━━━━━━━━━━━━━━━━━━━\n"
+				. "✍️ Отправьте сумму счёта в USDT\n"
+				. "одним сообщением\n\n"
+				. "Например:\n"
+				. "<code>100</code>\n"
+				. "━━━━━━━━━━━━━━━━━━━\n"
+				. "⏱️ RUB сумма для клиента будет\n"
+				. "рассчитана провайдером при выпуске счёта";
+
+			return $text;
+		}
+
 		$preview = crm_merchant_tg_rub_invoice_preview_context( $merchant );
 		if ( empty( $preview['success'] ) ) {
 			return "🧾 <b>Счёт ₽ → ₮</b>\n\n" . crm_merchant_tg_escape( (string) $preview['error'] );
 		}
 
-		$state = crm_merchant_tg_rub_invoice_pipeline_state( $state );
 		$rate_block = $preview['current_rate'] !== null
 			? '<b>' . crm_merchant_tg_fmt_rate( (float) $preview['current_rate'], 4 ) . "</b> RUB за 1 USDT\n"
 			: "—\n";
@@ -1299,11 +1409,15 @@ if ( ! function_exists( 'crm_merchant_tg_rub_invoice_success_text' ) ) {
 		$requested_rub_input = (float) ( $result['requested_rub'] ?? 0 );
 		$markup_added_rub    = (float) ( $result['merchant_markup_added_rub'] ?? 0 );
 		$rub_invoice_markup_mode = (string) ( $result['rub_invoice_markup_mode'] ?? 'none' );
-		$merchant_payable    = (float) ( $result['merchant_payable_usdt'] ?? 0 );
+		$merchant_payable    = (float) ( $result['merchant_payable_usdt'] ?? $result['requested_usdt'] ?? $result['amount_usdt'] ?? 0 );
 		$current_rate        = (float) ( $result['merchant_rate'] ?? 0 );
 		$order_db_id         = (int) ( $result['order_db_id'] ?? 0 );
 		$merchant_order_id   = trim( (string) ( $result['merchant_order_id'] ?? '' ) );
 		$receipt_id          = $order_db_id > 0 ? '#' . $order_db_id : $merchant_order_id;
+
+		if ( $current_rate <= 0 && $merchant_payable > 0 && $payment_amount_rub > 0 ) {
+			$current_rate = round( $payment_amount_rub / $merchant_payable, 4 );
+		}
 
 		$text = crm_tg_receipt_block(
 			[
@@ -1990,7 +2104,7 @@ if ( ! function_exists( 'crm_merchant_tg_sync_paid_order' ) ) {
 }
 
 if ( ! function_exists( 'crm_merchant_tg_present_rub_invoice_amount_step' ) ) {
-	function crm_merchant_tg_present_rub_invoice_amount_step( $telegram, object $merchant, array $ctx, array $state = [], string $warning_text = '' ): bool {
+	function crm_merchant_tg_present_rub_invoice_amount_step( $telegram, object $merchant, array $ctx, array $state = [], string $warning_text = '', bool $force_new = false, bool $delete_previous = false ): bool {
 		$state             = crm_merchant_tg_rub_invoice_pipeline_state( $state );
 		$state['awaiting'] = 'amount';
 
@@ -1999,12 +2113,14 @@ if ( ! function_exists( 'crm_merchant_tg_present_rub_invoice_amount_step' ) ) {
 			$merchant,
 			$ctx,
 			crm_merchant_tg_rub_invoice_prompt_text( $merchant, $warning_text, $state ),
-			crm_merchant_tg_rub_invoice_prompt_keyboard(),
+			crm_merchant_tg_rub_invoice_prompt_keyboard( $merchant ),
 			[
 				'last_menu_screen'     => 'invoice_rub_usdt',
 				'active_pipeline_code' => crm_merchant_tg_rub_invoice_pipeline_code(),
 				'pipeline_state_json'  => crm_merchant_tg_rub_invoice_state_json( $state ),
-			]
+			],
+			$force_new,
+			$delete_previous
 		);
 	}
 }
@@ -2030,7 +2146,7 @@ if ( ! function_exists( 'crm_merchant_tg_present_rub_invoice_purpose_step' ) ) {
 }
 
 if ( ! function_exists( 'crm_merchant_tg_begin_rub_invoice_pipeline' ) ) {
-	function crm_merchant_tg_begin_rub_invoice_pipeline( $telegram, object $merchant, array $ctx ): bool {
+	function crm_merchant_tg_begin_rub_invoice_pipeline( $telegram, object $merchant, array $ctx, bool $force_new = false, bool $delete_previous = false ): bool {
 		$company_id = (int) ( $merchant->company_id ?? 0 );
 		$merchant_id = (int) ( $merchant->id ?? 0 );
 		$chat_id = trim( (string) ( $ctx['chat_id'] ?? $merchant->chat_id ?? '' ) );
@@ -2039,10 +2155,10 @@ if ( ! function_exists( 'crm_merchant_tg_begin_rub_invoice_pipeline' ) ) {
 			return false;
 		}
 
-		$precheck = crm_merchant_validate_rub_invoice_prerequisites( $merchant );
+		$precheck = crm_merchant_tg_rub_usdt_precheck( $merchant );
 		if ( empty( $precheck['success'] ) ) {
 			if ( function_exists( 'tg_safe_answer_callback' ) ) {
-				tg_safe_answer_callback( $telegram, $ctx['callback_query_id'] ?? null, 'Недоступно', true );
+				tg_safe_answer_callback( $telegram, $ctx['callback_query_id'] ?? null, 'Недоступно' );
 			}
 			return crm_merchant_tg_present_anchor_message(
 				$telegram,
@@ -2054,7 +2170,9 @@ if ( ! function_exists( 'crm_merchant_tg_begin_rub_invoice_pipeline' ) ) {
 					'last_menu_screen'     => 'invoice_rub_usdt',
 					'active_pipeline_code' => null,
 					'pipeline_state_json'  => null,
-				]
+				],
+				$force_new,
+				$delete_previous
 			);
 		}
 
@@ -2062,7 +2180,7 @@ if ( ! function_exists( 'crm_merchant_tg_begin_rub_invoice_pipeline' ) ) {
 			tg_safe_answer_callback( $telegram, $ctx['callback_query_id'] ?? null, 'Жду сумму' );
 		}
 
-		return crm_merchant_tg_present_rub_invoice_amount_step( $telegram, $merchant, $ctx );
+		return crm_merchant_tg_present_rub_invoice_amount_step( $telegram, $merchant, $ctx, [], '', $force_new, $delete_previous );
 	}
 }
 
@@ -2884,6 +3002,29 @@ if ( ! function_exists( 'crm_merchant_tg_screen_payload' ) ) {
 					return crm_merchant_tg_screen_payload( 'invoice', $merchant );
 				}
 
+				$mode_summary = crm_merchant_tg_rub_usdt_mode_summary( $merchant );
+				if ( (string) ( $mode_summary['provider_mode'] ?? '' ) === 'orderAmount' && (string) ( $mode_summary['requested_amount_currency'] ?? '' ) === 'USDT' ) {
+					return [
+						'screen'   => 'invoice_rub_usdt',
+						'text'     => "🧾 <b>Счёт ₽ → ₮</b>\n\n"
+							. "У компании сейчас активен Kanyon contour через <b>orderAmount</b>.\n"
+							. "В этом режиме вы задаёте сумму счёта в USDT,\n"
+							. "а клиент оплачивает RUB по курсу провайдера.\n\n"
+							. "Нажмите кнопку ниже, чтобы перейти к вводу суммы.",
+						'keyboard' => [
+							'inline_keyboard' => [
+								[
+									[ 'text' => '✍️ Ввести сумму', 'callback_data' => 'm:invoice:rub-usdt:start' ],
+								],
+								[
+									[ 'text' => '↩ К способам', 'callback_data' => 'm:invoice' ],
+									[ 'text' => '↩ Меню',      'callback_data' => 'm:main' ],
+								],
+							],
+						],
+					];
+				}
+
 				$invoice_preview = crm_merchant_tg_rub_invoice_preview_context( $merchant );
 				$rate_block      = $invoice_preview['rate_line'] !== ''
 					? $invoice_preview['rate_line'] . "\n\n"
@@ -2920,15 +3061,23 @@ if ( ! function_exists( 'crm_merchant_tg_screen_payload' ) ) {
 						. "<i>Итоговый курс фиксируется в момент выпуска счёта по текущему курсу биржи.</i>\n\n"
 						. "Нажмите кнопку ниже, чтобы перейти к вводу суммы.",
 					'keyboard' => [
-						'inline_keyboard' => [
+						'inline_keyboard' => array_values( array_filter( [
+							( $miniapp_url = crm_tg_miniapp_url_for_merchant( $merchant ) ) !== ''
+								? [
+									[
+										'text'   => 'Приложение',
+										'web_app'=> [ 'url' => $miniapp_url ],
+									],
+								]
+								: null,
 							[
-								[ 'text' => '✍️ Ввести сумму', 'callback_data' => 'm:invoice:rub-usdt:start' ],
+								[ 'text' => '✍️ Ввести текстом', 'callback_data' => 'm:invoice:rub-usdt:start' ],
 							],
 							[
 								[ 'text' => '↩ К способам', 'callback_data' => 'm:invoice' ],
 								[ 'text' => '↩ Меню',      'callback_data' => 'm:main' ],
 							],
-						],
+						] ) ),
 					],
 				];
 
@@ -3352,6 +3501,35 @@ if ( ! function_exists( 'crm_merchant_tg_route_message' ) ) {
 
 		if ( $active_pipeline_code === crm_merchant_tg_rub_invoice_pipeline_code() ) {
 			$pipeline_state = crm_merchant_tg_rub_invoice_pipeline_state( (string) ( $session['pipeline_state_json'] ?? '' ) );
+			$mode_summary   = crm_merchant_tg_rub_usdt_mode_summary( $access['merchant'] );
+			$precheck       = crm_merchant_tg_rub_usdt_precheck( $access['merchant'] );
+			$provider_mode  = (string) ( $mode_summary['provider_mode'] ?? '' );
+			$requested_currency = (string) ( $mode_summary['requested_amount_currency'] ?? 'RUB' );
+
+			if ( empty( $precheck['success'] ) ) {
+				crm_merchant_tg_session_upsert(
+					$company_id,
+					(int) $access['merchant']->id,
+					$chat_id,
+					[
+						'active_pipeline_code' => null,
+						'pipeline_state_json'  => null,
+					]
+				);
+
+				return crm_merchant_tg_present_anchor_message(
+					$telegram,
+					$access['merchant'],
+					$ctx,
+					"🧾 <b>Счёт ₽ → ₮</b>\n\n" . crm_merchant_tg_escape( (string) ( $precheck['error'] ?? 'Контур счёта сейчас недоступен.' ) ),
+					crm_merchant_tg_inline_menu_keyboard(),
+					[
+						'last_menu_screen'     => 'invoice_rub_usdt',
+						'active_pipeline_code' => null,
+						'pipeline_state_json'  => null,
+					]
+				);
+			}
 
 			if ( (string) ( $pipeline_state['awaiting'] ?? 'amount' ) === 'purpose' ) {
 				$payment_purpose = function_exists( 'crm_fintech_normalize_payment_purpose' )
@@ -3379,15 +3557,17 @@ if ( ! function_exists( 'crm_merchant_tg_route_message' ) ) {
 				);
 			}
 
-			$requested_rub = crm_merchant_normalize_rub_amount( $text );
+			$requested_amount = $requested_currency === 'USDT'
+				? crm_merchant_normalize_usdt_amount( $text )
+				: crm_merchant_normalize_rub_amount( $text );
 
-			if ( $requested_rub <= 0 ) {
+			if ( $requested_amount <= 0 ) {
 				return crm_merchant_tg_present_rub_invoice_amount_step(
 					$telegram,
 					$access['merchant'],
 					$ctx,
 					$pipeline_state,
-					'Отправьте только сумму счёта в RUB одним сообщением.'
+					'Отправьте только сумму счёта в ' . $requested_currency . ' одним сообщением.'
 				);
 			}
 
@@ -3403,14 +3583,23 @@ if ( ! function_exists( 'crm_merchant_tg_route_message' ) ) {
 				]
 			);
 
-			$result = crm_merchant_create_rub_invoice(
-				(int) $access['merchant']->id,
-				$requested_rub,
-				[
-					'source_channel'  => 'telegram_merchant',
-					'payment_purpose' => $payment_purpose,
-				]
-			);
+			$result = $provider_mode === 'orderAmount'
+				? crm_merchant_create_usdt_invoice(
+					(int) $access['merchant']->id,
+					$requested_amount,
+					[
+						'source_channel'  => 'telegram_merchant',
+						'payment_purpose' => $payment_purpose,
+					]
+				)
+				: crm_merchant_create_rub_invoice(
+					(int) $access['merchant']->id,
+					$requested_amount,
+					[
+						'source_channel'  => 'telegram_merchant',
+						'payment_purpose' => $payment_purpose,
+					]
+				);
 
 			if ( empty( $result['success'] ) ) {
 				return crm_merchant_tg_present_anchor_message(
