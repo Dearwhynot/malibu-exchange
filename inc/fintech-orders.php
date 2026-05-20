@@ -276,9 +276,10 @@ function _crm_fintech_finalize_created_order(
 	int $company_id,
 	string $source_channel,
 	?int $created_by_user_id,
-	array $success_context = []
+	array $success_context = [],
+	array $save_overrides = []
 ): array {
-	$order_db_id = crm_fintech_save_order( $invoice, $company_id, $source_channel, $created_by_user_id );
+	$order_db_id = crm_fintech_save_order( $invoice, $company_id, $source_channel, $created_by_user_id, $save_overrides );
 
 	$payload = (string) ( $invoice['payload'] ?? '' );
 	$qrc_id  = (string) ( $invoice['qrcId']   ?? '' );
@@ -348,6 +349,996 @@ function crm_fintech_company_create_order_input_mode( int $company_id ): string 
 	}
 
 	return 'usdt';
+}
+
+/**
+ * Отдельный web-only markup для RUB input поверх legacy Kanyon USDT contour.
+ * Нужен только для операторской веб-формы Create Order и не должен молча менять Telegram flow.
+ */
+function crm_fintech_order_amount_rub_input_markup_percent(): float {
+	return 4.0;
+}
+
+/**
+ * Дефолтный режим ввода для веб-формы create-order.
+ * Возвращает legacy/основной mode, не подмешивая дополнительные экспериментальные формы.
+ */
+function crm_fintech_company_web_create_order_input_mode( int $company_id ): string {
+	if ( $company_id <= 0 ) {
+		return 'usdt';
+	}
+
+	return crm_fintech_company_create_order_input_mode( $company_id );
+}
+
+/**
+ * Все доступные режимы create-order именно для веба.
+ *
+ * @return string[]
+ */
+function crm_fintech_company_web_create_order_supported_modes( int $company_id ): array {
+	$default_mode = crm_fintech_company_web_create_order_input_mode( $company_id );
+	$modes        = [ $default_mode ];
+
+	if ( $company_id <= 0 ) {
+		return $modes;
+	}
+
+	$provider_code  = crm_fintech_normalize_provider_code(
+		(string) crm_get_setting( 'fintech_active_provider', $company_id, '' )
+	);
+	$order_currency = crm_fintech_normalize_kanyon_order_currency(
+		(string) crm_get_setting( 'fintech_pay2day_order_currency', $company_id, '' )
+	);
+
+	if ( $provider_code === 'kanyon' && $order_currency === 'USDT' ) {
+		$modes[] = 'rub_usdt';
+		$modes[] = 'rub_usdt_live';
+
+		if ( function_exists( 'crm_company_contour_is_enabled' ) && crm_company_contour_is_enabled( $company_id, 'RUB_THB' ) ) {
+			$modes[] = 'rub_thb_rub_rapira';
+			$modes[] = 'rub_thb_rub_live';
+			$modes[] = 'rub_thb_thb_rapira';
+			$modes[] = 'rub_thb_thb_live';
+		}
+	}
+
+	$modes = array_values( array_unique( array_filter( array_map( 'sanitize_key', $modes ) ) ) );
+
+	return ! empty( $modes ) ? $modes : [ 'usdt' ];
+}
+
+/**
+ * Контекст сохранённого corporate RUB/THB курса для web THB-flows.
+ * Курс = стоимость 1 THB в RUB (колонка "Наш Sberbank").
+ *
+ * @return array<string,mixed>
+ */
+function crm_fintech_company_web_rub_thb_context( int $company_id ): array {
+	$context = [
+		'success'             => false,
+		'error'               => '',
+		'company_id'          => $company_id,
+		'rub_per_thb_rate'    => null,
+		'rate_updated_at_utc' => null,
+		'rate_source'         => 'our_sberbank_rate',
+		'provider'            => RATES_PROVIDER_EX24,
+		'source_param'        => RATES_PROVIDER_SOURCE,
+		'pair_id'             => 0,
+	];
+
+	if ( $company_id <= 0 ) {
+		$context['error'] = 'Отсутствует валидная компания.';
+		return $context;
+	}
+
+	if ( function_exists( 'crm_company_contour_is_enabled' ) && ! crm_company_contour_is_enabled( $company_id, 'RUB_THB' ) ) {
+		$context['error'] = 'Направление RUB -> THB не включено для этой компании.';
+		return $context;
+	}
+
+	$pair = function_exists( 'rates_get_pair' ) ? rates_get_pair( 'RUB_THB', $company_id ) : null;
+	if ( ! $pair || empty( $pair->id ) ) {
+		$context['error'] = 'Для компании не настроена активная пара RUB/THB.';
+		return $context;
+	}
+
+	$context['pair_id'] = (int) $pair->id;
+	$last = function_exists( 'rates_get_last_snapshot' )
+		? rates_get_last_snapshot( (int) $pair->id, $company_id, RATES_PROVIDER_EX24, RATES_PROVIDER_SOURCE )
+		: null;
+
+	if ( ! is_array( $last ) || ! isset( $last['our_sberbank_rate'] ) || (float) $last['our_sberbank_rate'] <= 0 ) {
+		$context['error'] = 'Для компании ещё нет сохранённого курса "Наш Sberbank" по направлению RUB/THB.';
+		return $context;
+	}
+
+	$context['success']             = true;
+	$context['rub_per_thb_rate']    = round( (float) $last['our_sberbank_rate'], 4 );
+	$context['rate_updated_at_utc'] = (string) ( $last['created_at'] ?? '' );
+	$context['error']               = '';
+
+	return $context;
+}
+
+/**
+ * Нормализует THB-aware ввод для create-order:
+ * - если оператор вводит RUB, считаем эквивалент THB по сохранённому Sber курсу;
+ * - если оператор вводит THB, считаем целевой RUB invoice по тому же курсу.
+ *
+ * @return array<string,mixed>
+ */
+function crm_fintech_company_web_rub_thb_target_context(
+	int $company_id,
+	string $input_currency,
+	float $input_amount
+): array {
+	$input_currency = strtoupper( trim( $input_currency ) );
+	$input_amount   = round( max( 0, $input_amount ), 2 );
+	$rate_context   = crm_fintech_company_web_rub_thb_context( $company_id );
+
+	$result = [
+		'success'             => false,
+		'error'               => (string) ( $rate_context['error'] ?? '' ),
+		'company_id'          => $company_id,
+		'input_currency'      => $input_currency,
+		'input_amount'        => $input_amount,
+		'target_invoice_rub'  => 0.0,
+		'target_amount_thb'   => 0.0,
+		'rub_per_thb_rate'    => isset( $rate_context['rub_per_thb_rate'] ) ? (float) $rate_context['rub_per_thb_rate'] : 0.0,
+		'rate_updated_at_utc' => (string) ( $rate_context['rate_updated_at_utc'] ?? '' ),
+		'rate_source'         => (string) ( $rate_context['rate_source'] ?? 'our_sberbank_rate' ),
+	];
+
+	if ( empty( $rate_context['success'] ) ) {
+		return $result;
+	}
+
+	$rate = (float) $rate_context['rub_per_thb_rate'];
+	if ( $rate <= 0 ) {
+		$result['error'] = 'Некорректный corporate курс RUB/THB.';
+		return $result;
+	}
+
+	if ( ! in_array( $input_currency, [ 'RUB', 'THB' ], true ) ) {
+		$result['error'] = 'Поддерживаются только RUB и THB inputs.';
+		return $result;
+	}
+
+	if ( $input_amount <= 0 ) {
+		$result['error'] = $input_currency === 'THB'
+			? 'Укажите корректную сумму THB.'
+			: 'Укажите корректную сумму RUB.';
+		return $result;
+	}
+
+	if ( $input_currency === 'THB' ) {
+		$result['target_amount_thb']  = $input_amount;
+		$result['target_invoice_rub'] = round( $input_amount * $rate, 2 );
+	} else {
+		$result['target_invoice_rub'] = $input_amount;
+		$result['target_amount_thb']  = round( $input_amount / $rate, 2 );
+	}
+
+	$result['success'] = $result['target_invoice_rub'] > 0 && $result['target_amount_thb'] > 0;
+	if ( ! $result['success'] ) {
+		$result['error'] = 'Не удалось рассчитать RUB/THB контекст для ордера.';
+	}
+
+	return $result;
+}
+
+/**
+ * Дописывает к уже созданному company-order THB-метаданные.
+ */
+function crm_fintech_company_order_append_meta( int $order_db_id, int $company_id, array $meta_append, string $notes_suffix = '' ): void {
+	global $wpdb;
+
+	if ( $order_db_id <= 0 || $company_id <= 0 || empty( $meta_append ) ) {
+		return;
+	}
+
+	$row = $wpdb->get_row(
+		$wpdb->prepare(
+			'SELECT meta_json, notes
+			 FROM crm_fintech_payment_orders
+			 WHERE id = %d
+			   AND company_id = %d
+			 LIMIT 1',
+			$order_db_id,
+			$company_id
+		),
+		ARRAY_A
+	);
+
+	if ( ! is_array( $row ) ) {
+		return;
+	}
+
+	$current_meta = [];
+	if ( isset( $row['meta_json'] ) && is_string( $row['meta_json'] ) && trim( $row['meta_json'] ) !== '' ) {
+		$decoded = json_decode( $row['meta_json'], true );
+		if ( is_array( $decoded ) ) {
+			$current_meta = $decoded;
+		}
+	}
+
+	$updated_meta = array_merge( $current_meta, $meta_append );
+	$update       = [
+		'meta_json'   => wp_json_encode( $updated_meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES ),
+		'updated_at'  => current_time( 'mysql' ),
+	];
+	$formats      = [ '%s', '%s' ];
+
+	if ( $notes_suffix !== '' ) {
+		$existing_notes  = isset( $row['notes'] ) ? trim( (string) $row['notes'] ) : '';
+		$update['notes'] = trim( $existing_notes !== '' ? ( $existing_notes . ' ' . $notes_suffix ) : $notes_suffix );
+		$formats[]       = '%s';
+	}
+
+	$wpdb->update(
+		'crm_fintech_payment_orders',
+		$update,
+		[
+			'id'         => $order_db_id,
+			'company_id' => $company_id,
+		],
+		$formats,
+		[ '%d', '%d' ]
+	);
+}
+
+/**
+ * THB-aware web create-order flow поверх legacy Kanyon USDT contour.
+ * Сначала приводит ввод RUB/THB к целевому RUB invoice, потом использует
+ * один из уже рабочих USDT quote paths: Rapira + 4% или live Kanyon.
+ *
+ * @return array<string,mixed>
+ */
+function crm_fintech_create_usdt_order_for_rub_thb_direction(
+	float $input_amount,
+	string $input_currency,
+	string $quote_strategy,
+	int $company_id = 0,
+	string $source_channel = 'web',
+	?int $created_by_user_id = null,
+	string $description = ''
+): array {
+	$input_currency = strtoupper( trim( $input_currency ) );
+	$quote_strategy = sanitize_key( $quote_strategy );
+	$input_amount   = round( max( 0, $input_amount ), 2 );
+
+	$target = crm_fintech_company_web_rub_thb_target_context( $company_id, $input_currency, $input_amount );
+	if ( empty( $target['success'] ) ) {
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => $target['error'] ?? 'Не удалось подготовить RUB/THB ордер.',
+		];
+	}
+
+	$target_rub = round( (float) $target['target_invoice_rub'], 2 );
+	if ( $target_rub <= 0 ) {
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => 'После расчёта RUB/THB получилась некорректная сумма RUB.',
+		];
+	}
+
+	$create = $quote_strategy === 'live_kanyon'
+		? crm_fintech_create_usdt_order_from_rub_amount_via_live_kanyon(
+			$target_rub,
+			$company_id,
+			$source_channel,
+			$created_by_user_id,
+			$description
+		)
+		: crm_fintech_create_usdt_order_from_rub_amount(
+			$target_rub,
+			$company_id,
+			$source_channel,
+			$created_by_user_id,
+			$description
+		);
+
+	if ( empty( $create['success'] ) ) {
+		return $create;
+	}
+
+	$order_db_id = isset( $create['order_db_id'] ) ? (int) $create['order_db_id'] : 0;
+	$meta_append = [
+		'company_direction_flow' => 'web_rub_thb',
+		'input_currency'         => $input_currency,
+		'input_amount'           => $input_amount,
+		'target_invoice_rub'     => $target_rub,
+		'target_amount_thb'      => round( (float) $target['target_amount_thb'], 2 ),
+		'rub_per_thb_rate'       => round( (float) $target['rub_per_thb_rate'], 4 ),
+		'rate_updated_at_utc'    => (string) ( $target['rate_updated_at_utc'] ?? '' ),
+		'rate_source'            => (string) ( $target['rate_source'] ?? 'our_sberbank_rate' ),
+		'usdt_quote_strategy'    => $quote_strategy === 'live_kanyon'
+			? 'kanyon_test_order_100_usdt'
+			: 'rapira_ask_plus_4_percent',
+	];
+
+	if ( $order_db_id > 0 ) {
+		$notes_suffix = sprintf(
+			'THB contour context: %s %.2f -> target %.2f RUB @ %.4f RUB/THB.',
+			$input_currency,
+			$input_amount,
+			$target_rub,
+			(float) $target['rub_per_thb_rate']
+		);
+
+		crm_fintech_company_order_append_meta( $order_db_id, $company_id, $meta_append, $notes_suffix );
+	}
+
+	$create['thb_input_currency'] = $input_currency;
+	$create['thb_input_amount']   = $input_amount;
+	$create['target_amount_thb']  = round( (float) $target['target_amount_thb'], 2 );
+	$create['target_invoice_rub'] = $target_rub;
+	$create['thb_rate']           = round( (float) $target['rub_per_thb_rate'], 4 );
+
+	crm_log( 'payment.order.thb_context_applied', [
+		'category'    => 'payments',
+		'level'       => 'info',
+		'action'      => 'create',
+		'message'     => 'К company-order применён RUB/THB контекст.',
+		'target_type' => 'payment_order',
+		'target_id'   => $order_db_id > 0 ? $order_db_id : null,
+		'is_success'  => true,
+		'context'     => [
+			'company_id'         => $company_id,
+			'order_db_id'        => $order_db_id,
+			'source_channel'     => $source_channel,
+			'input_currency'     => $input_currency,
+			'input_amount'       => $input_amount,
+			'target_invoice_rub' => $target_rub,
+			'target_amount_thb'  => $create['target_amount_thb'],
+			'thb_rate'           => $create['thb_rate'],
+			'quote_strategy'     => $quote_strategy,
+		],
+	] );
+
+	return $create;
+}
+
+/**
+ * Снимает live quote RUB/USDT через тестовый ордер Kanyon на 100 USDT.
+ * Используется именно в create-order flow, без cooldown страницы курсов.
+ *
+ * @return array<string,mixed>
+ */
+function crm_fintech_fetch_live_kanyon_rub_usdt_quote(
+	int $company_id,
+	string $source_channel = 'web',
+	?int $created_by_user_id = null
+): array {
+	if ( $company_id <= 0 ) {
+		return [
+			'ok'    => false,
+			'error' => 'Отсутствует валидная компания для live Kanyon quote.',
+		];
+	}
+
+	if ( ! function_exists( 'rates_kanyon_is_enabled_for_company' ) || ! rates_kanyon_is_enabled_for_company( $company_id ) ) {
+		return [
+			'ok'    => false,
+			'error' => 'Kanyon не активен или не настроен для этой компании.',
+		];
+	}
+
+	Fintech_Payment_Gateway::set_company_id( $company_id );
+	$result = Fintech_Payment_Gateway::create_invoice( RATES_KANYON_TEST_AMOUNT_USDT, null, 'kanyon_live_quote' );
+
+	if ( empty( $result['success'] ) ) {
+		crm_log( 'payment.order.kanyon_live_quote_failed', [
+			'category'    => 'payments',
+			'level'       => 'error',
+			'action'      => 'quote',
+			'message'     => 'Не удалось получить live Kanyon quote через тестовый ордер.',
+			'target_type' => 'payment_order',
+			'is_success'  => false,
+			'context'     => [
+				'company_id'      => $company_id,
+				'source_channel'  => $source_channel,
+				'test_amount_usdt'=> RATES_KANYON_TEST_AMOUNT_USDT,
+				'provider'        => $result['provider'] ?? Fintech_Payment_Gateway::PROVIDER_KANYON,
+				'error'           => $result['error'] ?? null,
+			],
+		] );
+
+		return [
+			'ok'    => false,
+			'error' => $result['error'] ?? 'Ошибка Kanyon API при live quote.',
+		];
+	}
+
+	$order_db_id = crm_fintech_save_order(
+		$result,
+		$company_id,
+		'rate_check',
+		$created_by_user_id
+	);
+
+	if ( ! $order_db_id ) {
+		crm_log( 'payment.order.kanyon_live_quote_local_save_failed', [
+			'category'    => 'payments',
+			'level'       => 'error',
+			'action'      => 'quote',
+			'message'     => 'Kanyon live quote создан у провайдера, но не сохранился локально.',
+			'target_type' => 'payment_order',
+			'is_success'  => false,
+			'context'     => [
+				'company_id'        => $company_id,
+				'source_channel'    => $source_channel,
+				'provider_order_id' => $result['orderId'] ?? null,
+				'merchant_order_id' => $result['merchantOrderId'] ?? null,
+			],
+		] );
+
+		return [
+			'ok'    => false,
+			'error' => 'Kanyon создал live quote, но он не сохранился локально.',
+		];
+	}
+
+	$payment_kopecks = isset( $result['paymentAmountRub'] ) ? (int) $result['paymentAmountRub'] : null;
+	$order_cents     = isset( $result['orderAmountCents'] ) ? (int) $result['orderAmountCents'] : null;
+
+	if ( ! $payment_kopecks || ! $order_cents ) {
+		if ( function_exists( 'rates_kanyon_mark_order_untracked' ) ) {
+			rates_kanyon_mark_order_untracked(
+				(int) $order_db_id,
+				0.0,
+				null,
+				'web',
+				[
+					'purpose'        => 'kanyon_live_quote',
+					'local_order_ref'=> 'kanyon_live_quote',
+					'notes'          => 'kanyon_live_quote',
+					'status_reason'  => 'Kanyon live quote order. Not tracked by payment polling.',
+					'history_message'=> 'Тестовый ордер Kanyon для live quote помечен как неотслеживаемый',
+				]
+			);
+		}
+
+		crm_log( 'payment.order.kanyon_live_quote_invalid_response', [
+			'category'    => 'payments',
+			'level'       => 'error',
+			'action'      => 'quote',
+			'message'     => 'Kanyon live quote не вернул payment amount.',
+			'target_type' => 'payment_order',
+			'target_id'   => (int) $order_db_id,
+			'is_success'  => false,
+			'context'     => [
+				'company_id'        => $company_id,
+				'source_channel'    => $source_channel,
+				'provider_order_id' => $result['orderId'] ?? null,
+				'merchant_order_id' => $result['merchantOrderId'] ?? null,
+			],
+		] );
+
+		return [
+			'ok'    => false,
+			'error' => 'Kanyon не вернул RUB-сумму для live quote.',
+		];
+	}
+
+	$kanyon_rate         = round( $payment_kopecks / $order_cents, 4 );
+	$quote_payment_rub   = round( $payment_kopecks / 100, 2 );
+	$quote_amount_usdt   = round( $order_cents / 100, 2 );
+	$rapira              = function_exists( 'rates_get_rapira' ) ? rates_get_rapira() : [ 'ok' => false ];
+	$rapira_rate         = ( ! empty( $rapira['ok'] ) && isset( $rapira['bid'], $rapira['ask'] ) )
+		? round( ( (float) $rapira['bid'] + (float) $rapira['ask'] ) / 2, 4 )
+		: null;
+
+	if ( function_exists( 'rates_kanyon_mark_order_untracked' ) ) {
+		rates_kanyon_mark_order_untracked(
+			(int) $order_db_id,
+			$kanyon_rate,
+			$rapira_rate,
+			'web',
+			[
+				'purpose'        => 'kanyon_live_quote',
+				'local_order_ref'=> 'kanyon_live_quote',
+				'notes'          => 'kanyon_live_quote',
+				'status_reason'  => 'Kanyon live quote order. Not tracked by payment polling.',
+				'history_message'=> 'Тестовый ордер Kanyon для live quote помечен как неотслеживаемый',
+			]
+		);
+	}
+
+	crm_log( 'payment.order.kanyon_live_quote_received', [
+		'category'    => 'payments',
+		'level'       => 'info',
+		'action'      => 'quote',
+		'message'     => 'Получен live Kanyon quote через тестовый ордер 100 USDT.',
+		'target_type' => 'payment_order',
+		'target_id'   => (int) $order_db_id,
+		'is_success'  => true,
+		'context'     => [
+			'company_id'          => $company_id,
+			'source_channel'      => $source_channel,
+			'provider_order_id'   => $result['orderId'] ?? null,
+			'merchant_order_id'   => $result['merchantOrderId'] ?? null,
+			'quote_amount_usdt'   => $quote_amount_usdt,
+			'quote_payment_rub'   => $quote_payment_rub,
+			'kanyon_rate'         => $kanyon_rate,
+			'rapira_rate'         => $rapira_rate,
+		],
+	] );
+
+	return [
+		'ok'                 => true,
+		'payment_order_id'   => (int) $order_db_id,
+		'provider_order_id'  => (string) ( $result['orderId'] ?? '' ),
+		'merchant_order_id'  => (string) ( $result['merchantOrderId'] ?? '' ),
+		'quote_amount_usdt'  => $quote_amount_usdt,
+		'quote_payment_rub'  => $quote_payment_rub,
+		'kanyon_rate'        => $kanyon_rate,
+		'rapira_rate'        => $rapira_rate,
+	];
+}
+
+/**
+ * Возвращает превью курса для web-only RUB -> USDT create-order form.
+ *
+ * @return array<string,mixed>
+ */
+function crm_fintech_company_web_rub_usdt_preview_context(
+	int $company_id,
+	float $requested_rub = 0.0,
+	bool $refresh_market = false
+): array {
+	$requested_rub  = round( max( 0, $requested_rub ), 2 );
+	$sample_rub     = $requested_rub > 0 ? $requested_rub : 30000.0;
+	$markup_percent = round( max( 0, crm_fintech_order_amount_rub_input_markup_percent() ), 4 );
+	$context        = [
+		'success'                 => false,
+		'error'                   => 'Не удалось получить курс Rapira для расчёта RUB -> USDT.',
+		'warning'                 => '',
+		'requested_rub'           => $requested_rub,
+		'sample_requested_rub'    => $sample_rub,
+		'rapira_ask'              => null,
+		'markup_percent'          => $markup_percent,
+		'effective_rate'          => null,
+		'amount_usdt'             => 0.0,
+		'sample_amount_usdt'      => 0.0,
+		'estimated_payment_rub'   => 0.0,
+		'checked_at'              => current_time( 'd.m.Y H:i' ),
+	];
+
+	if ( $company_id <= 0 ) {
+		$context['error'] = 'Отсутствует валидный company context.';
+		return $context;
+	}
+
+	if ( ! function_exists( 'crm_merchant_calculate_rub_invoice_economics' ) ) {
+		$context['error'] = 'Модуль расчёта RUB -> USDT недоступен.';
+		return $context;
+	}
+
+	$market = $refresh_market ? rates_get_rapira() : rates_get_rapira_cached();
+	if ( $refresh_market && ! empty( $market['ok'] ) ) {
+		set_transient( 'me_rapira_rates', $market, RATES_MARKET_CACHE_TTL );
+	}
+
+	$rapira_ask = ( ! empty( $market['ok'] ) && ! empty( $market['ask'] ) && (float) $market['ask'] > 0 )
+		? round( (float) $market['ask'], 8 )
+		: null;
+
+	if ( $rapira_ask === null ) {
+		$context['error'] = 'Не удалось получить живой курс Rapira Ask.';
+		if ( ! empty( $market['error'] ) ) {
+			$context['error'] .= ' ' . (string) $market['error'];
+		}
+
+		return $context;
+	}
+
+	$economics = crm_merchant_calculate_rub_invoice_economics(
+		$rapira_ask,
+		$markup_percent,
+		0.0,
+		'acquirer_cost',
+		$sample_rub,
+		'none'
+	);
+	$effective_rate = isset( $economics['merchant_rate_commercial'] )
+		? round( max( 0, (float) $economics['merchant_rate_commercial'] ), 4 )
+		: 0.0;
+
+	if ( $effective_rate <= 0 ) {
+		$context['error'] = 'Не удалось рассчитать итоговый курс RUB за 1 USDT.';
+		return $context;
+	}
+
+	$sample_amount_usdt = round( $sample_rub / $effective_rate, 2 );
+	$amount_usdt        = $requested_rub > 0 ? round( $requested_rub / $effective_rate, 2 ) : 0.0;
+	$estimated_rub      = $amount_usdt > 0 ? round( $amount_usdt * $effective_rate, 2 ) : 0.0;
+
+	$context['success']               = true;
+	$context['error']                 = '';
+	$context['rapira_ask']            = $rapira_ask;
+	$context['effective_rate']        = $effective_rate;
+	$context['sample_amount_usdt']    = $sample_amount_usdt;
+	$context['amount_usdt']           = $amount_usdt;
+	$context['estimated_payment_rub'] = $estimated_rub;
+
+	return $context;
+}
+
+/**
+ * Web-only flow: оператор вводит сумму в RUB, а под капотом создаётся legacy Kanyon USDT orderAmount.
+ * Формула расчёта: Rapira Ask + 4%.
+ */
+function crm_fintech_create_usdt_order_from_rub_amount(
+	float $requested_rub,
+	int $company_id = 0,
+	string $source_channel = 'web',
+	?int $created_by_user_id = null,
+	string $description = ''
+): array {
+	$requested_rub = round( max( 0, $requested_rub ), 2 );
+
+	$preflight = _crm_fintech_prepare_create_order(
+		$company_id,
+		$source_channel,
+		[
+			'requested_rub' => $requested_rub,
+			'input_mode'    => 'rub_usdt',
+		]
+	);
+
+	if ( empty( $preflight['success'] ) ) {
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => $preflight['error'] ?? 'Ошибка создания ордера.',
+		];
+	}
+
+	$active_provider = (string) ( $preflight['active_provider'] ?? '' );
+	$order_currency  = crm_fintech_normalize_kanyon_order_currency(
+		(string) crm_get_setting( 'fintech_pay2day_order_currency', $company_id, '' )
+	);
+
+	if ( $active_provider !== Fintech_Payment_Gateway::PROVIDER_KANYON || $order_currency !== 'USDT' ) {
+		$error_message = 'RUB -> USDT web-flow доступен только для Kanyon-компаний с валютой USDT.';
+
+		crm_log( 'payment.order.rub_input_unavailable', [
+			'category'    => 'payments',
+			'level'       => 'warning',
+			'action'      => 'create',
+			'message'     => $error_message,
+			'target_type' => 'payment_order',
+			'is_success'  => false,
+			'context'     => [
+				'company_id'      => $company_id,
+				'source_channel'  => $source_channel,
+				'requested_rub'   => $requested_rub,
+				'active_provider' => $active_provider,
+				'order_currency'  => $order_currency,
+			],
+		] );
+
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => $error_message,
+		];
+	}
+
+	$quote = crm_fintech_company_web_rub_usdt_preview_context( $company_id, $requested_rub, true );
+	if ( empty( $quote['success'] ) || empty( $quote['amount_usdt'] ) ) {
+		$error_message = (string) ( $quote['error'] ?? 'Не удалось рассчитать USDT по курсу Rapira.' );
+
+		crm_log( 'payment.order.rub_input_quote_failed', [
+			'category'    => 'payments',
+			'level'       => 'error',
+			'action'      => 'create',
+			'message'     => 'Не удалось рассчитать RUB -> USDT quote для web order.',
+			'target_type' => 'payment_order',
+			'is_success'  => false,
+			'context'     => [
+				'company_id'     => $company_id,
+				'source_channel' => $source_channel,
+				'requested_rub'  => $requested_rub,
+				'quote_error'    => $error_message,
+			],
+		] );
+
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => $error_message,
+		];
+	}
+
+	$amount_usdt    = round( max( 0, (float) $quote['amount_usdt'] ), 2 );
+	$rapira_ask     = isset( $quote['rapira_ask'] ) ? (float) $quote['rapira_ask'] : 0.0;
+	$effective_rate = isset( $quote['effective_rate'] ) ? (float) $quote['effective_rate'] : 0.0;
+	$markup_percent = isset( $quote['markup_percent'] ) ? (float) $quote['markup_percent'] : 0.0;
+
+	if ( $amount_usdt <= 0 || $effective_rate <= 0 || $rapira_ask <= 0 ) {
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => 'Не удалось получить валидный quote для создания ордера.',
+		];
+	}
+
+	Fintech_Payment_Gateway::set_company_id( $company_id );
+	$invoice = Fintech_Payment_Gateway::create_invoice( $amount_usdt, null, $description );
+
+	if ( empty( $invoice['success'] ) ) {
+		crm_log( 'payment.order.create_failed', [
+			'category'    => 'payments',
+			'level'       => 'error',
+			'action'      => 'create',
+			'message'     => 'Ошибка создания RUB -> USDT web-ордера: ' . ( $invoice['error'] ?? 'unknown' ),
+			'target_type' => 'payment_order',
+			'is_success'  => false,
+			'context'     => [
+				'company_id'      => $company_id,
+				'source_channel'  => $source_channel,
+				'requested_rub'   => $requested_rub,
+				'amount_usdt'     => $amount_usdt,
+				'rapira_ask'      => $rapira_ask,
+				'effective_rate'  => $effective_rate,
+				'markup_percent'  => $markup_percent,
+				'provider'        => $invoice['provider'] ?? null,
+				'error'           => $invoice['error'] ?? null,
+			],
+		] );
+
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => $invoice['error'] ?? 'Gateway error',
+		];
+	}
+
+	$provider_payment_rub = isset( $invoice['paymentAmountRub'] ) && $invoice['paymentAmountRub'] !== null
+		? round( (float) $invoice['paymentAmountRub'] / 100, 2 )
+		: null;
+	$warning_parts        = [];
+
+	if ( ! empty( $invoice['warning'] ) ) {
+		$warning_parts[] = trim( (string) $invoice['warning'] );
+	}
+
+	if ( $provider_payment_rub !== null ) {
+		$delta_rub = round( $provider_payment_rub - $requested_rub, 2 );
+		if ( abs( $delta_rub ) >= 1 ) {
+			$warning_parts[] = sprintf(
+				'Ориентир по форме: %s RUB. Провайдер выставил: %s RUB.',
+				number_format( $requested_rub, 2, '.', ' ' ),
+				number_format( $provider_payment_rub, 2, '.', ' ' )
+			);
+		}
+	}
+
+	$invoice['warning'] = ! empty( $warning_parts ) ? implode( ' ', $warning_parts ) : null;
+
+	$meta_json = wp_json_encode(
+		[
+			'company_flow'             => 'web_rub_input_kanyon_order_amount',
+			'pricing_source'           => 'rapira_ask_plus_4_percent',
+			'requested_rub_input'      => $requested_rub,
+			'calculated_amount_usdt'   => $amount_usdt,
+			'estimated_payment_rub'    => isset( $quote['estimated_payment_rub'] ) ? (float) $quote['estimated_payment_rub'] : null,
+			'provider_payment_rub'     => $provider_payment_rub,
+			'rapira_ask'               => $rapira_ask,
+			'markup_percent'           => $markup_percent,
+			'effective_rate'           => $effective_rate,
+			'quote_checked_at_utc'     => current_time( 'mysql', true ),
+		],
+		JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+	);
+
+	$result = _crm_fintech_finalize_created_order(
+		$invoice,
+		$company_id,
+		$source_channel,
+		$created_by_user_id,
+		[
+			'input_mode'      => 'rub_usdt',
+			'requested_rub'   => $requested_rub,
+			'amount_usdt'     => $amount_usdt,
+			'rapira_ask'      => $rapira_ask,
+			'effective_rate'  => $effective_rate,
+			'markup_percent'  => $markup_percent,
+			'pricing_source'  => 'rapira_ask_plus_4_percent',
+		],
+		[
+			'meta_json' => $meta_json,
+			'notes'     => 'Company web RUB -> USDT invoice created via Rapira ask + 4% and Kanyon orderAmount flow.',
+		]
+	);
+
+	$result['requested_amount_rub'] = $requested_rub;
+	$result['quote_rate']           = $effective_rate;
+	$result['quote_rapira_ask']     = $rapira_ask;
+	$result['quote_markup_percent'] = $markup_percent;
+
+	return $result;
+}
+
+/**
+ * Web-only flow: оператор вводит RUB, сервер сперва получает live Kanyon rate
+ * через тестовый ордер 100 USDT, затем сразу создаёт финальный USDT orderAmount.
+ */
+function crm_fintech_create_usdt_order_from_rub_amount_via_live_kanyon(
+	float $requested_rub,
+	int $company_id = 0,
+	string $source_channel = 'web',
+	?int $created_by_user_id = null,
+	string $description = ''
+): array {
+	$requested_rub = round( max( 0, $requested_rub ), 2 );
+
+	$preflight = _crm_fintech_prepare_create_order(
+		$company_id,
+		$source_channel,
+		[
+			'requested_rub' => $requested_rub,
+			'input_mode'    => 'rub_usdt_live',
+		]
+	);
+
+	if ( empty( $preflight['success'] ) ) {
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => $preflight['error'] ?? 'Ошибка создания ордера.',
+		];
+	}
+
+	$active_provider = (string) ( $preflight['active_provider'] ?? '' );
+	$order_currency  = crm_fintech_normalize_kanyon_order_currency(
+		(string) crm_get_setting( 'fintech_pay2day_order_currency', $company_id, '' )
+	);
+
+	if ( $active_provider !== Fintech_Payment_Gateway::PROVIDER_KANYON || $order_currency !== 'USDT' ) {
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => 'Live Kanyon quote доступен только для Kanyon-компаний с валютой USDT.',
+		];
+	}
+
+	$quote = crm_fintech_fetch_live_kanyon_rub_usdt_quote(
+		$company_id,
+		$source_channel,
+		$created_by_user_id
+	);
+
+	if ( empty( $quote['ok'] ) || empty( $quote['kanyon_rate'] ) ) {
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => $quote['error'] ?? 'Не удалось получить live Kanyon quote.',
+		];
+	}
+
+	$kanyon_rate       = round( max( 0, (float) $quote['kanyon_rate'] ), 4 );
+	$quote_amount_usdt = isset( $quote['quote_amount_usdt'] ) ? (float) $quote['quote_amount_usdt'] : RATES_KANYON_TEST_AMOUNT_USDT;
+	$quote_payment_rub = isset( $quote['quote_payment_rub'] ) ? (float) $quote['quote_payment_rub'] : 0.0;
+	$rapira_rate       = isset( $quote['rapira_rate'] ) && $quote['rapira_rate'] !== null ? (float) $quote['rapira_rate'] : null;
+	$quote_order_db_id = isset( $quote['payment_order_id'] ) ? (int) $quote['payment_order_id'] : 0;
+	$amount_usdt       = $kanyon_rate > 0 ? round( $requested_rub / $kanyon_rate, 2 ) : 0.0;
+
+	if ( $amount_usdt <= 0 ) {
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => 'Live Kanyon quote вернул некорректный курс для расчёта USDT.',
+		];
+	}
+
+	Fintech_Payment_Gateway::set_company_id( $company_id );
+	$invoice = Fintech_Payment_Gateway::create_invoice( $amount_usdt, null, $description );
+
+	if ( empty( $invoice['success'] ) ) {
+		crm_log( 'payment.order.create_failed', [
+			'category'    => 'payments',
+			'level'       => 'error',
+			'action'      => 'create',
+			'message'     => 'Ошибка создания RUB -> USDT web-ордера через live Kanyon quote.',
+			'target_type' => 'payment_order',
+			'is_success'  => false,
+			'context'     => [
+				'company_id'         => $company_id,
+				'source_channel'     => $source_channel,
+				'requested_rub'      => $requested_rub,
+				'amount_usdt'        => $amount_usdt,
+				'quote_order_db_id'  => $quote_order_db_id,
+				'quote_amount_usdt'  => $quote_amount_usdt,
+				'quote_payment_rub'  => $quote_payment_rub,
+				'kanyon_rate'        => $kanyon_rate,
+				'provider'           => $invoice['provider'] ?? null,
+				'error'              => $invoice['error'] ?? null,
+			],
+		] );
+
+		return [
+			'success'     => false,
+			'order_db_id' => null,
+			'error'       => $invoice['error'] ?? 'Gateway error',
+		];
+	}
+
+	$provider_payment_rub = isset( $invoice['paymentAmountRub'] ) && $invoice['paymentAmountRub'] !== null
+		? round( (float) $invoice['paymentAmountRub'] / 100, 2 )
+		: null;
+	$warning_parts        = [];
+
+	if ( ! empty( $invoice['warning'] ) ) {
+		$warning_parts[] = trim( (string) $invoice['warning'] );
+	}
+
+	if ( $provider_payment_rub !== null ) {
+		$delta_rub = round( $provider_payment_rub - $requested_rub, 2 );
+		if ( abs( $delta_rub ) >= 1 ) {
+			$warning_parts[] = sprintf(
+				'Ориентир по live Kanyon quote: %s RUB. Провайдер выставил: %s RUB.',
+				number_format( $requested_rub, 2, '.', ' ' ),
+				number_format( $provider_payment_rub, 2, '.', ' ' )
+			);
+		}
+	}
+
+	$invoice['warning'] = ! empty( $warning_parts ) ? implode( ' ', $warning_parts ) : null;
+
+	$meta_json = wp_json_encode(
+		[
+			'company_flow'             => 'web_rub_input_kanyon_live_quote',
+			'pricing_source'           => 'kanyon_test_order_100_usdt',
+			'requested_rub_input'      => $requested_rub,
+			'calculated_amount_usdt'   => $amount_usdt,
+			'provider_payment_rub'     => $provider_payment_rub,
+			'quote_order_db_id'        => $quote_order_db_id,
+			'quote_provider_order_id'  => (string) ( $quote['provider_order_id'] ?? '' ),
+			'quote_merchant_order_id'  => (string) ( $quote['merchant_order_id'] ?? '' ),
+			'quote_amount_usdt'        => $quote_amount_usdt,
+			'quote_payment_rub'        => $quote_payment_rub,
+			'quote_kanyon_rate'        => $kanyon_rate,
+			'quote_rapira_rate'        => $rapira_rate,
+			'quote_checked_at_utc'     => current_time( 'mysql', true ),
+		],
+		JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+	);
+
+	$result = _crm_fintech_finalize_created_order(
+		$invoice,
+		$company_id,
+		$source_channel,
+		$created_by_user_id,
+		[
+			'input_mode'         => 'rub_usdt_live',
+			'requested_rub'      => $requested_rub,
+			'amount_usdt'        => $amount_usdt,
+			'quote_order_db_id'  => $quote_order_db_id,
+			'quote_amount_usdt'  => $quote_amount_usdt,
+			'quote_payment_rub'  => $quote_payment_rub,
+			'kanyon_rate'        => $kanyon_rate,
+			'pricing_source'     => 'kanyon_test_order_100_usdt',
+		],
+		[
+			'meta_json' => $meta_json,
+			'notes'     => 'Company web RUB -> USDT invoice created via live Kanyon quote (test order 100 USDT).',
+		]
+	);
+
+	$result['requested_amount_rub'] = $requested_rub;
+	$result['quote_rate']           = $kanyon_rate;
+	$result['quote_test_amount_usdt'] = $quote_amount_usdt;
+	$result['quote_payment_rub']    = $quote_payment_rub;
+	$result['quote_order_db_id']    = $quote_order_db_id;
+
+	return $result;
 }
 
 // ─── Main orchestration ───────────────────────────────────────────────────────

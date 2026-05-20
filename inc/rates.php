@@ -1118,16 +1118,21 @@ function rates_kanyon_save_row(
 	return $inserted ? (int) $wpdb->insert_id : false;
 }
 
-function rates_kanyon_mark_order_untracked( int $order_db_id, float $kanyon_rate, ?float $rapira_rate, string $source ): void {
+function rates_kanyon_mark_order_untracked( int $order_db_id, float $kanyon_rate, ?float $rapira_rate, string $source, array $args = [] ): void {
 	global $wpdb;
 
 	if ( $order_db_id <= 0 ) {
 		return;
 	}
 
+	$purpose       = sanitize_key( (string) ( $args['purpose'] ?? 'kanyon_rate_check' ) );
+	$local_ref     = sanitize_key( (string) ( $args['local_order_ref'] ?? 'kanyon_rate_check' ) );
+	$notes         = (string) ( $args['notes'] ?? 'check_rate' );
+	$status_reason = (string) ( $args['status_reason'] ?? 'Kanyon rate check order. Not tracked by payment polling.' );
+	$message       = (string) ( $args['history_message'] ?? 'Тестовый ордер Kanyon для проверки курса помечен как неотслеживаемый' );
 	$now  = current_time( 'mysql' );
 	$meta = [
-		'purpose'     => 'kanyon_rate_check',
+		'purpose'     => $purpose !== '' ? $purpose : 'kanyon_rate_check',
 		'source'      => rates_kanyon_normalize_source( $source ),
 		'kanyon_rate' => $kanyon_rate,
 		'rapira_rate' => $rapira_rate,
@@ -1137,9 +1142,9 @@ function rates_kanyon_mark_order_untracked( int $order_db_id, float $kanyon_rate
 		'crm_fintech_payment_orders',
 		[
 			'status_code'   => 'untracked',
-			'status_reason' => 'Kanyon rate check order. Not tracked by payment polling.',
-			'local_order_ref' => 'kanyon_rate_check',
-			'notes'         => 'check_rate',
+			'status_reason' => $status_reason,
+			'local_order_ref' => $local_ref !== '' ? $local_ref : 'kanyon_rate_check',
+			'notes'         => $notes,
 			'meta_json'     => wp_json_encode( $meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES ),
 			'updated_at'    => $now,
 		],
@@ -1155,7 +1160,7 @@ function rates_kanyon_mark_order_untracked( int $order_db_id, float $kanyon_rate
 			'status_code'          => 'untracked',
 			'provider_status_code' => null,
 			'source_code'          => 'rate_check',
-			'message'              => 'Тестовый ордер Kanyon для проверки курса помечен как неотслеживаемый',
+			'message'              => $message,
 			'raw_payload_json'     => wp_json_encode( $meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES ),
 			'created_at'           => $now,
 		],

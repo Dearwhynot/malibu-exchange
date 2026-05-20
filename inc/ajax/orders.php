@@ -263,23 +263,34 @@ function me_ajax_orders_create(): void {
 
 	$_create_uid        = get_current_user_id();
 	$_create_company_id = _me_orders_require_current_company();
-	$_create_input_mode = function_exists( 'crm_fintech_company_create_order_input_mode' )
-		? crm_fintech_company_create_order_input_mode( $_create_company_id )
+	$_supported_modes   = function_exists( 'crm_fintech_company_web_create_order_supported_modes' )
+		? crm_fintech_company_web_create_order_supported_modes( $_create_company_id )
+		: [ 'usdt' ];
+	$_create_input_mode = function_exists( 'crm_fintech_company_web_create_order_input_mode' )
+		? crm_fintech_company_web_create_order_input_mode( $_create_company_id )
 		: 'usdt';
 
 	$posted_input_mode = sanitize_key( (string) wp_unslash( $_POST['amount_mode'] ?? '' ) );
-	if ( $posted_input_mode !== '' && $posted_input_mode !== $_create_input_mode ) {
+	if ( $posted_input_mode !== '' && ! in_array( $posted_input_mode, $_supported_modes, true ) ) {
 		wp_send_json_error( [
 			'message' => 'Настройки компании изменились. Обновите страницу и попробуйте снова.',
 		], 409 );
 	}
+	if ( $posted_input_mode !== '' ) {
+		$_create_input_mode = $posted_input_mode;
+	}
 
 	$amount_value = isset( $_POST['amount_value'] ) ? (float) wp_unslash( $_POST['amount_value'] ) : 0;
 	if ( $amount_value <= 0 ) {
+		$amount_label = 'USDT';
+		if ( in_array( $_create_input_mode, [ 'rub', 'rub_usdt', 'rub_usdt_live', 'rub_thb_rub_rapira', 'rub_thb_rub_live' ], true ) ) {
+			$amount_label = 'RUB';
+		} elseif ( in_array( $_create_input_mode, [ 'rub_thb_thb_rapira', 'rub_thb_thb_live' ], true ) ) {
+			$amount_label = 'THB';
+		}
+
 		wp_send_json_error( [
-			'message' => $_create_input_mode === 'rub'
-				? 'Укажите корректную сумму RUB (больше нуля).'
-				: 'Укажите корректную сумму USDT (больше нуля).',
+			'message' => sprintf( 'Укажите корректную сумму %s (больше нуля).', $amount_label ),
 		] );
 	}
 
@@ -304,6 +315,62 @@ function me_ajax_orders_create(): void {
 		$result = crm_fintech_create_order_by_payment_amount(
 			$amount_value,
 			'RUB',
+			$_create_company_id,
+			'web',
+			$_create_uid,
+			$description
+		);
+	} elseif ( $_create_input_mode === 'rub_usdt' ) {
+		$result = crm_fintech_create_usdt_order_from_rub_amount(
+			$amount_value,
+			$_create_company_id,
+			'web',
+			$_create_uid,
+			$description
+		);
+	} elseif ( $_create_input_mode === 'rub_usdt_live' ) {
+		$result = crm_fintech_create_usdt_order_from_rub_amount_via_live_kanyon(
+			$amount_value,
+			$_create_company_id,
+			'web',
+			$_create_uid,
+			$description
+		);
+	} elseif ( $_create_input_mode === 'rub_thb_rub_rapira' ) {
+		$result = crm_fintech_create_usdt_order_for_rub_thb_direction(
+			$amount_value,
+			'RUB',
+			'rapira',
+			$_create_company_id,
+			'web',
+			$_create_uid,
+			$description
+		);
+	} elseif ( $_create_input_mode === 'rub_thb_rub_live' ) {
+		$result = crm_fintech_create_usdt_order_for_rub_thb_direction(
+			$amount_value,
+			'RUB',
+			'live_kanyon',
+			$_create_company_id,
+			'web',
+			$_create_uid,
+			$description
+		);
+	} elseif ( $_create_input_mode === 'rub_thb_thb_rapira' ) {
+		$result = crm_fintech_create_usdt_order_for_rub_thb_direction(
+			$amount_value,
+			'THB',
+			'rapira',
+			$_create_company_id,
+			'web',
+			$_create_uid,
+			$description
+		);
+	} elseif ( $_create_input_mode === 'rub_thb_thb_live' ) {
+		$result = crm_fintech_create_usdt_order_for_rub_thb_direction(
+			$amount_value,
+			'THB',
+			'live_kanyon',
 			$_create_company_id,
 			'web',
 			$_create_uid,
@@ -334,6 +401,15 @@ function me_ajax_orders_create(): void {
 		'amount_mode'        => $_create_input_mode,
 		'amount_usdt'        => $result['amount_usdt'] ?? null,
 		'payment_amount_rub' => $result['payment_amount_rub'],
+		'requested_amount_rub' => $result['requested_amount_rub'] ?? null,
+		'quote_rate'         => $result['quote_rate'] ?? null,
+		'quote_rapira_ask'   => $result['quote_rapira_ask'] ?? null,
+		'quote_markup_percent' => $result['quote_markup_percent'] ?? null,
+		'target_amount_thb'  => $result['target_amount_thb'] ?? null,
+		'target_invoice_rub' => $result['target_invoice_rub'] ?? null,
+		'thb_rate'           => $result['thb_rate'] ?? null,
+		'thb_input_currency' => $result['thb_input_currency'] ?? null,
+		'thb_input_amount'   => $result['thb_input_amount'] ?? null,
 		'warning'            => $result['warning'] ?? null,
 	] );
 }
