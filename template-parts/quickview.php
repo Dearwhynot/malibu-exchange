@@ -16,7 +16,8 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-$vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
+$vendor_img_uri         = get_template_directory_uri() . '/vendor/pages/assets/img';
+$placeholder_avatar_uri = me_users_placeholder_avatar_url();
 ?>
 
 <div id="quickview" class="quickview-wrapper" data-pages="quickview">
@@ -1005,7 +1006,7 @@ $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
                         <!-- BEGIN From Them Message  !-->
                         <div class="message clearfix">
                             <div class="profile-img-wrapper m-t-5 inline">
-                                <img class="col-top" width="30" height="30" src="<?= esc_url($vendor_img_uri); ?>/profiles/avatar_small.jpg" alt="" data-src="<?= esc_url($vendor_img_uri); ?>/profiles/avatar_small.jpg" data-src-retina="<?= esc_url($vendor_img_uri); ?>/profiles/avatar_small2x.jpg">
+                                <img class="col-top" width="30" height="30" src="<?= esc_url( $placeholder_avatar_uri ); ?>" alt="" data-src="<?= esc_url( $placeholder_avatar_uri ); ?>" data-src-retina="<?= esc_url( $placeholder_avatar_uri ); ?>">
                             </div>
                             <div class="chat-bubble from-them">
                                 Hey
@@ -1029,7 +1030,7 @@ $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
                         <!-- BEGIN From Them Message  !-->
                         <div class="message clearfix">
                             <div class="profile-img-wrapper m-t-5 inline">
-                                <img class="col-top" width="30" height="30" src="<?= esc_url($vendor_img_uri); ?>/profiles/avatar_small.jpg" alt="" data-src="<?= esc_url($vendor_img_uri); ?>/profiles/avatar_small.jpg" data-src-retina="<?= esc_url($vendor_img_uri); ?>/profiles/avatar_small2x.jpg">
+                                <img class="col-top" width="30" height="30" src="<?= esc_url( $placeholder_avatar_uri ); ?>" alt="" data-src="<?= esc_url( $placeholder_avatar_uri ); ?>" data-src-retina="<?= esc_url( $placeholder_avatar_uri ); ?>">
                             </div>
                             <div class="chat-bubble from-them">
                                 Yea

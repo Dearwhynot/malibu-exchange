@@ -30,6 +30,7 @@ const MC_PUBLIC_PATHS = [
     '/authorization',
     '/merchant-api',
     '/merchant-api-console',
+    '/merchant-menu',
     // '/cron-one-min',
     // '/test2',
     // '/telegramaoe',

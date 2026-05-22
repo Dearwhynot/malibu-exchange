@@ -449,8 +449,8 @@ if ( ! function_exists( 'crm_tg_miniapp_operator_message_keyboard' ) ) {
 		}
 
 		$rows[] = [
-			[ 'text' => '🆕 Новый ордер', 'callback_data' => 'orders_new' ],
-			[ 'text' => '↩️ Меню',        'callback_data' => 'menu_main' ],
+			[ 'text' => '📂 Мои ордера', 'callback_data' => 'o:orders' ],
+			[ 'text' => '↩️ Меню',      'callback_data' => 'o:main' ],
 		];
 
 		return [
@@ -543,43 +543,33 @@ if ( ! function_exists( 'crm_tg_miniapp_send_merchant_invoice_message' ) ) {
 if ( ! function_exists( 'crm_tg_miniapp_operator_preview_context' ) ) {
 	function crm_tg_miniapp_operator_preview_context( int $company_id, float $requested_rub = 0.0 ): array {
 		$requested_rub = max( 0, round( $requested_rub, 2 ) );
-		$context = [
-			'success'            => false,
-			'error'              => 'Не удалось получить текущий курс ЭП.',
-			'current_rate'       => null,
-			'checked_at'         => '',
-			'payment_amount_rub' => $requested_rub,
-			'payable_usdt'       => 0.0,
-		];
 
-		if ( $company_id <= 0 || ! function_exists( 'rates_kanyon_get_last' ) ) {
-			return $context;
+		if ( function_exists( 'crm_operator_tg_rate_preview_context' ) ) {
+			$preview = crm_operator_tg_rate_preview_context( $company_id, $requested_rub, false );
+
+			return [
+				'success'                => ! empty( $preview['success'] ),
+				'error'                  => (string) ( $preview['error'] ?? '' ),
+				'warning'                => (string) ( $preview['warning'] ?? '' ),
+				'rapira_ask'             => isset( $preview['rapira_ask'] ) ? (float) $preview['rapira_ask'] : null,
+				'company_markup_percent' => isset( $preview['company_markup_percent'] ) ? (float) $preview['company_markup_percent'] : 0.0,
+				'current_rate'           => isset( $preview['current_rate'] ) ? (float) $preview['current_rate'] : null,
+				'checked_at'             => (string) ( $preview['checked_at'] ?? '' ),
+				'payment_amount_rub'     => isset( $preview['payment_amount_rub'] ) ? (float) $preview['payment_amount_rub'] : $requested_rub,
+				'payable_usdt'           => isset( $preview['payable_usdt'] ) ? (float) $preview['payable_usdt'] : 0.0,
+			];
 		}
-
-		$last = rates_kanyon_get_last( $company_id );
-		if ( ! $last && function_exists( 'rates_kanyon_fetch_and_record' ) ) {
-			$fetched = rates_kanyon_fetch_and_record( $company_id, 'telegram_operator' );
-			if ( ! empty( $fetched['ok'] ) ) {
-				$last = rates_kanyon_get_last( $company_id );
-			} elseif ( ! empty( $fetched['error'] ) ) {
-				$context['error'] = (string) $fetched['error'];
-			}
-		}
-
-		if ( ! is_array( $last ) || empty( $last['kanyon_rate'] ) || (float) $last['kanyon_rate'] <= 0 ) {
-			return $context;
-		}
-
-		$current_rate = round( (float) $last['kanyon_rate'], 4 );
-		$payable_usdt = $current_rate > 0 ? round( $requested_rub / $current_rate, 4 ) : 0.0;
 
 		return [
-			'success'            => true,
-			'error'              => '',
-			'current_rate'       => $current_rate,
-			'checked_at'         => ! empty( $last['created_at'] ) ? mysql2date( 'd.m.Y H:i', (string) $last['created_at'] ) : current_time( 'd.m.Y H:i' ),
-			'payment_amount_rub' => $requested_rub,
-			'payable_usdt'       => $payable_usdt,
+			'success'                => false,
+			'error'                  => 'Не удалось получить текущий курс ЭП.',
+			'warning'                => '',
+			'rapira_ask'             => null,
+			'company_markup_percent' => 0.0,
+			'current_rate'           => null,
+			'checked_at'             => '',
+			'payment_amount_rub'     => $requested_rub,
+			'payable_usdt'           => 0.0,
 		];
 	}
 }

@@ -265,6 +265,7 @@ function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, str
 	$runtime          = _tg_orders_runtime_context();
 	$company_id       = (int) ( $runtime['company_id'] ?? 0 );
 	$bot_context      = (string) ( $runtime['bot_context'] ?? 'merchant' );
+	$chat_id          = crm_telegram_sanitize_chat_id_value( $chat_id );
 	$created_for_type = $bot_context === 'merchant' ? 'merchant' : 'company';
 	$poll_source      = 'telegram_manual';
 	if ( $bot_context === 'merchant' ) {
@@ -285,17 +286,30 @@ function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, str
 		return;
 	}
 
-	$order = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-		'SELECT * FROM `crm_fintech_payment_orders` WHERE `id` = %d AND `company_id` = %d AND `created_for_type` = %s',
-		$order_db_id,
-		$company_id,
-		$created_for_type
-	) );
+	$query  = 'SELECT * FROM `crm_fintech_payment_orders` WHERE `id` = %d AND `company_id` = %d AND `created_for_type` = %s';
+	$params = [ $order_db_id, $company_id, $created_for_type ];
+
+	if ( $bot_context === 'operator' ) {
+		$query   .= ' AND `source_channel` = %s';
+		$params[] = 'telegram_operator';
+
+		if ( $chat_id !== '' && function_exists( 'crm_operator_tg_chat_order_like' ) ) {
+			$query   .= ' AND `meta_json` LIKE %s';
+			$params[] = crm_operator_tg_chat_order_like( $chat_id );
+		}
+	}
+
+	$order = $wpdb->get_row( $wpdb->prepare( $query, $params ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 
 	if ( ! $order ) {
 		bot_send_message( $telegram, $chat_id, '⚠️ Ордер #' . $order_db_id . ' не найден.' );
 		return;
 	}
+
+	$new_order_callback = $bot_context === 'operator' ? 'o:invoice' : 'orders_new';
+	$menu_callback      = $bot_context === 'operator' ? 'o:main' : 'menu_main';
+	$list_callback      = $bot_context === 'operator' ? 'o:orders' : $new_order_callback;
+	$list_label         = $bot_context === 'operator' ? '📂 Мои ордера' : '🆕 Новый ордер';
 
 	$current_status = (string) $order->status_code;
 	$terminal       = [ 'paid', 'declined', 'cancelled', 'expired', 'error' ];
@@ -347,8 +361,8 @@ function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, str
 		$keyboard = [
 			'inline_keyboard' => [
 				[
-					[ 'text' => '🆕 Новый ордер', 'callback_data' => 'orders_new' ],
-					[ 'text' => '↩️ Меню', 'callback_data' => 'menu_main' ],
+					[ 'text' => $list_label, 'callback_data' => $list_callback ],
+					[ 'text' => '↩️ Меню', 'callback_data' => $menu_callback ],
 				],
 			],
 		];
@@ -368,8 +382,8 @@ function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, str
 		$keyboard = [
 			'inline_keyboard' => [
 				[
-					[ 'text' => '🆕 Новый ордер', 'callback_data' => 'orders_new' ],
-					[ 'text' => '↩️ Меню', 'callback_data' => 'menu_main' ],
+					[ 'text' => $list_label, 'callback_data' => $list_callback ],
+					[ 'text' => '↩️ Меню', 'callback_data' => $menu_callback ],
 				],
 			],
 		];
@@ -382,7 +396,7 @@ function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, str
 		'inline_keyboard' => [
 			[
 				[ 'text' => '🔄 Проверить ещё раз', 'callback_data' => 'kanyon_paid:' . $order_db_id ],
-				[ 'text' => '↩️ Меню', 'callback_data' => 'menu_main' ],
+				[ 'text' => '↩️ Меню', 'callback_data' => $menu_callback ],
 			],
 		],
 	];
@@ -451,9 +465,17 @@ if ( ! function_exists( 'tg_project_handle_orders_action' ) ) {
 			_tg_orders_set_state( $chat_id, $state );
 
 			$keyboard = [
-				'inline_keyboard' => [
-					[ [ 'text' => '❌ Отмена', 'callback_data' => 'orders_cancel_new' ] ],
-				],
+				'inline_keyboard' => $bot_context === 'operator'
+					? [
+						[
+							[ 'text' => '↩️ Меню', 'callback_data' => 'o:main' ],
+						],
+					]
+					: [
+						[
+							[ 'text' => '❌ Отмена', 'callback_data' => 'orders_cancel_new' ],
+						],
+					],
 			];
 
 			bot_send_message( $telegram, $chat_id, _tg_orders_waiting_amount_prompt( $state ), $keyboard );
@@ -464,6 +486,13 @@ if ( ! function_exists( 'tg_project_handle_orders_action' ) ) {
 		if ( $callback_data === 'orders_cancel_new' ) {
 			_tg_orders_clear_state( $chat_id );
 			bot_send_message( $telegram, $chat_id, '❌ Создание ордера отменено.' );
+			if ( $bot_context === 'operator' && function_exists( 'crm_operator_tg_access_context' ) && function_exists( 'crm_operator_tg_present_screen' ) ) {
+				$access = crm_operator_tg_access_context( $company_id, $chat_id );
+				if ( ! empty( $access['allowed'] ) && ! empty( $access['account'] ) ) {
+					crm_operator_tg_present_screen( $telegram, $company_id, $chat_id, $access['account'], $ctx, 'main', true );
+					return true;
+				}
+			}
 			if ( function_exists( 'fifo_bot_menu' ) ) {
 				fifo_bot_menu( $telegram, $chat_id, $actor_id );
 			}
@@ -576,11 +605,13 @@ if ( ! function_exists( 'tg_project_handle_message' ) ) {
 		}
 
 		if ( empty( $result['success'] ) ) {
+			$new_order_callback = $bot_context === 'operator' ? 'o:invoice' : 'orders_new';
+			$menu_callback      = $bot_context === 'operator' ? 'o:main' : 'menu_main';
 			$keyboard = [
 				'inline_keyboard' => [
 					[
-						[ 'text' => '🔁 Попробовать снова', 'callback_data' => 'orders_new' ],
-						[ 'text' => '↩️ Меню', 'callback_data' => 'menu_main' ],
+						[ 'text' => '🔁 Попробовать снова', 'callback_data' => $new_order_callback ],
+						[ 'text' => '↩️ Меню', 'callback_data' => $menu_callback ],
 					],
 				],
 			];
@@ -614,17 +645,29 @@ if ( ! function_exists( 'tg_project_handle_message' ) ) {
 		}
 
 		// Кнопки: Оплачено / Отмена + навигация
-		$keyboard = [
-			'inline_keyboard' => [
+		$keyboard_rows = [
+			[
+				[ 'text' => '✅ Проверить оплату', 'callback_data' => 'kanyon_paid:' . $order_db_id ],
+			],
+			[
+				[ 'text' => '🆕 Новый ордер', 'callback_data' => $bot_context === 'operator' ? 'o:invoice' : 'orders_new' ],
+				[ 'text' => '↩️ Меню',        'callback_data' => $bot_context === 'operator' ? 'o:main' : 'menu_main'  ],
+			],
+		];
+
+		if ( $bot_context !== 'operator' ) {
+			array_unshift(
+				$keyboard_rows,
 				[
 					[ 'text' => '✅ Проверить оплату', 'callback_data' => 'kanyon_paid:' . $order_db_id ],
-					[ 'text' => '❌ Отмена',     'callback_data' => 'kanyon_cancel:' . $order_db_id ],
-				],
-				[
-					[ 'text' => '🆕 Новый ордер', 'callback_data' => 'orders_new' ],
-					[ 'text' => '↩️ Меню',        'callback_data' => 'menu_main'  ],
-				],
-			],
+					[ 'text' => '❌ Отмена', 'callback_data' => 'kanyon_cancel:' . $order_db_id ],
+				]
+			);
+			unset( $keyboard_rows[1] );
+		}
+
+		$keyboard = [
+			'inline_keyboard' => array_values( $keyboard_rows ),
 		];
 
 		// Отправляем чек (QR + caption или текст)

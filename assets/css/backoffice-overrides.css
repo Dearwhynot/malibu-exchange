@@ -808,6 +808,42 @@ body.menu-pin .page-sidebar:not(.page-sidebar-root) .sidebar-header .sidebar-hea
 	width: 100%;
 }
 
+.table th.me-actions-col,
+.table td.me-actions-col {
+	min-width: 60px;
+	white-space: nowrap;
+	width: 60px;
+}
+
+.table th.me-actions-col,
+.table td.me-actions-col {
+	text-align: right;
+}
+
+.table th.me-actions-col.me-actions-col-center,
+.table td.me-actions-col.me-actions-col-center {
+	text-align: center;
+}
+
+.table td.me-actions-col .dropdown,
+.table td.me-actions-col .btn-group,
+.table td.me-actions-col .row-action-menu {
+	display: inline-flex;
+	vertical-align: middle;
+}
+
+.table td.me-actions-col .dropdown,
+.table td.me-actions-col .btn-group,
+.table td.me-actions-col .row-action-menu {
+	justify-content: flex-end;
+}
+
+.table td.me-actions-col.me-actions-col-center .dropdown,
+.table td.me-actions-col.me-actions-col-center .btn-group,
+.table td.me-actions-col.me-actions-col-center .row-action-menu {
+	justify-content: center;
+}
+
 @media (max-width: 767px) {
 	.card-product-hero .card-body {
 		padding: 22px 20px;

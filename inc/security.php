@@ -200,6 +200,7 @@ function malibu_exchange_get_public_page_templates(): array
         'page-login.php',
         'page-merchant-api.php',
         'page-merchant-api-console.php',
+        'page-merchant-menu.php',
     ];
 }
 

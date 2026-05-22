@@ -115,6 +115,7 @@ $nonce_save    = wp_create_nonce( 'me_users_save' );
 $nonce_status  = wp_create_nonce( 'me_users_status' );
 $nonce_delete  = wp_create_nonce( 'me_users_delete' );
 $nonce_company = wp_create_nonce( 'me_assign_user_company' );
+$nonce_user_avatar_refresh = wp_create_nonce( 'me_user_telegram_avatar_refresh' );
 
 get_template_part(
 	'template-parts/root-page-start',
@@ -203,16 +204,14 @@ get_template_part(
 						<tr>
 							<th style="width:50px">ID</th>
 							<th>Пользователь</th>
-							<th>Email</th>
 							<th>Display Name</th>
 							<th>Роли</th>
 							<th style="width:120px">Компания</th>
 							<th style="width:95px">Статус</th>
-							<th style="width:120px">Телефон</th>
 							<th style="width:130px">Telegram</th>
 							<th style="width:100px">Зарегистрирован</th>
 							<th style="width:110px">Последний вход</th>
-							<th style="width:60px"></th>
+							<th class="users-actions-col me-actions-col" style="width:60px"></th>
 						</tr>
 					</thead>
 					<tbody>
@@ -223,7 +222,15 @@ get_template_part(
 							$crm_status    = $acc ? $acc->status : CRM_STATUS_ACTIVE;
 							$status_class  = crm_status_badge_class( $crm_status );
 							$last_login    = me_users_get_last_login( $user->ID );
-							$avatar_letter = me_users_avatar_letter( $user );
+							$avatar_html   = me_users_render_avatar(
+								$user,
+								[
+									'size'          => 32,
+									'wrapper_class' => 'thumbnail-wrapper circular inline m-r-10',
+									'alt'           => $user->display_name ?: $user->user_login,
+								]
+							);
+							$can_refresh_tg_avatar = me_users_can_refresh_telegram_avatar( (int) $user->ID );
 							$user_company  = $crm_companies_map[ $user->ID ] ?? null;
 
 							$user_json = esc_attr(
@@ -255,16 +262,11 @@ get_template_part(
 								</td>
 								<td class="v-align-middle">
 									<div class="d-flex align-items-center">
-										<div class="me-avatar m-r-10" aria-hidden="true"><?php echo esc_html( $avatar_letter ); ?></div>
+										<span class="js-user-avatar-slot" data-user-avatar-slot="<?php echo (int) $user->ID; ?>"><?php echo $avatar_html; ?></span>
 										<div>
 											<span class="semi-bold"><?php echo esc_html( $user->user_login ); ?></span>
 										</div>
 									</div>
-								</td>
-								<td class="v-align-middle">
-									<a href="mailto:<?php echo esc_attr( $user->user_email ); ?>">
-										<?php echo esc_html( $user->user_email ); ?>
-									</a>
 								</td>
 								<td class="v-align-middle"><?php echo esc_html( $user->display_name ?: '—' ); ?></td>
 								<td class="v-align-middle">
@@ -290,7 +292,6 @@ get_template_part(
 										<?php echo esc_html( crm_status_label( $crm_status ) ); ?>
 									</span>
 								</td>
-								<td class="v-align-middle"><span class="hint-text fs-12"><?php echo $acc && $acc->phone ? esc_html( $acc->phone ) : '—'; ?></span></td>
 								<td class="v-align-middle">
 									<span class="hint-text fs-12">
 										<?php if ( $acc && $acc->telegram_username ) : ?>
@@ -308,8 +309,8 @@ get_template_part(
 										<?php echo $last_login ? esc_html( wp_date( 'd.m.Y H:i', strtotime( $last_login ) ) ) : '—'; ?>
 									</span>
 								</td>
-								<td class="v-align-middle">
-									<div class="dropdown">
+								<td class="v-align-middle users-actions-col me-actions-col">
+									<div class="btn-group btn-group-sm row-action-menu">
 										<button type="button"
 										        class="btn btn-default btn-xs dropdown-toggle"
 										        data-bs-toggle="dropdown"
@@ -331,6 +332,15 @@ get_template_part(
 													<i class="pg-icon m-r-5">edit</i> Редактировать
 												</a>
 											</li>
+											<?php if ( $can_refresh_tg_avatar ) : ?>
+											<li>
+												<a class="dropdown-item js-refresh-user-telegram-avatar" href="#"
+												   data-user-id="<?php echo (int) $user->ID; ?>"
+												   data-user-name="<?php echo esc_attr( $user->display_name ?: $user->user_login ); ?>">
+													<i class="pg-icon m-r-5">refresh</i> Обновить TG-аватар
+												</a>
+											</li>
+											<?php endif; ?>
 											<li>
 												<a class="dropdown-item js-assign-company" href="#"
 												   data-user-id="<?php echo (int) $user->ID; ?>"
@@ -707,6 +717,26 @@ get_template_part(
 .table th { font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
 .table td { font-size:13px; }
 .btn-xs { padding:3px 8px; font-size:12px; }
+#users-table {
+	min-width: 1040px;
+	width: 100%;
+}
+#users-table th.users-actions-col,
+#users-table td.users-actions-col {
+	width:60px;
+	min-width:60px;
+	text-align:right;
+	white-space:nowrap;
+}
+#users-table td.users-actions-col .dropdown {
+	display:inline-flex;
+	justify-content:flex-end;
+}
+#users-table td.users-actions-col .row-action-menu {
+	display:inline-flex;
+	justify-content:flex-end;
+	margin-right:0;
+}
 .pg-icon.spin { animation:spin 1s linear infinite; display:inline-block; }
 .dropdown-menu .dropdown-item { display:flex; align-items:center; }
 .dropdown-menu .dropdown-item .pg-icon { flex-shrink:0; line-height:1; }
@@ -721,7 +751,7 @@ get_template_part(
 <?php
 add_action(
 	'wp_footer',
-	function () use ( $nonce_save, $nonce_status, $nonce_delete, $nonce_company, $can_assign_roles, $f_status ) {
+	function () use ( $nonce_save, $nonce_status, $nonce_delete, $nonce_company, $nonce_user_avatar_refresh, $can_assign_roles, $f_status ) {
 		?>
 <script>
 (function ($) {
@@ -732,7 +762,8 @@ add_action(
 		save: '<?php echo esc_js( $nonce_save ); ?>',
 		status: '<?php echo esc_js( $nonce_status ); ?>',
 		delete: '<?php echo esc_js( $nonce_delete ); ?>',
-		company: '<?php echo esc_js( $nonce_company ); ?>'
+		company: '<?php echo esc_js( $nonce_company ); ?>',
+		avatar: '<?php echo esc_js( $nonce_user_avatar_refresh ); ?>'
 	};
 	var CAN_ASSIGN_ROLES = <?php echo $can_assign_roles ? 'true' : 'false'; ?>;
 
@@ -746,12 +777,93 @@ add_action(
 		}
 	}
 
+	function escapeCssUrl(value) {
+		return String(value == null ? '' : value).replace(/(["'\\()])/g, '\\$1');
+	}
+
+	function updateUserAvatarUi(userId, avatarHtml, avatarUrl, isCurrentUser, headerAvatarHtml) {
+		userId = parseInt(userId, 10) || 0;
+		if (!userId) {
+			return;
+		}
+
+		if (avatarHtml) {
+			$('[data-user-avatar-slot="' + userId + '"]').html(avatarHtml);
+		}
+
+		if (isCurrentUser && headerAvatarHtml) {
+			$('.profile-dropdown-toggle').html(headerAvatarHtml);
+		} else if (isCurrentUser && avatarUrl) {
+			var $headerImg = $('.profile-dropdown-toggle .header-profile-avatar__img').first();
+			if ($headerImg.length) {
+				$headerImg.attr('src', avatarUrl).attr('data-src', avatarUrl).attr('data-src-retina', avatarUrl);
+			}
+		}
+	}
+
+	function refreshUserTelegramAvatar(userId, userName) {
+		userId = parseInt(userId, 10) || 0;
+		if (!userId) {
+			showToast('Не удалось определить пользователя для обновления аватара.', 'error');
+			return $.Deferred().reject().promise();
+		}
+
+		return $.post(AJAX_URL, {
+			action: 'me_root_user_telegram_avatar_refresh',
+			_nonce: NONCES.avatar,
+			user_id: userId
+		}, function (res) {
+			if (!res || !res.success || !res.data) {
+				showToast((res && res.data && res.data.message) || 'Не удалось обновить TG-аватар.', 'error');
+				return;
+			}
+
+			updateUserAvatarUi(
+				res.data.user_id,
+				res.data.row_avatar_html || '',
+				res.data.resolved_avatar_url || '',
+				!!res.data.is_current_user,
+				res.data.header_avatar_html || ''
+			);
+			showToast(res.data.message || ('TG-аватар обновлён для ' + (userName || ('user #' + userId)) + '.'), 'success');
+		}, 'json').fail(function () {
+			showToast('Ошибка сервера при обновлении TG-аватара.', 'error');
+		});
+	}
+
 	function initActionDropdowns($scope) {
+		function getActionDropdownPopperConfig() {
+			return {
+				strategy: 'fixed',
+				placement: 'bottom-end',
+				modifiers: [
+					{
+						name: 'offset',
+						options: { offset: [ 0, 6 ] }
+					},
+					{
+						name: 'preventOverflow',
+						options: {
+							boundary: 'viewport',
+							altAxis: true,
+							padding: 12
+						}
+					},
+					{
+						name: 'flip',
+						options: {
+							fallbackPlacements: [ 'top-end', 'bottom-start', 'top-start' ]
+						}
+					}
+				]
+			};
+		}
+
 		($scope || $(document)).find('.dropdown-toggle[data-bs-toggle="dropdown"]').each(function () {
 			if (this.dataset.dropdownFixedReady === '1') {
 				return;
 			}
-			new bootstrap.Dropdown(this, { popperConfig: { strategy: 'fixed' } });
+			new bootstrap.Dropdown(this, { popperConfig: getActionDropdownPopperConfig() });
 			this.dataset.dropdownFixedReady = '1';
 		});
 	}
@@ -851,6 +963,25 @@ add_action(
 		$('#uf-pass-hint').show();
 		$('#uf-company-row').hide();
 		$('#uf-error').addClass('d-none').text('');
+	});
+
+	$(document).on('click', '.js-refresh-user-telegram-avatar', function (e) {
+		e.preventDefault();
+
+		var $link = $(this);
+		if ($link.hasClass('disabled') || $link.data('loading') === 1) {
+			return false;
+		}
+
+		var userId = parseInt($link.data('user-id'), 10) || 0;
+		var userName = $.trim(String($link.data('user-name') || ''));
+
+		$link.data('loading', 1).addClass('disabled');
+		refreshUserTelegramAvatar(userId, userName).always(function () {
+			$link.data('loading', 0).removeClass('disabled');
+		});
+
+		return false;
 	});
 
 	$('#btn-save-user').on('click', function () {

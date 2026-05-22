@@ -157,7 +157,7 @@ get_header();
 										<th style="width:190px">Роль</th>
 										<th style="width:180px">Последний инвайт</th>
 										<th style="width:160px">Привязан</th>
-										<th style="width:210px" class="text-right">Действия</th>
+										<th class="me-actions-col"></th>
 									</tr>
 								</thead>
 								<tbody id="operator-users-tbody">
@@ -232,7 +232,7 @@ get_header();
 										<th style="width:120px">TTL</th>
 										<th style="width:160px">Активен до</th>
 										<th style="width:160px">Создан</th>
-										<th style="width:190px" class="text-center">Действия</th>
+										<th class="me-actions-col me-actions-col-center"></th>
 									</tr>
 								</thead>
 								<tbody id="operator-invite-history-tbody">
@@ -938,7 +938,7 @@ add_action(
 				+ '<td class="v-align-middle">' + roleHtml + '</td>'
 				+ '<td class="v-align-middle">' + inviteHtml + '</td>'
 				+ '<td class="v-align-middle">' + linkedHtml + '</td>'
-				+ '<td class="v-align-middle text-right">' + renderOperatorUserActions(row) + '</td>'
+				+ '<td class="v-align-middle me-actions-col">' + renderOperatorUserActions(row) + '</td>'
 				+ '</tr>';
 
 			$tbody.append(html);
@@ -1173,7 +1173,7 @@ add_action(
 					+ '<td>' + escHtml(ttl) + '</td>'
 					+ '<td><span class="hint-text fs-12">' + escHtml(row.expires_at || '—') + '</span></td>'
 					+ '<td><span class="hint-text fs-12">' + escHtml(row.created_at || '—') + '</span></td>'
-					+ '<td class="text-center">' + actions + '</td>'
+					+ '<td class="me-actions-col me-actions-col-center">' + actions + '</td>'
 				+ '</tr>'
 			);
 		});

@@ -181,19 +181,29 @@ function crm_fintech_cron_notify_telegram( object $order ): bool {
 		: '—';
 
 	$e   = "\n";
-	$txt = '✅ <b>Платёж получен!</b>' . $e . $e;
+	$txt = $source_channel === 'telegram_operator'
+		? '✅ <b>Платёж подтверждён!</b>' . $e . $e
+		: '✅ <b>Платёж получен!</b>' . $e . $e;
 	$txt .= '<b>' . $rub . '</b>' . $e . $e;
 	$txt .= '📋 Заказ: <code>' . htmlspecialchars( (string) $order->merchant_order_id, ENT_QUOTES ) . '</code>' . $e;
 	$txt .= '📅 ' . date_i18n( 'd.m.Y H:i' );
 
-	$keyboard = json_encode( [
-		'inline_keyboard' => [
-			[
-				[ 'text' => '🆕 Новый ордер', 'callback_data' => 'orders_new' ],
-				[ 'text' => '↩️ Меню',        'callback_data' => 'menu_main'  ],
+	$keyboard = json_encode(
+		[
+			'inline_keyboard' => [
+				[
+					[
+						'text' => $source_channel === 'telegram_operator' ? '📂 Мои ордера' : '🆕 Новый ордер',
+						'callback_data' => $source_channel === 'telegram_operator' ? 'o:orders' : 'orders_new',
+					],
+					[
+						'text' => '↩️ Меню',
+						'callback_data' => $source_channel === 'telegram_operator' ? 'o:main' : 'menu_main',
+					],
+				],
 			],
-		],
-	] );
+		]
+	);
 
 	$result = $telegram->sendMessage( [
 		'chat_id'      => $chat_id,

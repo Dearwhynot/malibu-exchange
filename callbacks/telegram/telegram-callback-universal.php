@@ -1647,6 +1647,13 @@ if (!function_exists('tg_route_callback')) {
             }
         }
 
+        if (function_exists('crm_operator_tg_route_callback')) {
+            $operator_handled = (bool) crm_operator_tg_route_callback($callback_data, $ctx, $telegram, $data);
+            if ($operator_handled) {
+                return true;
+            }
+        }
+
         if (function_exists('crm_merchant_tg_route_callback')) {
             $merchant_handled = (bool) crm_merchant_tg_route_callback($callback_data, $ctx, $telegram, $data);
             if ($merchant_handled) {
@@ -1908,6 +1915,10 @@ if (!function_exists('tg_universal_callback_dispatch')) {
 
                 if (!$handled && function_exists('crm_merchant_tg_route_message')) {
                     $handled = (bool) crm_merchant_tg_route_message($text, $ctx, $telegram, $data);
+                }
+
+                if (!$handled && function_exists('crm_operator_tg_route_message')) {
+                    $handled = (bool) crm_operator_tg_route_message($text, $ctx, $telegram, $data);
                 }
 
                 if (!$handled && function_exists('tg_project_handle_message')) {

@@ -686,6 +686,18 @@ if ( ! function_exists( 'crm_telegram_run_post_connect_tasks' ) ) {
 			}
 		}
 
+		if ( $context === 'operator' && function_exists( 'crm_operator_tg_set_my_commands' ) ) {
+			$commands_result = crm_operator_tg_set_my_commands( $company_id );
+			$result['steps']['operator_commands'] = $commands_result;
+
+			if ( empty( $commands_result['success'] ) ) {
+				$result['success'] = false;
+				$result['message'] = trim( (string) ( $commands_result['message'] ?? 'Не удалось обновить команды operator-бота.' ) );
+			} else {
+				$result['message'] = 'Команды operator-бота обновлены.';
+			}
+		}
+
 		return $result;
 	}
 }

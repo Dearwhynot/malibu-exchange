@@ -234,55 +234,47 @@ if ( $is_live_mode ) {
 				}
 			} elseif ( $live_contour === 'operator' ) {
 				$company_id = (int) ( $miniapp_access['company_id'] ?? 0 );
-				$input_mode = function_exists( 'crm_fintech_company_create_order_input_mode' )
-					? crm_fintech_company_create_order_input_mode( $company_id )
-					: 'usdt';
+				$description = $purpose !== '' ? $purpose : 'Telegram operator order';
+				$result = crm_fintech_create_order_by_payment_amount(
+					$input_amount,
+					'RUB',
+					$company_id,
+					'telegram_operator',
+					null,
+					$description
+				);
+				$result['payment_purpose'] = $purpose;
 
-				if ( $input_mode !== 'rub' ) {
-					$live_error = 'Operator mini app сейчас доступен только для RUB paymentAmount contour.';
+				if ( empty( $result['success'] ) ) {
+					$live_error = (string) ( $result['error'] ?? 'Не удалось создать ордер.' );
 				} else {
-					$description = $purpose !== '' ? $purpose : 'Telegram operator order';
-					$result = crm_fintech_create_order_by_payment_amount(
-						$input_amount,
-						'RUB',
-						$company_id,
-						'telegram_operator',
-						null,
-						$description
+					$sent = crm_tg_miniapp_send_operator_order_message( $miniapp_access, $result );
+					crm_log( 'telegram.miniapp.operator_order_created', [
+						'category'    => 'payments',
+						'level'       => 'info',
+						'action'      => 'create',
+						'message'     => 'Operator order created from Telegram mini app.',
+						'target_type' => 'payment_order',
+						'target_id'   => (int) ( $result['order_db_id'] ?? 0 ),
+						'org_id'      => $company_id,
+						'is_success'  => true,
+						'context'     => [
+							'user_id'         => (int) ( $miniapp_access['operator_user_id'] ?? 0 ),
+							'chat_id'         => (string) ( $miniapp_access['chat_id'] ?? '' ),
+							'fallback_sent'   => $sent,
+							'payment_purpose' => $purpose,
+							'payment_rub'     => $input_amount,
+						],
+					] );
+
+					wp_safe_redirect(
+						crm_tg_miniapp_query_url(
+							$miniapp_access,
+							[ 'order_id' => (int) ( $result['order_db_id'] ?? 0 ) ],
+							[ 'miniapp_action' ]
+						)
 					);
-					$result['payment_purpose'] = $purpose;
-
-					if ( empty( $result['success'] ) ) {
-						$live_error = (string) ( $result['error'] ?? 'Не удалось создать ордер.' );
-					} else {
-						$sent = crm_tg_miniapp_send_operator_order_message( $miniapp_access, $result );
-						crm_log( 'telegram.miniapp.operator_order_created', [
-							'category'    => 'payments',
-							'level'       => 'info',
-							'action'      => 'create',
-							'message'     => 'Operator order created from Telegram mini app.',
-							'target_type' => 'payment_order',
-							'target_id'   => (int) ( $result['order_db_id'] ?? 0 ),
-							'org_id'      => $company_id,
-							'is_success'  => true,
-							'context'     => [
-								'user_id'         => (int) ( $miniapp_access['operator_user_id'] ?? 0 ),
-								'chat_id'         => (string) ( $miniapp_access['chat_id'] ?? '' ),
-								'fallback_sent'   => $sent,
-								'payment_purpose' => $purpose,
-								'payment_rub'     => $input_amount,
-							],
-						] );
-
-						wp_safe_redirect(
-							crm_tg_miniapp_query_url(
-								$miniapp_access,
-								[ 'order_id' => (int) ( $result['order_db_id'] ?? 0 ) ],
-								[ 'miniapp_action' ]
-							)
-						);
-						exit;
-					}
+					exit;
 				}
 			}
 		}
@@ -493,6 +485,8 @@ if ( $is_live_mode ) {
 			$payment_amount_rub = round( (float) ( $preview['payment_amount_rub'] ?? $input_amount ), 2 );
 			$merchant_payable_usdt = round( (float) ( $preview['payable_usdt'] ?? 0 ), 4 );
 			$merchant_markup_added_rub = 0.0;
+			$rapira_ask = round( (float) ( $preview['rapira_ask'] ?? 0 ), 4 );
+			$company_markup_percent = round( (float) ( $preview['company_markup_percent'] ?? 0 ), 2 );
 			$issued_label = (string) ( $preview['checked_at'] ?? wp_date( 'd M Y, H:i' ) );
 
 			if ( empty( $preview['success'] ) ) {
@@ -500,20 +494,46 @@ if ( $is_live_mode ) {
 			}
 		}
 
-		$input_stats = [
-			[
-				'label'    => 'Наценка',
-				'number'   => crm_merchant_menu_preview_currency( $merchant_markup_added_rub, 2 ),
-				'currency' => 'RUB',
-				'role'     => 'markup',
-			],
-			[
-				'label'    => 'Оплатит клиент',
-				'number'   => crm_merchant_menu_preview_currency( $payment_amount_rub, 2 ),
-				'currency' => 'RUB',
-				'role'     => 'payment',
-			],
-		];
+		if ( $live_contour === 'operator' ) {
+			$input_stats = [
+				[
+					'label'    => 'Rapira ask',
+					'number'   => crm_merchant_menu_preview_currency( $rapira_ask, 4 ),
+					'currency' => 'RUB',
+				],
+				[
+					'label'    => 'Markup',
+					'number'   => crm_merchant_menu_preview_currency( $company_markup_percent, 2 ),
+					'currency' => '%',
+				],
+				[
+					'label'    => 'Итоговый курс',
+					'number'   => crm_merchant_menu_preview_currency( $merchant_rate, 4 ),
+					'currency' => 'RUB',
+				],
+				[
+					'label'    => 'Получите',
+					'number'   => crm_merchant_menu_preview_currency( $merchant_payable_usdt, 4 ),
+					'currency' => 'USDT',
+					'role'     => 'usdt',
+				],
+			];
+		} else {
+			$input_stats = [
+				[
+					'label'    => 'Наценка',
+					'number'   => crm_merchant_menu_preview_currency( $merchant_markup_added_rub, 2 ),
+					'currency' => 'RUB',
+					'role'     => 'markup',
+				],
+				[
+					'label'    => 'Оплатит клиент',
+					'number'   => crm_merchant_menu_preview_currency( $payment_amount_rub, 2 ),
+					'currency' => 'RUB',
+					'role'     => 'payment',
+				],
+			];
+		}
 	}
 } else {
 	$screen         = crm_merchant_menu_preview_screen();
@@ -786,6 +806,7 @@ SVG;
 							data-calc-mode="<?php echo esc_attr( $input_calc_mode ); ?>"
 							data-markup-percent="<?php echo esc_attr( number_format( $markup_percent, 4, '.', '' ) ); ?>"
 							data-markup-mode="<?php echo esc_attr( $rub_invoice_markup_mode ); ?>"
+							data-effective-rate="<?php echo esc_attr( number_format( $merchant_rate, 4, '.', '' ) ); ?>"
 						>
 						<?php if ( $is_live_mode ) : ?>
 							<?php crm_merchant_menu_hidden_inputs( $live_query_args ); ?>
@@ -1081,17 +1102,24 @@ SVG;
 		var calcMode = form.getAttribute('data-calc-mode') || 'merchant';
 		var markupPercent = parseAmount(form.getAttribute('data-markup-percent'));
 		var markupMode = form.getAttribute('data-markup-mode') || 'none';
+		var effectiveRate = parseAmount(form.getAttribute('data-effective-rate'));
 		var markupNode = form.querySelector('[data-calc-role="markup"] .merchant-menu-public-kpi-item__number');
 		var paymentNode = form.querySelector('[data-calc-role="payment"] .merchant-menu-public-kpi-item__number');
+		var usdtNode = form.querySelector('[data-calc-role="usdt"] .merchant-menu-public-kpi-item__number');
 
 		function renderCalculator() {
 			var inputAmount = Math.max(0, parseAmount(amountInput.value));
 			var paymentAmount = inputAmount;
 			var markupAdded = 0;
+			var payableUsdt = 0;
 
 			if (calcMode === 'merchant' && markupMode === 'add_on_top' && markupPercent > 0) {
 				paymentAmount = Math.round((inputAmount * (1 + (markupPercent / 100))) * 100) / 100;
 				markupAdded = Math.max(0, paymentAmount - inputAmount);
+			}
+
+			if (calcMode === 'operator' && effectiveRate > 0) {
+				payableUsdt = inputAmount > 0 ? (inputAmount / effectiveRate) : 0;
 			}
 
 			if (markupNode) {
@@ -1100,6 +1128,10 @@ SVG;
 
 			if (paymentNode) {
 				paymentNode.textContent = formatAmount(paymentAmount, 2);
+			}
+
+			if (usdtNode) {
+				usdtNode.textContent = formatAmount(payableUsdt, 4);
 			}
 		}
 

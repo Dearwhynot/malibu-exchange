@@ -122,7 +122,7 @@ get_header();
 										<th style="width:130px">Выплачено</th>
 										<th style="width:170px">Статус выплаты</th>
 										<th style="width:160px">Последнее движение</th>
-										<th style="width:80px" class="text-right"><i class="pg-icon">more_vertical</i></th>
+										<th class="me-actions-col"></th>
 									</tr>
 								</thead>
 								<tbody id="merchant-payouts-tbody">
@@ -484,7 +484,7 @@ add_action(
 				+ '<td class="v-align-middle font-montserrat fs-12">' + escHtml(row.paid_total_label) + '</td>'
 				+ '<td class="v-align-middle">' + payoutStatus + '</td>'
 				+ '<td class="v-align-middle hint-text fs-12">' + escHtml(lastMovement) + '</td>'
-				+ '<td class="v-align-middle text-right">' + renderActionMenu(row) + '</td>'
+				+ '<td class="v-align-middle me-actions-col">' + renderActionMenu(row) + '</td>'
 				+ '</tr>'
 			);
 		});

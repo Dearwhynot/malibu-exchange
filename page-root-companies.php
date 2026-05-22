@@ -83,7 +83,7 @@ get_template_part(
 							<th style="width:120px">Пользователей</th>
 							<th>Телефон</th>
 							<th>Адрес / заметка</th>
-							<th style="width:60px"></th>
+							<th class="me-actions-col" style="width:60px"></th>
 						</tr>
 					</thead>
 					<tbody id="companies-tbody"></tbody>
@@ -100,7 +100,7 @@ get_template_part(
 							<th style="width:120px">Пользователей</th>
 							<th>Телефон</th>
 							<th>Адрес / заметка</th>
-							<th style="width:60px"></th>
+							<th class="me-actions-col" style="width:60px"></th>
 						</tr>
 					</thead>
 					<tbody id="companies-tbody">
@@ -150,7 +150,7 @@ get_template_part(
 								<td class="v-align-middle hint-text fs-12">
 									<?php echo esc_html( $company->address ?? ( $company->note ?: '—' ) ); ?>
 								</td>
-								<td class="v-align-middle text-right">
+								<td class="v-align-middle me-actions-col">
 									<div class="dropdown">
 										<button type="button"
 										        class="btn btn-default btn-xs dropdown-toggle"
@@ -794,7 +794,7 @@ add_action(
 				+ '<td class="v-align-middle hint-text fs-12">0</td>'
 				+ '<td class="v-align-middle hint-text fs-12">' + escapeHtml(company.phone || '—') + '</td>'
 				+ '<td class="v-align-middle hint-text fs-12">' + escapeHtml(company.address || '—') + '</td>'
-				+ '<td class="v-align-middle text-right">' + buildCompanyActionsDropdown(company) + '</td>'
+				+ '<td class="v-align-middle me-actions-col">' + buildCompanyActionsDropdown(company) + '</td>'
 				+ '</tr>';
 			var $row = $(rowHtml);
 

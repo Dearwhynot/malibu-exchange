@@ -53,6 +53,163 @@ function _me_ajax_require_same_company( int $current_uid, int $target_uid ): voi
 	}
 }
 
+/**
+ * Общая логика обновления Telegram-аватара пользователя.
+ *
+ * @return array<string,mixed>
+ */
+function _me_ajax_refresh_user_telegram_avatar_payload( int $user_id, int $company_id ): array {
+	global $wpdb;
+
+	$user = get_userdata( $user_id );
+	if ( ! $user instanceof WP_User ) {
+		_me_ajax_error( 'Пользователь не найден.' );
+	}
+
+	$account = $wpdb->get_row(
+		$wpdb->prepare(
+			"SELECT *
+			 FROM crm_user_telegram_accounts
+			 WHERE company_id = %d
+			   AND user_id = %d
+			 LIMIT 1",
+			$company_id,
+			$user_id
+		)
+	);
+
+	if ( ! $account ) {
+		_me_ajax_error( 'Telegram-профиль ещё не привязан.' );
+	}
+
+	$telegram_user_id = trim( (string) ( $account->telegram_user_id ?: $account->chat_id ) );
+	if ( $telegram_user_id === '' ) {
+		_me_ajax_error( 'У пользователя нет Telegram user_id для обновления аватара.' );
+	}
+
+	$username = trim( (string) ( $account->telegram_username ?: $user->user_login ?: 'operator' ) );
+	$avatar   = crm_operator_telegram_fetch_avatar( $company_id, $telegram_user_id, $username, (string) time() );
+
+	if ( empty( $avatar['avatar_url'] ) ) {
+		_me_ajax_error( ! empty( $avatar['error'] ) ? (string) $avatar['error'] : 'Не удалось обновить Telegram-аватар.' );
+	}
+
+	$updated = $wpdb->update(
+		'crm_user_telegram_accounts',
+		[
+			'telegram_avatar_file_id' => (string) ( $avatar['file_id'] ?? '' ),
+			'telegram_avatar_path'    => (string) ( $avatar['avatar_path'] ?? '' ),
+			'telegram_avatar_url'     => (string) ( $avatar['avatar_url'] ?? '' ),
+			'last_seen_at'            => current_time( 'mysql', true ),
+		],
+		[ 'id' => (int) $account->id ],
+		[ '%s', '%s', '%s', '%s' ],
+		[ '%d' ]
+	);
+
+	if ( $updated === false ) {
+		_me_ajax_error( 'Не удалось сохранить Telegram-аватар.' );
+	}
+
+	crm_log_entity(
+		'user.telegram_avatar_refreshed',
+		'users',
+		'update',
+		'Обновлён Telegram-аватар пользователя',
+		'user',
+		$user_id,
+		[
+			'org_id'  => $company_id,
+			'context' => [
+				'user_id'    => $user_id,
+				'chat_id'    => (string) ( $account->chat_id ?? '' ),
+				'avatar_url' => (string) ( $avatar['avatar_url'] ?? '' ),
+			],
+		]
+	);
+
+	return [
+		'message'             => 'Telegram-аватар обновлён.',
+		'user_id'             => $user_id,
+		'company_id'          => $company_id,
+		'resolved_avatar_url' => me_users_avatar_url( $user_id, 96 ),
+		'row_avatar_html'     => me_users_render_avatar(
+			$user,
+			[
+				'size'          => 32,
+				'wrapper_class' => 'thumbnail-wrapper circular inline m-r-10',
+				'alt'           => $user->display_name ?: $user->user_login,
+			]
+		),
+		'header_avatar_html'  => me_users_render_avatar(
+			$user,
+			[
+				'size'          => 32,
+				'wrapper_class' => 'thumbnail-wrapper d32 circular inline header-profile-avatar',
+				'alt'           => $user->display_name ?: $user->user_login,
+				'img_class'     => 'header-profile-avatar__img',
+			]
+		),
+		'is_current_user'     => $user_id === get_current_user_id(),
+	];
+}
+
+add_action( 'wp_ajax_me_user_telegram_avatar_refresh', 'me_ajax_user_telegram_avatar_refresh' );
+function me_ajax_user_telegram_avatar_refresh(): void {
+	_me_ajax_check_manage();
+
+	if ( ! isset( $_POST['_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_nonce'] ) ), 'me_user_telegram_avatar_refresh' ) ) {
+		_me_ajax_error( 'Нарушена безопасность запроса. Обновите страницу.' );
+	}
+
+	$current_uid = get_current_user_id();
+	$user_id     = isset( $_POST['user_id'] ) ? (int) $_POST['user_id'] : 0;
+
+	if ( $user_id <= 0 ) {
+		_me_ajax_error( 'Пользователь не указан.' );
+	}
+
+	_me_ajax_deny_root( $user_id );
+	_me_ajax_require_same_company( $current_uid, $user_id );
+
+	$company_id = crm_get_current_user_company_id( $user_id );
+	if ( $company_id <= 0 || ! crm_operator_telegram_user_belongs_to_company( $user_id, $company_id ) ) {
+		_me_ajax_error( 'Пользователь не найден в текущей компании.' );
+	}
+
+	wp_send_json_success( _me_ajax_refresh_user_telegram_avatar_payload( $user_id, $company_id ) );
+}
+
+add_action( 'wp_ajax_me_root_user_telegram_avatar_refresh', 'me_ajax_root_user_telegram_avatar_refresh' );
+function me_ajax_root_user_telegram_avatar_refresh(): void {
+	if ( ! is_user_logged_in() || ! crm_is_root( get_current_user_id() ) ) {
+		_me_ajax_error( 'Недостаточно прав.' );
+	}
+
+	if ( ! isset( $_POST['_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_nonce'] ) ), 'me_user_telegram_avatar_refresh' ) ) {
+		_me_ajax_error( 'Нарушена безопасность запроса. Обновите страницу.' );
+	}
+
+	$user_id = isset( $_POST['user_id'] ) ? (int) $_POST['user_id'] : 0;
+	if ( $user_id <= 0 ) {
+		_me_ajax_error( 'Пользователь не указан.' );
+	}
+
+	_me_ajax_deny_root( $user_id );
+
+	$company = crm_get_user_primary_company( $user_id );
+	if ( ! $company ) {
+		_me_ajax_error( 'У пользователя нет активной primary-компании.' );
+	}
+
+	$company_id = (int) $company->id;
+	if ( $company_id <= 0 || ! crm_operator_telegram_user_belongs_to_company( $user_id, $company_id ) ) {
+		_me_ajax_error( 'Пользователь не найден в активной компании.' );
+	}
+
+	wp_send_json_success( _me_ajax_refresh_user_telegram_avatar_payload( $user_id, $company_id ) );
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // 1. СОХРАНИТЬ ПОЛЬЗОВАТЕЛЯ (создать или обновить)
 // ════════════════════════════════════════════════════════════════════════════

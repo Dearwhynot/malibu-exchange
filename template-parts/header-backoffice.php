@@ -7,8 +7,19 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$theme_img_uri  = get_template_directory_uri() . '/assets/img';
-$vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
+$theme_img_uri = get_template_directory_uri() . '/assets/img';
+$current_user  = wp_get_current_user();
+$avatar_html   = $current_user instanceof WP_User
+	? me_users_render_avatar(
+		$current_user,
+		[
+			'size'          => 32,
+			'wrapper_class' => 'thumbnail-wrapper d32 circular inline header-profile-avatar',
+			'alt'           => $current_user->display_name ?: $current_user->user_login,
+			'img_class'     => 'header-profile-avatar__img',
+		]
+	)
+	: '';
 ?>
 <div class="header">
 	<a href="#" class="btn-link toggle-sidebar d-lg-none pg-icon btn-icon-link" data-toggle="sidebar">menu</a>
@@ -25,10 +36,7 @@ $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
 		<div class="dropdown pull-right d-lg-block d-none">
 			<button class="profile-dropdown-toggle" type="button" data-bs-toggle="dropdown"
 			        aria-haspopup="true" aria-expanded="false" aria-label="profile dropdown">
-				<span class="thumbnail-wrapper d32 circular inline">
-					<img src="<?php echo esc_url( $vendor_img_uri . '/profiles/avatar.jpg' ); ?>"
-					     alt="" width="32" height="32">
-				</span>
+				<?php echo $avatar_html !== '' ? $avatar_html : ''; ?>
 			</button>
 			<div class="dropdown-menu dropdown-menu-right profile-dropdown" role="menu">
 				<a href="#" class="dropdown-item">

@@ -35,7 +35,7 @@ foreach ( $_orders_allowed_providers as $_orders_provider_code ) {
 
 $_orders_allowed_statuses   = [ 'created', 'pending', 'paid', 'declined', 'cancelled', 'expired', 'error' ];
 $_orders_allowed_contours   = [ 'company', 'merchant' ];
-$_orders_allowed_sources    = [ 'web', 'telegram_operator', 'telegram_merchant', 'telegram_service', 'telegram', 'merchant_mock' ];
+$_orders_allowed_sources    = [ 'web', 'telegram_operator', 'telegram_merchant', 'telegram_service', 'telegram' ];
 $_orders_allowed_per_page   = [ 25, 50, 100 ];
 $_orders_known_merchant_ids = array_map( static fn( array $merchant ): int => (int) ( $merchant['id'] ?? 0 ), $order_merchants );
 $_orders_validate_date      = static function ( $value ): string {
@@ -175,7 +175,6 @@ get_header();
 									<option value="telegram_merchant" <?php selected( $_orders_initial_filters['source_channel'], 'telegram_merchant' ); ?>>Telegram merchant</option>
 									<option value="telegram_service" <?php selected( $_orders_initial_filters['source_channel'], 'telegram_service' ); ?>>Telegram service</option>
 									<option value="telegram" <?php selected( $_orders_initial_filters['source_channel'], 'telegram' ); ?>>Telegram legacy</option>
-									<option value="merchant_mock" <?php selected( $_orders_initial_filters['source_channel'], 'merchant_mock' ); ?>>Merchant mock</option>
 								</select>
 							</div>
 							<div class="col-4 col-md-1">
@@ -235,7 +234,7 @@ get_header();
 										<th style="width:110px">Сумма RUB</th>
 										<th style="width:90px">Источник</th>
 										<th style="width:130px">Оплачен</th>
-										<th style="width:70px"></th>
+										<th class="me-actions-col"></th>
 									</tr>
 								</thead>
 								<tbody id="orders-tbody">
@@ -404,8 +403,7 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 			telegram: 'Telegram legacy',
 			telegram_operator: 'Telegram operator',
 			telegram_merchant: 'Telegram merchant',
-			telegram_service: 'Telegram service',
-			merchant_mock: 'Merchant mock'
+			telegram_service: 'Telegram service'
 		};
 		return map[source] || (source || '—');
 	}
@@ -515,7 +513,7 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 				+ '<td>' + amountRub + '</td>'
 				+ '<td>' + source + '</td>'
 				+ '<td>' + paidAt + '</td>'
-				+ '<td class="orders-act">'
+				+ '<td class="orders-act me-actions-col">'
 			+ '<div class="dropdown">'
 			+ '<button class="btn btn-default btn-xs dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Действия">'
 			+ '<i class="pg-icon">more_vertical</i>'
@@ -745,6 +743,9 @@ add_action( 'wp_footer', function () use ( $nonce, $create_nonce ) {
 				}, {
 					onStatusChange: receiptStatusChangeHandler,
 				});
+				if (d.warning && window.MalibuToast && MalibuToast.show) {
+					MalibuToast.show(d.warning, 'warning');
+				}
 				fetchOrders(1);
 			},
 			onEnd: function () {

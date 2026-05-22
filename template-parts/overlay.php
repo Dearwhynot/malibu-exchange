@@ -1,6 +1,6 @@
 <?php
-$theme_img_uri  = get_template_directory_uri() . '/assets/img';
-$vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
+$theme_img_uri          = get_template_directory_uri() . '/assets/img';
+$placeholder_avatar_uri = me_users_placeholder_avatar_url();
 ?>
 <div class="overlay hide" data-pages="search">
     <!-- BEGIN Overlay Content !-->
@@ -45,7 +45,7 @@ $vendor_img_uri = get_template_directory_uri() . '/vendor/pages/assets/img';
                         <div class="d-flex m-t-15">
                             <!-- BEGIN Search Result Item Thumbnail !-->
                             <div class="thumbnail-wrapper d48 circular bg-success text-white ">
-                                <img width="36" height="36" src="<?php echo esc_url($vendor_img_uri . '/profiles/avatar.jpg'); ?>" data-src="<?php echo esc_url($vendor_img_uri . '/profiles/avatar.jpg'); ?>" data-src-retina="<?php echo esc_url($vendor_img_uri . '/profiles/avatar2x.jpg'); ?>" alt="">
+                                <img width="36" height="36" src="<?php echo esc_url( $placeholder_avatar_uri ); ?>" data-src="<?php echo esc_url( $placeholder_avatar_uri ); ?>" data-src-retina="<?php echo esc_url( $placeholder_avatar_uri ); ?>" alt="">
                             </div>
                             <!-- END Search Result Item Thumbnail !-->
                             <div class="p-l-10">

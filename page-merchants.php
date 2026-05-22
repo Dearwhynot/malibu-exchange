@@ -195,7 +195,7 @@ get_header();
 										<th style="width:120px">Бонус</th>
 										<th style="width:120px">Рефка</th>
 										<th style="width:160px">Создан</th>
-										<th style="width:200px" class="text-right">Действия</th>
+										<th class="me-actions-col"></th>
 									</tr>
 								</thead>
 								<tbody id="merchants-tbody">
@@ -272,7 +272,7 @@ get_header();
 										<th style="width:110px">Статус</th>
 										<th style="width:160px">Активен до</th>
 										<th style="width:160px">Создан</th>
-										<th style="width:190px" class="text-center">Действия</th>
+										<th class="me-actions-col me-actions-col-center"></th>
 									</tr>
 								</thead>
 								<tbody id="telegram-invite-history-tbody">
@@ -1808,7 +1808,7 @@ add_action(
 				+ '<td class="v-align-middle font-montserrat fs-12">' + escHtml(row.bonus_balance_label) + '</td>'
 				+ '<td class="v-align-middle font-montserrat fs-12">' + escHtml(row.referral_balance_label) + '</td>'
 				+ '<td class="v-align-middle hint-text fs-12">' + renderMerchantCreatedAt(row.created_at || '') + '</td>'
-				+ '<td class="v-align-middle text-right">' + renderActionMenu(row) + '</td>'
+				+ '<td class="v-align-middle me-actions-col">' + renderActionMenu(row) + '</td>'
 				+ '</tr>';
 
 			$tbody.append(html);
@@ -2140,7 +2140,7 @@ add_action(
 				+ '<td><span class="badge badge-' + escHtml(effective.badge) + '">' + escHtml(effective.label) + '</span></td>'
 				+ '<td>' + escHtml(row.expires_at || '—') + '</td>'
 				+ '<td>' + escHtml(row.created_at || '—') + '</td>'
-				+ '<td class="text-center">' + actions + '</td>'
+				+ '<td class="me-actions-col me-actions-col-center">' + actions + '</td>'
 				+ '</tr>'
 			);
 		});
