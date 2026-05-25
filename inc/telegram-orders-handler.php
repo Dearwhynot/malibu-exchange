@@ -101,26 +101,59 @@ function _tg_orders_waiting_amount_prompt( array $state ): string {
 /**
  * Sends a photo to Telegram by URL using the Telegram class.
  * Falls back to sendMessage with the URL as text if photo fails.
+ *
+ * @return array{ok:bool,response:array,message_type:string}
  */
-function _tg_orders_send_photo( $telegram, string $chat_id, string $photo_url, string $caption = '', ?array $keyboard = null ): void {
-	$params = [
-		'chat_id'    => $chat_id,
-		'photo'      => $photo_url,
-		'parse_mode' => 'HTML',
+function _tg_orders_send_photo( $telegram, string $chat_id, string $photo_url, string $caption = '', ?array $keyboard = null ): array {
+	$result = [
+		'ok'           => false,
+		'response'     => [],
+		'message_type' => 'text',
 	];
-	if ( $caption !== '' ) {
-		$params['caption'] = $caption;
-	}
-	if ( $keyboard !== null ) {
-		$params['reply_markup'] = json_encode( $keyboard );
+
+	if ( function_exists( 'crm_merchant_tg_send_photo' ) ) {
+		$response = crm_merchant_tg_send_photo( $telegram, $chat_id, $photo_url, $caption, $keyboard );
+		if ( ! empty( $response['ok'] ) ) {
+			$result['ok']           = true;
+			$result['response']     = $response;
+			$result['message_type'] = 'photo';
+			return $result;
+		}
+	} else {
+		$params = [
+			'chat_id'    => $chat_id,
+			'photo'      => $photo_url,
+			'parse_mode' => 'HTML',
+		];
+		if ( $caption !== '' ) {
+			$params['caption'] = $caption;
+		}
+		if ( $keyboard !== null ) {
+			$params['reply_markup'] = wp_json_encode( $keyboard, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
+		}
+
+		$response = (array) $telegram->sendPhoto( $params );
+		if ( ! empty( $response['ok'] ) ) {
+			$result['ok']           = true;
+			$result['response']     = $response;
+			$result['message_type'] = 'photo';
+			return $result;
+		}
 	}
 
-	$result = $telegram->sendPhoto( $params );
-	$ok     = is_array( $result ) && ! empty( $result['ok'] );
-
-	if ( ! $ok && function_exists( 'bot_send_message' ) ) {
-		bot_send_message( $telegram, $chat_id, $caption . "\n\n<a href=\"" . $photo_url . "\">QR-код</a>", $keyboard );
+	$fallback_text = $caption . "\n\n<a href=\"" . esc_url( $photo_url ) . "\">QR-код</a>";
+	if ( function_exists( 'crm_merchant_tg_send_message' ) ) {
+		$fallback = crm_merchant_tg_send_message( $telegram, $chat_id, $fallback_text, $keyboard );
+		$result['ok']       = ! empty( $fallback['ok'] );
+		$result['response'] = $fallback;
+		return $result;
 	}
+
+	if ( function_exists( 'bot_send_message' ) ) {
+		bot_send_message( $telegram, $chat_id, $fallback_text, $keyboard );
+	}
+
+	return $result;
 }
 
 // ─── Order summary message (receipt) ─────────────────────────────────────────
@@ -134,15 +167,16 @@ function _tg_orders_format_rub( float $amount ): string {
 
 /**
  * Текст чека — caption к QR-фото или обычное сообщение.
- * Только RUB, без USDT и провайдера.
  */
 function _tg_orders_success_message( array $result ): string {
-	$amount_usdt   = isset( $result['amount_usdt'] ) ? (float) $result['amount_usdt'] : 0.0;
-	$payment_rub   = isset( $result['payment_amount_rub'] ) ? (float) $result['payment_amount_rub'] : 0.0;
-	$order_db_id   = isset( $result['order_db_id'] ) ? (int) $result['order_db_id'] : 0;
-	$receipt_id    = $order_db_id > 0 ? '#' . $order_db_id : (string) ( $result['merchant_order_id'] ?? '—' );
-	$rate_value    = ( $amount_usdt > 0 && $payment_rub > 0 ) ? round( $payment_rub / $amount_usdt, 4 ) : 0.0;
+	$amount_usdt      = isset( $result['amount_usdt'] ) ? (float) $result['amount_usdt'] : 0.0;
+	$payment_rub      = isset( $result['payment_amount_rub'] ) ? (float) $result['payment_amount_rub'] : 0.0;
+	$order_db_id      = isset( $result['order_db_id'] ) ? (int) $result['order_db_id'] : 0;
+	$receipt_id       = $order_db_id > 0 ? '#' . $order_db_id : (string) ( $result['merchant_order_id'] ?? '—' );
+	$rate_value       = ( $amount_usdt > 0 && $payment_rub > 0 ) ? round( $payment_rub / $amount_usdt, 4 ) : 0.0;
 	$payment_purpose = trim( (string) ( $result['payment_purpose'] ?? '' ) );
+	$invoice_mode    = sanitize_key( (string) ( $result['operator_invoice_mode'] ?? '' ) );
+	$warning         = trim( (string) ( $result['warning'] ?? '' ) );
 
 	$text = crm_tg_receipt_block(
 		[
@@ -189,6 +223,24 @@ function _tg_orders_success_message( array $result ): string {
 
 	if ( $payment_purpose !== '' ) {
 		$text .= "\n\nPayment purpose:\n<code>" . htmlspecialchars( $payment_purpose, ENT_QUOTES ) . '</code>';
+	}
+
+	if ( $invoice_mode !== '' && function_exists( 'crm_fintech_create_order_mode_label' ) ) {
+		$text .= "\n\nContour:\n<code>" . htmlspecialchars( crm_fintech_create_order_mode_label( $invoice_mode ), ENT_QUOTES ) . '</code>';
+	}
+
+	if ( ! empty( $result['target_amount_thb'] ) ) {
+		$thb_rate = isset( $result['thb_rate'] ) ? (float) $result['thb_rate'] : 0.0;
+		$text    .= "\n\nTHB context:\n<code>"
+			. htmlspecialchars( crm_tg_receipt_format_amount( (float) $result['target_amount_thb'], 'THB', 2, false ), ENT_QUOTES )
+			. '</code>';
+		if ( $thb_rate > 0 ) {
+			$text .= ' @ <code>' . htmlspecialchars( crm_tg_receipt_format_number( $thb_rate, 4, false ), ENT_QUOTES ) . ' RUB/THB</code>';
+		}
+	}
+
+	if ( $warning !== '' ) {
+		$text .= "\n\n⚠️ " . htmlspecialchars( $warning, ENT_QUOTES );
 	}
 
 	return $text;
@@ -258,8 +310,9 @@ function _tg_orders_list_message( array $statuses, string $title ): string {
  * @param string $chat_id   Telegram chat_id
  * @param object $telegram  Telegram instance
  * @param string $intent    'paid' | 'cancel'
+ * @param array  $ctx       Telegram callback context
  */
-function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, string $intent ): void {
+function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, string $intent, array $ctx = [] ): void {
 	global $wpdb;
 
 	$runtime          = _tg_orders_runtime_context();
@@ -340,14 +393,33 @@ function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, str
 
 	$status_actions = is_array( $poll['status_actions'] ?? null ) ? $poll['status_actions'] : [];
 	$merchant_tg    = is_array( $status_actions['merchant_telegram'] ?? null ) ? $status_actions['merchant_telegram'] : [];
+	$operator_tg    = is_array( $status_actions['operator_telegram'] ?? null ) ? $status_actions['operator_telegram'] : [];
 	$merchant_sync_visible = $bot_context === 'merchant'
 		&& (
 			! empty( $merchant_tg['receipt_updated'] )
 			|| ! empty( $merchant_tg['receipt_replaced'] )
 			|| ! empty( $merchant_tg['notification_sent'] )
 		);
+	$operator_sync_visible = $bot_context === 'operator'
+		&& (
+			! empty( $operator_tg['receipt_updated'] )
+			|| ! empty( $operator_tg['receipt_replaced'] )
+		);
 
 	if ( $merchant_sync_visible && in_array( $new_status, [ 'paid', 'declined', 'cancelled', 'expired', 'error' ], true ) ) {
+		return;
+	}
+	if ( $operator_sync_visible && in_array( $new_status, [ 'paid', 'declined', 'cancelled', 'expired', 'error' ], true ) ) {
+		if ( $bot_context === 'operator' && function_exists( 'tg_safe_answer_callback' ) ) {
+			$labels = [
+				'paid'      => 'Оплата подтверждена',
+				'declined'  => 'Ордер отклонён',
+				'cancelled' => 'Ордер отменён',
+				'expired'   => 'Ордер истёк',
+				'error'     => 'Ордер завершён с ошибкой',
+			];
+			tg_safe_answer_callback( $telegram, $ctx['callback_query_id'] ?? null, $labels[ $new_status ] ?? 'Статус обновлён' );
+		}
 		return;
 	}
 
@@ -392,6 +464,11 @@ function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, str
 	}
 
 	// Ещё открыт
+	if ( $bot_context === 'operator' && function_exists( 'tg_safe_answer_callback' ) ) {
+		tg_safe_answer_callback( $telegram, $ctx['callback_query_id'] ?? null, 'Оплата ещё не поступила' );
+		return;
+	}
+
 	$keyboard = [
 		'inline_keyboard' => [
 			[
@@ -410,25 +487,25 @@ function _tg_orders_check_status( string $db_id, string $chat_id, $telegram, str
 // ─── kanyon adapter hooks (роутятся universal-handler'ом) ─────────────────────
 
 if ( ! function_exists( 'kanyon_handle_paid' ) ) {
-	function kanyon_handle_paid( string $db_id, array $ctx, $telegram ): bool {
-		$chat_id = $ctx['chat_id'] ?? '';
-		if ( ! $chat_id ) {
-			return false;
-		}
-		_tg_orders_check_status( $db_id, $chat_id, $telegram, 'paid' );
-		return true;
+function kanyon_handle_paid( string $db_id, array $ctx, $telegram ): bool {
+	$chat_id = $ctx['chat_id'] ?? '';
+	if ( ! $chat_id ) {
+		return false;
 	}
+	_tg_orders_check_status( $db_id, $chat_id, $telegram, 'paid', $ctx );
+	return true;
+}
 }
 
 if ( ! function_exists( 'kanyon_handle_cancel' ) ) {
-	function kanyon_handle_cancel( string $db_id, array $ctx, $telegram ): bool {
-		$chat_id = $ctx['chat_id'] ?? '';
-		if ( ! $chat_id ) {
-			return false;
-		}
-		_tg_orders_check_status( $db_id, $chat_id, $telegram, 'cancel' );
-		return true;
+function kanyon_handle_cancel( string $db_id, array $ctx, $telegram ): bool {
+	$chat_id = $ctx['chat_id'] ?? '';
+	if ( ! $chat_id ) {
+		return false;
 	}
+	_tg_orders_check_status( $db_id, $chat_id, $telegram, 'cancel', $ctx );
+	return true;
+}
 }
 
 // ─── Project hook: orders actions ─────────────────────────────────────────────

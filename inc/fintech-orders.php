@@ -409,6 +409,159 @@ function crm_fintech_company_web_create_order_supported_modes( int $company_id )
 }
 
 /**
+ * Человекочитаемая подпись режима create-order.
+ */
+function crm_fintech_create_order_mode_label( string $mode ): string {
+	$mode = sanitize_key( $mode );
+
+	switch ( $mode ) {
+		case 'rub':
+			return 'RUB paymentAmount';
+		case 'rub_usdt':
+			return 'RUB -> USDT · Rapira + 4%';
+		case 'rub_usdt_live':
+			return 'RUB -> USDT · Live Kanyon';
+		case 'rub_thb_rub_rapira':
+			return 'THB contour · RUB input · Rapira';
+		case 'rub_thb_rub_live':
+			return 'THB contour · RUB input · Live Kanyon';
+		case 'rub_thb_thb_rapira':
+			return 'THB contour · THB input · Rapira';
+		case 'rub_thb_thb_live':
+			return 'THB contour · THB input · Live Kanyon';
+		case 'usdt':
+		default:
+			return 'Legacy USDT / orderAmount';
+	}
+}
+
+/**
+ * Валюта ввода для режима create-order.
+ */
+function crm_fintech_create_order_mode_input_currency( string $mode ): string {
+	$mode = sanitize_key( $mode );
+
+	if ( in_array( $mode, [ 'rub', 'rub_usdt', 'rub_usdt_live', 'rub_thb_rub_rapira', 'rub_thb_rub_live' ], true ) ) {
+		return 'RUB';
+	}
+
+	if ( in_array( $mode, [ 'rub_thb_thb_rapira', 'rub_thb_thb_live' ], true ) ) {
+		return 'THB';
+	}
+
+	return 'USDT';
+}
+
+/**
+ * Пример значения для поля ввода в зависимости от режима create-order.
+ */
+function crm_fintech_create_order_mode_input_example( string $mode ): string {
+	switch ( crm_fintech_create_order_mode_input_currency( $mode ) ) {
+		case 'RUB':
+			return '30000';
+		case 'THB':
+			return '10000';
+		case 'USDT':
+		default:
+			return '150.50';
+	}
+}
+
+/**
+ * Единая точка входа для company-order create по mode-коду.
+ *
+ * @return array<string,mixed>
+ */
+function crm_fintech_create_company_order_from_mode(
+	string $mode,
+	float $amount_value,
+	int $company_id,
+	string $source_channel = 'web',
+	?int $created_by_user_id = null,
+	string $description = ''
+): array {
+	$mode         = sanitize_key( $mode );
+	$amount_value = (float) $amount_value;
+
+	switch ( $mode ) {
+		case 'rub':
+			return crm_fintech_create_order_by_payment_amount(
+				$amount_value,
+				'RUB',
+				$company_id,
+				$source_channel,
+				$created_by_user_id,
+				$description
+			);
+		case 'rub_usdt':
+			return crm_fintech_create_usdt_order_from_rub_amount(
+				$amount_value,
+				$company_id,
+				$source_channel,
+				$created_by_user_id,
+				$description
+			);
+		case 'rub_usdt_live':
+			return crm_fintech_create_usdt_order_from_rub_amount_via_live_kanyon(
+				$amount_value,
+				$company_id,
+				$source_channel,
+				$created_by_user_id,
+				$description
+			);
+		case 'rub_thb_rub_rapira':
+			return crm_fintech_create_usdt_order_for_rub_thb_direction(
+				$amount_value,
+				'RUB',
+				'rapira',
+				$company_id,
+				$source_channel,
+				$created_by_user_id,
+				$description
+			);
+		case 'rub_thb_rub_live':
+			return crm_fintech_create_usdt_order_for_rub_thb_direction(
+				$amount_value,
+				'RUB',
+				'live_kanyon',
+				$company_id,
+				$source_channel,
+				$created_by_user_id,
+				$description
+			);
+		case 'rub_thb_thb_rapira':
+			return crm_fintech_create_usdt_order_for_rub_thb_direction(
+				$amount_value,
+				'THB',
+				'rapira',
+				$company_id,
+				$source_channel,
+				$created_by_user_id,
+				$description
+			);
+		case 'rub_thb_thb_live':
+			return crm_fintech_create_usdt_order_for_rub_thb_direction(
+				$amount_value,
+				'THB',
+				'live_kanyon',
+				$company_id,
+				$source_channel,
+				$created_by_user_id,
+				$description
+			);
+		case 'usdt':
+		default:
+			return crm_fintech_create_order(
+				$amount_value,
+				$company_id,
+				$source_channel,
+				$created_by_user_id,
+				$description
+			);
+	}
+}
+
+/**
  * Контекст сохранённого corporate RUB/THB курса для web THB-flows.
  * Курс = стоимость 1 THB в RUB (колонка "Наш Sberbank").
  *
@@ -1662,6 +1815,7 @@ if ( ! function_exists( 'crm_fintech_run_terminal_order_side_effects' ) ) {
 		$result = [
 			'accrual'           => null,
 			'merchant_telegram' => null,
+			'operator_telegram' => null,
 		];
 
 		if ( $order_id <= 0 ) {
@@ -1678,6 +1832,15 @@ if ( ! function_exists( 'crm_fintech_run_terminal_order_side_effects' ) ) {
 				[
 					'source_code'       => $source_code !== '' ? $source_code : 'system',
 					'send_notification' => $status_code === 'paid' && ! in_array( $source_code, [ 'telegram_merchant_manual' ], true ),
+				]
+			);
+		}
+
+		if ( in_array( $status_code, [ 'paid', 'declined', 'cancelled', 'expired', 'error' ], true ) && function_exists( 'crm_operator_tg_sync_order_status' ) ) {
+			$result['operator_telegram'] = crm_operator_tg_sync_order_status(
+				$order_id,
+				[
+					'source_code' => $source_code !== '' ? $source_code : 'system',
 				]
 			);
 		}

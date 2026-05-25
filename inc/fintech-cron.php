@@ -155,10 +155,11 @@ function crm_fintech_cron_notify_telegram( object $order ): bool {
 	}
 
 	$source_channel = (string) ( $order->source_channel ?? '' );
-	$bot_context = 'merchant';
 	if ( $source_channel === 'telegram_operator' ) {
-		$bot_context = 'operator';
-	} elseif ( $source_channel === 'telegram_service' ) {
+		return false;
+	}
+	$bot_context = 'merchant';
+	if ( $source_channel === 'telegram_service' ) {
 		$bot_context = 'service';
 	}
 
