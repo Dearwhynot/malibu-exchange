@@ -54,6 +54,7 @@ require_once get_template_directory() . '/inc/ajax/companies.php';
 require_once get_template_directory() . '/inc/settings.php';
 require_once get_template_directory() . '/inc/product-communication.php';
 require_once get_template_directory() . '/inc/company-contours.php';
+require_once get_template_directory() . '/inc/telegram-channels.php';
 require_once get_template_directory() . '/inc/telegram-bot.php';
 require_once get_template_directory() . '/inc/telegram-receipts.php';
 require_once get_template_directory() . '/inc/telegram-merchant-commands.php';

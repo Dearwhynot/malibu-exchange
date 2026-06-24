@@ -25,11 +25,15 @@ if ( ! crm_can_manage_users() ) {
 $all_companies_full          = crm_get_all_companies_full();
 $company_fintech_access_map  = [];
 $company_exchange_pairs_map  = [];
+$company_modules_map         = [];
 $company_rub_usdt_fixation_map = [];
 foreach ( $all_companies_full as $company ) {
 	$company_id = (int) $company->id;
 	$company_fintech_access_map[ $company_id ] = crm_company_get_enabled_fintech_providers( $company_id );
 	$company_exchange_pairs_map[ $company_id ] = crm_company_get_enabled_exchange_pairs( $company_id );
+	$company_modules_map[ $company_id ] = function_exists( 'crm_company_get_enabled_company_modules' )
+		? crm_company_get_enabled_company_modules( $company_id )
+		: [];
 	$company_rub_usdt_fixation_map[ $company_id ] = function_exists( 'crm_company_get_rub_usdt_fixation_mode' )
 		? crm_company_get_rub_usdt_fixation_mode( $company_id )
 		: 'rapira_manual';
@@ -109,6 +113,7 @@ get_template_part(
 							$company_id        = (int) $company->id;
 							$enabled_pairs     = $company_exchange_pairs_map[ $company_id ] ?? [];
 							$allowed_providers = $company_fintech_access_map[ $company_id ] ?? crm_company_get_enabled_fintech_providers( $company_id );
+							$enabled_modules   = $company_modules_map[ $company_id ] ?? [];
 							$rub_usdt_fixation_mode = $company_rub_usdt_fixation_map[ $company_id ] ?? 'rapira_manual';
 							$company_status    = (string) $company->status;
 							$status_label      = crm_company_status_label( $company_status );
@@ -168,6 +173,7 @@ get_template_part(
 												   data-company-status="<?php echo esc_attr( $company_status ); ?>"
 												   data-enabled-exchange-pairs="<?php echo esc_attr( implode( ',', $enabled_pairs ) ); ?>"
 												   data-allowed-providers="<?php echo esc_attr( implode( ',', $allowed_providers ) ); ?>"
+												   data-enabled-modules="<?php echo esc_attr( implode( ',', $enabled_modules ) ); ?>"
 												   data-rub-usdt-fixation-mode="<?php echo esc_attr( $rub_usdt_fixation_mode ); ?>"
 												   data-bs-toggle="modal"
 												   data-bs-target="#modal-company-settings">
@@ -333,6 +339,7 @@ add_action(
 	};
 	var FINTECH_PROVIDER_LABELS = <?php echo crm_json_for_inline_js( crm_fintech_provider_labels() ); ?>;
 	var EXCHANGE_PAIR_TITLES = <?php echo crm_json_for_inline_js( array_column( crm_company_exchange_pair_definitions(), 'title', 'code' ) ); ?>;
+	var COMPANY_MODULE_TITLES = <?php echo crm_json_for_inline_js( function_exists( 'crm_company_module_definitions' ) ? array_column( crm_company_module_definitions(), 'title', 'code' ) : [] ); ?>;
 	var $companySettingsModal = $('#modal-company-settings');
 	var $createCompanyModal = $('#modal-create-company');
 	var $companyStatusModal = $('#modal-company-status');
@@ -377,6 +384,22 @@ add_action(
 				code = 'RUB_THB';
 			}
 			if (!code || seen[code] || !EXCHANGE_PAIR_TITLES[code]) {
+				return;
+			}
+			seen[code] = true;
+			normalized.push(code);
+		});
+
+		return normalized;
+	}
+
+	function normalizeModuleCodes(modules) {
+		var seen = {};
+		var normalized = [];
+
+		$.each(modules || [], function (_, module) {
+			var code = $.trim(String(module || '')).toLowerCase();
+			if (!code || seen[code] || !COMPANY_MODULE_TITLES[code]) {
 				return;
 			}
 			seen[code] = true;
@@ -481,6 +504,7 @@ add_action(
 			+ ' data-company-status="' + escapeHtml(status) + '"'
 			+ ' data-enabled-exchange-pairs="' + escapeHtml((company.enabled_exchange_pairs || []).join(',')) + '"'
 			+ ' data-allowed-providers="' + escapeHtml((company.allowed_providers || []).join(',')) + '"'
+			+ ' data-enabled-modules="' + escapeHtml((company.enabled_company_modules || []).join(',')) + '"'
 			+ ' data-rub-usdt-fixation-mode="' + escapeHtml(company.rub_usdt_fixation_mode || 'rapira_manual') + '"'
 			+ ' data-bs-toggle="modal"'
 			+ ' data-bs-target="#modal-company-settings">'
@@ -515,6 +539,13 @@ add_action(
 		return normalizePairCodes(String(rawValue).split(','));
 	}
 
+	function parseCompanyModulesAttr(rawValue) {
+		if (!rawValue) {
+			return [];
+		}
+		return normalizeModuleCodes(String(rawValue).split(','));
+	}
+
 	function getCompanyFromRow(companyId) {
 		var $settings = $('#corow-' + companyId).find('.js-company-settings');
 
@@ -525,6 +556,7 @@ add_action(
 			status: $settings.attr('data-company-status') || 'active',
 			enabled_exchange_pairs: parseCompanyPairsAttr($settings.attr('data-enabled-exchange-pairs')),
 			allowed_providers: parseCompanyProvidersAttr($settings.attr('data-allowed-providers')),
+			enabled_company_modules: parseCompanyModulesAttr($settings.attr('data-enabled-modules')),
 			rub_usdt_fixation_mode: $settings.attr('data-rub-usdt-fixation-mode') || 'rapira_manual',
 			block_reason: ''
 		};
@@ -562,6 +594,7 @@ add_action(
 		$('#cfs-error').addClass('d-none').text('');
 		$('.js-company-pair').prop('checked', false);
 		$('.js-company-provider').prop('checked', false);
+		$('.js-company-module').prop('checked', false);
 		$('#cfs-rub-usdt-fixation-mode').val('rapira_manual');
 		$('#btn-save-company-settings').prop('disabled', false)
 			.find('.btn-label').show()
@@ -592,6 +625,7 @@ add_action(
 		var companyCode = $trigger.attr('data-company-code') || '—';
 		var pairs = parseCompanyPairsAttr($trigger.attr('data-enabled-exchange-pairs'));
 		var providers = parseCompanyProvidersAttr($trigger.attr('data-allowed-providers'));
+		var modules = parseCompanyModulesAttr($trigger.attr('data-enabled-modules'));
 		var rubUsdtFixationMode = $trigger.attr('data-rub-usdt-fixation-mode') || 'rapira_manual';
 
 		$('#cfs-company-id').val(companyId);
@@ -604,6 +638,9 @@ add_action(
 		$('.js-company-provider').each(function () {
 			$(this).prop('checked', providers.indexOf($(this).val()) !== -1);
 		});
+		$('.js-company-module').each(function () {
+			$(this).prop('checked', modules.indexOf($(this).val()) !== -1);
+		});
 		$('#cfs-rub-usdt-fixation-mode').val(rubUsdtFixationMode);
 		$('#cfs-error').addClass('d-none').text('');
 	});
@@ -613,6 +650,7 @@ add_action(
 		var companyId = parseInt($('#cfs-company-id').val(), 10) || 0;
 		var pairs = [];
 		var providers = [];
+		var modules = [];
 		var rubUsdtFixationMode = $('#cfs-rub-usdt-fixation-mode').val() || 'rapira_manual';
 
 		$('.js-company-pair:checked').each(function () {
@@ -621,6 +659,10 @@ add_action(
 
 		$('.js-company-provider:checked').each(function () {
 			providers.push($(this).val());
+		});
+
+		$('.js-company-module:checked').each(function () {
+			modules.push($(this).val());
 		});
 
 		$('#cfs-error').addClass('d-none').text('');
@@ -634,6 +676,7 @@ add_action(
 			company_id: companyId,
 			exchange_pairs: pairs,
 			providers: providers,
+			company_modules: modules,
 			rub_usdt_fixation_mode: rubUsdtFixationMode
 		})
 		.done(function (res) {
@@ -647,11 +690,14 @@ add_action(
 
 			var pairList = normalizePairCodes(res.data.enabled_exchange_pairs || []);
 			var providerList = normalizeProviderCodes(res.data.allowed_providers || []);
+			var moduleList = normalizeModuleCodes(res.data.enabled_company_modules || []);
 			var pairAttr = pairList.join(',');
 			var providerAttr = providerList.join(',');
+			var moduleAttr = moduleList.join(',');
 			var $row = $('#corow-' + companyId);
 			$row.find('.js-company-settings').attr('data-enabled-exchange-pairs', pairAttr);
 			$row.find('.js-company-settings').attr('data-allowed-providers', providerAttr);
+			$row.find('.js-company-settings').attr('data-enabled-modules', moduleAttr);
 			$row.find('.js-company-settings').attr('data-rub-usdt-fixation-mode', res.data.rub_usdt_fixation_mode || 'rapira_manual');
 			$('#company-exchange-pairs-' + companyId).html('<span class="hint-text fs-11 m-r-5">Обмен:</span>' + renderCompanyExchangePairBadges(pairList));
 			$('#company-providers-' + companyId).html('<span class="hint-text fs-11 m-r-5">Платежи:</span>' + renderCompanyProviderBadges(providerList));

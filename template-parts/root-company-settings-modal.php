@@ -5,6 +5,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 $exchange_pairs     = function_exists( 'crm_company_exchange_pair_definitions' ) ? crm_company_exchange_pair_definitions() : [];
 $fintech_providers  = function_exists( 'crm_company_fintech_provider_definitions' ) ? crm_company_fintech_provider_definitions() : [];
+$company_modules    = function_exists( 'crm_company_module_definitions' ) ? crm_company_module_definitions() : [];
 $rub_usdt_fixation_modes = function_exists( 'crm_company_rub_usdt_fixation_mode_definitions' ) ? crm_company_rub_usdt_fixation_mode_definitions() : [];
 ?>
 <div class="modal fade" id="modal-company-settings" tabindex="-1"
@@ -123,6 +124,40 @@ $rub_usdt_fixation_modes = function_exists( 'crm_company_rub_usdt_fixation_mode_
 								</div>
 							</div>
 						</div>
+
+						<?php if ( ! empty( $company_modules ) ) : ?>
+							<div class="row">
+								<div class="col-12">
+									<div class="form-group form-group-default">
+										<label>Модули компании</label>
+										<p class="hint-text small m-b-0">
+											Root включает модуль для конкретной компании. Данные модуля остаются company-scoped и не удаляются при выключении.
+										</p>
+									</div>
+								</div>
+							</div>
+
+							<div class="row">
+								<?php foreach ( $company_modules as $module ) : ?>
+									<?php $module_slug = sanitize_html_class( strtolower( (string) $module['code'] ) ); ?>
+									<div class="col-md-6">
+										<div class="form-group form-group-default">
+											<label><?php echo esc_html( $module['title'] ); ?></label>
+											<div class="form-check complete m-t-5">
+												<input type="checkbox"
+												       id="cfs-module-<?php echo esc_attr( $module_slug ); ?>"
+												       class="js-company-module"
+												       value="<?php echo esc_attr( $module['code'] ); ?>">
+												<label for="cfs-module-<?php echo esc_attr( $module_slug ); ?>">Включить модуль</label>
+											</div>
+											<p class="hint-text small m-b-0">
+												<?php echo esc_html( (string) ( $module['hint'] ?? '' ) ); ?>
+											</p>
+										</div>
+									</div>
+								<?php endforeach; ?>
+							</div>
+						<?php endif; ?>
 					</div>
 
 					<div class="alert alert-danger d-none m-t-10" id="cfs-error"></div>

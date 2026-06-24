@@ -6,7 +6,8 @@
  * - exchange directions via crm_rate_pairs;
  * - fintech providers via fintech_allowed_providers;
  * - telegram contexts via existing telegram settings architecture;
- * - merchant feature flags via crm_settings.
+ * - merchant feature flags via crm_settings;
+ * - company modules via crm_settings.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -156,6 +157,17 @@ if ( ! function_exists( 'crm_company_contours_registry' ) ) {
 					'default_enabled' => false,
 				],
 			],
+			'company_modules' => [
+				'telegram_channels' => [
+					'group'           => 'company_modules',
+					'code'            => 'telegram_channels',
+					'title'           => 'Telegram-каналы',
+					'label'           => 'Telegram-каналы',
+					'hint'            => 'Платные подписки на закрытый Telegram-канал компании через отдельный subscription bot.',
+					'setting_key'     => 'module_telegram_channels_enabled',
+					'default_enabled' => false,
+				],
+			],
 		];
 
 		return $registry;
@@ -171,6 +183,12 @@ if ( ! function_exists( 'crm_company_exchange_pair_definitions' ) ) {
 if ( ! function_exists( 'crm_company_fintech_provider_definitions' ) ) {
 	function crm_company_fintech_provider_definitions(): array {
 		return array_values( crm_company_contours_registry()['fintech_providers'] ?? [] );
+	}
+}
+
+if ( ! function_exists( 'crm_company_module_definitions' ) ) {
+	function crm_company_module_definitions(): array {
+		return array_values( crm_company_contours_registry()['company_modules'] ?? [] );
 	}
 }
 
@@ -190,7 +208,7 @@ if ( ! function_exists( 'crm_company_contour_get' ) ) {
 
 		$code = sanitize_key( $code );
 
-		foreach ( [ 'fintech_providers', 'telegram_contexts', 'merchant_features' ] as $group ) {
+		foreach ( [ 'fintech_providers', 'telegram_contexts', 'merchant_features', 'company_modules' ] as $group ) {
 			if ( isset( $registry[ $group ][ $code ] ) ) {
 				return $registry[ $group ][ $code ];
 			}
@@ -500,6 +518,25 @@ if ( ! function_exists( 'crm_company_get_enabled_merchant_features' ) ) {
 	}
 }
 
+if ( ! function_exists( 'crm_company_get_enabled_company_modules' ) ) {
+	function crm_company_get_enabled_company_modules( int $company_id ): array {
+		if ( $company_id <= 0 ) {
+			return [];
+		}
+
+		$enabled = [];
+		foreach ( crm_company_contours_registry()['company_modules'] ?? [] as $code => $module ) {
+			$setting_key     = (string) ( $module['setting_key'] ?? '' );
+			$default_enabled = ! empty( $module['default_enabled'] );
+			if ( $setting_key !== '' && crm_company_contours_bool_setting_is_enabled( $company_id, $setting_key, $default_enabled ) ) {
+				$enabled[] = $code;
+			}
+		}
+
+		return $enabled;
+	}
+}
+
 if ( ! function_exists( 'crm_company_get_enabled_contours_by_group' ) ) {
 	function crm_company_get_enabled_contours_by_group( int $company_id, string $group ): array {
 		switch ( $group ) {
@@ -511,6 +548,8 @@ if ( ! function_exists( 'crm_company_get_enabled_contours_by_group' ) ) {
 				return crm_company_get_enabled_telegram_contexts( $company_id );
 			case 'merchant_features':
 				return crm_company_get_enabled_merchant_features( $company_id );
+			case 'company_modules':
+				return crm_company_get_enabled_company_modules( $company_id );
 			default:
 				return [];
 		}
@@ -759,6 +798,48 @@ if ( ! function_exists( 'crm_company_set_merchant_feature_enabled' ) ) {
 	}
 }
 
+if ( ! function_exists( 'crm_company_set_company_module_enabled' ) ) {
+	function crm_company_set_company_module_enabled( int $company_id, string $module_code, bool $enabled ) {
+		if ( $company_id <= 0 ) {
+			return new WP_Error( 'invalid_company', 'Некорректный company_id для модуля компании.' );
+		}
+
+		$module = crm_company_contour_get( $module_code );
+		if ( ! is_array( $module ) || ( $module['group'] ?? '' ) !== 'company_modules' ) {
+			return new WP_Error( 'unknown_company_module', 'Неизвестный модуль компании: ' . $module_code );
+		}
+
+		$setting_key = (string) ( $module['setting_key'] ?? '' );
+		if ( $setting_key === '' ) {
+			return new WP_Error( 'company_module_setting_missing', 'Для модуля компании не указан setting_key.' );
+		}
+
+		$before = crm_company_contours_bool_setting_is_enabled(
+			$company_id,
+			$setting_key,
+			! empty( $module['default_enabled'] )
+		);
+
+		if ( $enabled && function_exists( 'crm_telegram_channels_seed_company_foundation' ) && (string) $module['code'] === 'telegram_channels' ) {
+			crm_telegram_channels_seed_company_foundation( $company_id );
+		}
+
+		crm_set_setting( $setting_key, $enabled ? '1' : '0', $company_id );
+
+		if ( $enabled && $before !== $enabled && function_exists( 'crm_telegram_channels_get_readiness_status' ) && (string) $module['code'] === 'telegram_channels' ) {
+			crm_telegram_channels_get_readiness_status( $company_id, true );
+		}
+
+		return [
+			'group'          => 'company_modules',
+			'code'           => (string) $module['code'],
+			'enabled'        => $enabled,
+			'changed'        => $before !== $enabled,
+			'previous_state' => $before,
+		];
+	}
+}
+
 if ( ! function_exists( 'crm_company_replace_enabled_contours' ) ) {
 	function crm_company_replace_enabled_contours( int $company_id, string $group, array $enabled_codes ) {
 		$registry = crm_company_contours_registry();
@@ -795,6 +876,9 @@ if ( ! function_exists( 'crm_company_replace_enabled_contours' ) ) {
 					break;
 				case 'merchant_features':
 					$result = crm_company_set_merchant_feature_enabled( $company_id, $code, $should_enable );
+					break;
+				case 'company_modules':
+					$result = crm_company_set_company_module_enabled( $company_id, $code, $should_enable );
 					break;
 				case 'telegram_contexts':
 					return new WP_Error( 'telegram_write_not_supported', 'Запись telegram-контуров на этом этапе ещё не реализована.' );

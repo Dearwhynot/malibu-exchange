@@ -138,6 +138,15 @@ function crm_rbac_permissions(): array {
 		'service.telegram.orders'            => [ 'module' => 'service', 'action' => 'telegram_orders',            'name' => 'Service bot: ордера' ],
 		'service.telegram.rates'             => [ 'module' => 'service', 'action' => 'telegram_rates',             'name' => 'Service bot: курсы' ],
 
+		// ── Telegram Channels Subscriptions ───────────────────────────────────
+		'telegram_channels.view'               => [ 'module' => 'telegram_channels', 'action' => 'view',               'name' => 'Просмотр Telegram-каналов' ],
+		'telegram_channels.settings'           => [ 'module' => 'telegram_channels', 'action' => 'settings',           'name' => 'Настройки Telegram-каналов' ],
+		'telegram_channels.tariffs'            => [ 'module' => 'telegram_channels', 'action' => 'tariffs',            'name' => 'Управление тарифами Telegram-каналов' ],
+		'telegram_channels.subscribers'        => [ 'module' => 'telegram_channels', 'action' => 'subscribers',        'name' => 'Просмотр подписчиков Telegram-каналов' ],
+		'telegram_channels.payments'           => [ 'module' => 'telegram_channels', 'action' => 'payments',           'name' => 'Просмотр оплат Telegram-каналов' ],
+		'telegram_channels.sales'              => [ 'module' => 'telegram_channels', 'action' => 'sales',              'name' => 'Просмотр продаж Telegram-каналов' ],
+		'telegram_channels.manage_subscribers' => [ 'module' => 'telegram_channels', 'action' => 'manage_subscribers', 'name' => 'Управление подписчиками Telegram-каналов' ],
+
 		// ── Logs (операционный журнал событий) ───────────────────────────────
 		'logs.view'          => [ 'module' => 'logs',      'action' => 'view',         'name' => 'Просмотр журнала событий' ],
 

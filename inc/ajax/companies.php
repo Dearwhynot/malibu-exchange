@@ -110,6 +110,9 @@ function me_ajax_create_company(): void {
 		crm_company_seed_rub_usdt_fixation_settings( $company_id );
 	}
 	crm_merchants_seed_company_settings( $company_id );
+	if ( function_exists( 'crm_telegram_channels_seed_company_foundation' ) ) {
+		crm_telegram_channels_seed_company_foundation( $company_id );
+	}
 
 	crm_log( 'company.created', [
 		'category'    => 'users',
@@ -137,6 +140,9 @@ function me_ajax_create_company(): void {
 			'note'       => '',
 			'enabled_exchange_pairs' => [],
 			'allowed_providers'      => crm_company_get_enabled_fintech_providers( $company_id ),
+			'enabled_company_modules' => function_exists( 'crm_company_get_enabled_company_modules' )
+				? crm_company_get_enabled_company_modules( $company_id )
+				: [],
 			'rub_usdt_fixation_mode' => function_exists( 'crm_company_get_rub_usdt_fixation_mode' )
 				? crm_company_get_rub_usdt_fixation_mode( $company_id )
 				: 'rapira_manual',

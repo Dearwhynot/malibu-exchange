@@ -956,17 +956,22 @@ function me_ajax_company_contours_save(): void {
 		'sanitize_text_field',
 		(array) wp_unslash( $_POST['exchange_pairs'] ?? [] )
 	);
+	$company_modules = array_map(
+		'sanitize_key',
+		(array) wp_unslash( $_POST['company_modules'] ?? [] )
+	);
 	$rub_usdt_fixation_mode = function_exists( 'crm_company_normalize_rub_usdt_fixation_mode' )
 		? crm_company_normalize_rub_usdt_fixation_mode( (string) wp_unslash( $_POST['rub_usdt_fixation_mode'] ?? '' ) )
 		: 'rapira_manual';
 	$providers_provided = array_key_exists( 'providers', $_POST );
 	$pairs_provided     = array_key_exists( 'exchange_pairs', $_POST );
+	$modules_provided   = array_key_exists( 'company_modules', $_POST );
 	$fixation_provided  = array_key_exists( 'rub_usdt_fixation_mode', $_POST );
 
 	if ( $company_id <= 0 ) {
 		wp_send_json_error( [ 'message' => 'Некорректный company_id.' ], 422 );
 	}
-	if ( ! $providers_provided && ! $pairs_provided && ! $fixation_provided ) {
+	if ( ! $providers_provided && ! $pairs_provided && ! $modules_provided && ! $fixation_provided ) {
 		wp_send_json_error( [ 'message' => 'Не переданы изменения контуров компании.' ], 422 );
 	}
 
@@ -1001,6 +1006,17 @@ function me_ajax_company_contours_save(): void {
 		}
 	}
 
+	$modules_result = [
+		'enabled_codes' => function_exists( 'crm_company_get_enabled_company_modules' ) ? crm_company_get_enabled_company_modules( $company_id ) : [],
+		'changes'       => [],
+	];
+	if ( $modules_provided ) {
+		$modules_result = crm_company_replace_enabled_contours( $company_id, 'company_modules', $company_modules );
+		if ( is_wp_error( $modules_result ) ) {
+			wp_send_json_error( [ 'message' => $modules_result->get_error_message() ], 500 );
+		}
+	}
+
 	$current_fixation_mode = function_exists( 'crm_company_get_rub_usdt_fixation_mode' )
 		? crm_company_get_rub_usdt_fixation_mode( $company_id )
 		: 'rapira_manual';
@@ -1014,6 +1030,7 @@ function me_ajax_company_contours_save(): void {
 
 	$enabled_exchange_pairs  = array_values( $pairs_result['enabled_codes'] ?? [] );
 	$allowed_providers       = array_values( $providers_result['enabled_codes'] ?? [] );
+	$enabled_company_modules = array_values( $modules_result['enabled_codes'] ?? [] );
 	$active_provider_cleared = false;
 
 	foreach ( (array) ( $providers_result['changes'] ?? [] ) as $change ) {
@@ -1023,7 +1040,7 @@ function me_ajax_company_contours_save(): void {
 		}
 	}
 
-	foreach ( [ $pairs_result['changes'] ?? [], $providers_result['changes'] ?? [] ] as $changes ) {
+	foreach ( [ $pairs_result['changes'] ?? [], $providers_result['changes'] ?? [], $modules_result['changes'] ?? [] ] as $changes ) {
 		foreach ( (array) $changes as $contour_code => $change ) {
 			if ( empty( $change['changed'] ) ) {
 				continue;
@@ -1036,9 +1053,13 @@ function me_ajax_company_contours_save(): void {
 
 			$enabled = ! empty( $change['enabled'] );
 			$label   = (string) ( $contour['title'] ?? $contour['code'] ?? $contour_code );
+			$event_code = 'settings.company_contour_toggled';
+			if ( (string) ( $contour['group'] ?? '' ) === 'company_modules' && (string) ( $contour['code'] ?? '' ) === 'telegram_channels' ) {
+				$event_code = $enabled ? 'telegram_channels.module_enabled' : 'telegram_channels.module_disabled';
+			}
 
 			crm_log_entity(
-				'settings.company_contour_toggled',
+				$event_code,
 				'settings',
 				'update',
 				sprintf(
@@ -1101,6 +1122,11 @@ function me_ajax_company_contours_save(): void {
 		$enabled_exchange_pairs
 	);
 	$allowed_provider_labels = array_map( 'crm_fintech_provider_label', $allowed_providers );
+	$module_labels = [];
+	foreach ( $enabled_company_modules as $module_code ) {
+		$module = function_exists( 'crm_company_contour_get' ) ? crm_company_contour_get( (string) $module_code ) : null;
+		$module_labels[] = is_array( $module ) ? (string) ( $module['title'] ?? $module_code ) : (string) $module_code;
+	}
 	$current_fixation_mode = function_exists( 'crm_company_get_rub_usdt_fixation_mode' )
 		? crm_company_get_rub_usdt_fixation_mode( $company_id )
 		: $rub_usdt_fixation_mode;
@@ -1115,6 +1141,9 @@ function me_ajax_company_contours_save(): void {
 		empty( $allowed_provider_labels )
 			? 'Платёжные контуры отключены'
 			: 'Платежи: ' . implode( ', ', $allowed_provider_labels ),
+		empty( $module_labels )
+			? 'Модули компании отключены'
+			: 'Модули: ' . implode( ', ', $module_labels ),
 		'RUB/USDT фиксация: ' . $fixation_mode_label,
 	];
 	$message = 'Настройки компании сохранены. ' . implode( '. ', $message_parts ) . '.';
@@ -1129,6 +1158,7 @@ function me_ajax_company_contours_save(): void {
 		'enabled_exchange_pairs'  => $enabled_exchange_pairs,
 		'allowed_providers'       => $allowed_providers,
 		'allowed_provider_labels' => $allowed_provider_labels,
+		'enabled_company_modules' => $enabled_company_modules,
 		'rub_usdt_fixation_mode'  => $current_fixation_mode,
 		'rub_usdt_fixation_label' => $fixation_mode_label,
 		'active_provider_cleared' => $active_provider_cleared,
