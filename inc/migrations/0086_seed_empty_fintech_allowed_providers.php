@@ -5,8 +5,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 return [
-	'key'   => '0028_seed_fintech_allowed_providers',
-	'title' => 'Seed fintech allowed providers per company',
+	'key'      => '0086_seed_empty_fintech_allowed_providers',
+	'title'    => 'Seed empty fintech provider allowlists for companies without contour settings',
 	'callback' => function () {
 		global $wpdb;
 
@@ -20,31 +20,28 @@ return [
 				crm_fintech_serialize_allowed_providers( [] )
 			)
 		);
-		$messages[] = 'Seeded fintech_allowed_providers for root system context (org_id=0).';
+		$messages[] = 'Ensured empty fintech_allowed_providers for root system context.';
 
 		$company_ids = $wpdb->get_col( 'SELECT id FROM crm_companies WHERE id > 0 ORDER BY id ASC' ) ?: [];
 		foreach ( $company_ids as $company_id ) {
-			$company_id        = (int) $company_id;
-			$allowed_providers = [];
-
+			$company_id = (int) $company_id;
 			$wpdb->query(
 				$wpdb->prepare(
 					'INSERT IGNORE INTO `crm_settings` (`org_id`, `setting_key`, `setting_value`) VALUES (%d, %s, %s)',
 					$company_id,
 					'fintech_allowed_providers',
-					crm_fintech_serialize_allowed_providers( $allowed_providers )
+					crm_fintech_serialize_allowed_providers( [] )
 				)
 			);
 
 			$messages[] = sprintf(
-				'Seeded fintech_allowed_providers for company %d: %s.',
-				$company_id,
-				implode( ', ', $allowed_providers )
+				'Ensured fintech_allowed_providers setting exists for company %d.',
+				$company_id
 			);
 		}
 
 		return [
-			'summary'  => 'Seeded fintech_allowed_providers settings.',
+			'summary'  => 'Seeded empty fintech provider allowlists where missing.',
 			'messages' => $messages,
 		];
 	},

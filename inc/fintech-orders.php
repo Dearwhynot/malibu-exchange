@@ -20,11 +20,13 @@ if ( ! defined( 'ABSPATH' ) ) {
  * Маппинг provider-статуса в наш внутренний status_code.
  * Kanyon: CREATED, PROCESSING, QRCDATA_CREATED, QRCDATA_IN_PROGRESS, IPS_ACCEPTED, DECLINED, EXPIRED, CANCELLED
  * Doverka: нормализованы в callback-handler → IPS_ACCEPTED, DECLINED, EXPIRED
+ * Friendly Pay: created, initialized, success, failed, expired
  */
 function _crm_fintech_map_status( string $provider_status ): string {
 	static $map = [
 		'CREATED'             => 'created',
 		'QRCDATA_CREATED'     => 'created',
+		'INITIALIZED'         => 'pending',
 		'PROCESSING'          => 'pending',
 		'IN_PROCESS'          => 'pending',
 		'PAYOUT_IN_PROGRESS'  => 'pending',
@@ -33,8 +35,10 @@ function _crm_fintech_map_status( string $provider_status ): string {
 		'AUTHORIZATION'       => 'pending',
 		'PRE_AUTHORIZED_3DS'  => 'pending',
 		'IPS_ACCEPTED'        => 'paid',
+		'SUCCESS'             => 'paid',
 		'PAID'                => 'paid',
 		'CHARGED'             => 'paid',
+		'FAILED'              => 'declined',
 		'DECLINED'            => 'declined',
 		'CHARGE_DECLINED'     => 'declined',
 		'EXPIRED'             => 'expired',
@@ -119,6 +123,9 @@ function crm_fintech_save_order(
 	$provider_status = (string) ( $invoice['providerStatus'] ?? '' );
 	$status_code     = _crm_fintech_map_status( $provider_status !== '' ? $provider_status : 'CREATED' );
 	$amount_usdt     = isset( $invoice['amountUsdt'] ) ? (float) $invoice['amountUsdt'] : 0.0;
+	$amount_asset_code = strtoupper( trim( (string) ( $invoice['amountAssetCode'] ?? 'USDT' ) ) );
+	$amount_asset_value = isset( $invoice['amountAssetValue'] ) ? (float) $invoice['amountAssetValue'] : $amount_usdt;
+	$payment_currency_code = strtoupper( trim( (string) ( $invoice['paymentCurrencyCode'] ?? 'RUB' ) ) );
 	$payment_rub     = isset( $invoice['paymentAmountRub'] ) ? round( $invoice['paymentAmountRub'] / 100, 2 ) : null;
 	$now             = current_time( 'mysql' );
 
@@ -131,9 +138,9 @@ function crm_fintech_save_order(
 		'provider_external_order_id'    => isset( $invoice['externalOrderId'] ) ? (string) $invoice['externalOrderId'] : null,
 		'status_code'                   => $status_code,
 		'provider_status_code'          => $provider_status !== '' ? $provider_status : null,
-		'amount_asset_code'             => 'USDT',
-		'amount_asset_value'            => $amount_usdt,
-		'payment_currency_code'         => 'RUB',
+		'amount_asset_code'             => $amount_asset_code !== '' ? $amount_asset_code : 'USDT',
+		'amount_asset_value'            => $amount_asset_value,
+		'payment_currency_code'         => $payment_currency_code !== '' ? $payment_currency_code : 'RUB',
 		'payment_amount_value'          => $payment_rub,
 		'payment_link'                  => isset( $invoice['payload'] )     ? (string) $invoice['payload']     : null,
 		'qrc_id'                        => isset( $invoice['qrcId'] )       ? (string) $invoice['qrcId']       : null,
@@ -321,7 +328,10 @@ function _crm_fintech_finalize_created_order(
 		'qr_url'               => $qr_url,
 		'provider'             => (string) ( $invoice['provider']          ?? '' ),
 		'payload_mode'         => (string) ( $invoice['payloadMode']       ?? '' ),
+		'amount_asset_code'    => isset( $invoice['amountAssetCode'] ) ? (string) $invoice['amountAssetCode'] : null,
+		'amount_asset_value'   => isset( $invoice['amountAssetValue'] ) ? (float) $invoice['amountAssetValue'] : null,
 		'payment_amount_rub'   => isset( $invoice['paymentAmountRub'] ) ? round( $invoice['paymentAmountRub'] / 100, 2 ) : null,
+		'payment_amount_value' => isset( $invoice['paymentAmountValue'] ) ? (float) $invoice['paymentAmountValue'] : null,
 		'payment_currency_code'=> isset( $invoice['paymentCurrencyCode'] ) ? (string) $invoice['paymentCurrencyCode'] : null,
 		'warning'              => isset( $invoice['warning'] ) ? (string) $invoice['warning'] : null,
 		'error'                => null,
@@ -331,6 +341,7 @@ function _crm_fintech_finalize_created_order(
 /**
  * Определяет input contour для company create-order form.
  * `rub` включается только для Kanyon-компаний с `fintech_pay2day_order_currency = RUB`.
+ * `friendly_pay_rub` включается для Friendly Pay SBP.
  */
 function crm_fintech_company_create_order_input_mode( int $company_id ): string {
 	if ( $company_id <= 0 ) {
@@ -346,6 +357,9 @@ function crm_fintech_company_create_order_input_mode( int $company_id ): string 
 
 	if ( $provider_code === 'kanyon' && $order_currency === 'RUB' ) {
 		return 'rub';
+	}
+	if ( $provider_code === 'friendly_pay' ) {
+		return 'friendly_pay_rub';
 	}
 
 	return 'usdt';
@@ -415,6 +429,8 @@ function crm_fintech_create_order_mode_label( string $mode ): string {
 	$mode = sanitize_key( $mode );
 
 	switch ( $mode ) {
+		case 'friendly_pay_rub':
+			return 'Friendly Pay SBP · RUB';
 		case 'rub':
 			return 'RUB paymentAmount';
 		case 'rub_usdt':
@@ -441,7 +457,7 @@ function crm_fintech_create_order_mode_label( string $mode ): string {
 function crm_fintech_create_order_mode_input_currency( string $mode ): string {
 	$mode = sanitize_key( $mode );
 
-	if ( in_array( $mode, [ 'rub', 'rub_usdt', 'rub_usdt_live', 'rub_thb_rub_rapira', 'rub_thb_rub_live' ], true ) ) {
+	if ( in_array( $mode, [ 'friendly_pay_rub', 'rub', 'rub_usdt', 'rub_usdt_live', 'rub_thb_rub_rapira', 'rub_thb_rub_live' ], true ) ) {
 		return 'RUB';
 	}
 
@@ -484,6 +500,7 @@ function crm_fintech_create_company_order_from_mode(
 	$amount_value = (float) $amount_value;
 
 	switch ( $mode ) {
+		case 'friendly_pay_rub':
 		case 'rub':
 			return crm_fintech_create_order_by_payment_amount(
 				$amount_value,
@@ -1719,10 +1736,22 @@ function crm_fintech_poll_order_status( object $order, string $poll_source = 'po
 
 		$order_data_result = Fintech_Payment_Gateway::get_order_data_for_provider( (string) ( $order->provider_code ?? '' ), $provider_order_id );
 		if ( ! empty( $order_data_result['success'] ) ) {
+			if ( isset( $order_data_result['amountAssetValue'] ) && is_numeric( $order_data_result['amountAssetValue'] ) && (float) $order_data_result['amountAssetValue'] > 0 ) {
+				$update['amount_asset_value'] = round( (float) $order_data_result['amountAssetValue'], 8 );
+			}
+			if ( ! empty( $order_data_result['amountAssetCode'] ) ) {
+				$update['amount_asset_code'] = strtoupper( trim( (string) $order_data_result['amountAssetCode'] ) );
+			}
+			if ( ! empty( $order_data_result['paymentCurrencyCode'] ) ) {
+				$update['payment_currency_code'] = strtoupper( trim( (string) $order_data_result['paymentCurrencyCode'] ) );
+			}
 			if (
 				isset( $order_data_result['order']['orderAmount'] )
 				&& $order_data_result['order']['orderAmount'] !== null
+				&& is_scalar( $order_data_result['order']['orderAmount'] )
+				&& is_numeric( $order_data_result['order']['orderAmount'] )
 				&& (int) $order_data_result['order']['orderAmount'] > 0
+				&& empty( $update['amount_asset_value'] )
 			) {
 				$update['amount_asset_value'] = round( ( (int) $order_data_result['order']['orderAmount'] ) / 100, 8 );
 			}
@@ -1737,6 +1766,8 @@ function crm_fintech_poll_order_status( object $order, string $poll_source = 'po
 			}
 			if ( isset( $order_data_result['paymentAmountRub'] ) && $order_data_result['paymentAmountRub'] !== null ) {
 				$update['payment_amount_value'] = round( ( (int) $order_data_result['paymentAmountRub'] ) / 100, 2 );
+			} elseif ( isset( $order_data_result['paymentAmountValue'] ) && is_numeric( $order_data_result['paymentAmountValue'] ) ) {
+				$update['payment_amount_value'] = round( (float) $order_data_result['paymentAmountValue'], 2 );
 			}
 			if ( empty( $update['provider_status_code'] ) && ! empty( $order_data_result['providerStatus'] ) ) {
 				$update['provider_status_code'] = (string) $order_data_result['providerStatus'];

@@ -30,8 +30,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 if ( ! function_exists( 'crm_fintech_provider_labels' ) ) {
 	function crm_fintech_provider_labels(): array {
 		return [
-			'kanyon'  => 'Kanyon (Pay2Day)',
-			'doverka' => 'Doverka',
+			'kanyon'       => 'Kanyon (Pay2Day)',
+			'doverka'      => 'Doverka',
+			'friendly_pay' => 'Friendly Pay',
 		];
 	}
 }
@@ -54,7 +55,23 @@ if ( ! function_exists( 'crm_fintech_normalize_provider_code' ) ) {
 }
 
 if ( ! function_exists( 'crm_fintech_default_allowed_providers' ) ) {
+	/**
+	 * Legacy helper name kept for old code paths. Business logic must not assume
+	 * a default payment provider or default payment contour access.
+	 */
 	function crm_fintech_default_allowed_providers(): array {
+		return [];
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_initial_allowed_providers_for_new_company' ) ) {
+	function crm_fintech_initial_allowed_providers_for_new_company(): array {
+		return [];
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_all_provider_codes' ) ) {
+	function crm_fintech_all_provider_codes(): array {
 		return array_keys( crm_fintech_provider_labels() );
 	}
 }
@@ -68,6 +85,42 @@ if ( ! function_exists( 'crm_fintech_default_kanyon_rapira_markup_percent' ) ) {
 if ( ! function_exists( 'crm_fintech_default_pay2day_payment_purpose' ) ) {
 	function crm_fintech_default_pay2day_payment_purpose(): string {
 		return '';
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_default_friendly_pay_transaction_type' ) ) {
+	function crm_fintech_default_friendly_pay_transaction_type(): string {
+		return 'sbp';
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_default_friendly_pay_cart_name' ) ) {
+	function crm_fintech_default_friendly_pay_cart_name(): string {
+		return 'Payment';
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_default_friendly_pay_cart_currency' ) ) {
+	function crm_fintech_default_friendly_pay_cart_currency(): string {
+		return 'RUB';
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_default_friendly_pay_min_amount_rub' ) ) {
+	function crm_fintech_default_friendly_pay_min_amount_rub(): string {
+		return '30';
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_default_friendly_pay_max_amount_rub' ) ) {
+	function crm_fintech_default_friendly_pay_max_amount_rub(): string {
+		return '200000';
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_friendly_pay_base_url' ) ) {
+	function crm_fintech_friendly_pay_base_url(): string {
+		return 'https://pay.friendlypay.io/api';
 	}
 }
 
@@ -131,6 +184,50 @@ if ( ! function_exists( 'crm_fintech_get_pay2day_default_payment_purpose' ) ) {
 	}
 }
 
+if ( ! function_exists( 'crm_fintech_normalize_friendly_pay_cart_currency' ) ) {
+	function crm_fintech_normalize_friendly_pay_cart_currency( $value, string $default = 'RUB' ): string {
+		$currency = strtoupper( trim( (string) $value ) );
+		if ( in_array( $currency, [ 'RUB', 'USD' ], true ) ) {
+			return $currency;
+		}
+
+		$default = strtoupper( trim( $default ) );
+		return in_array( $default, [ 'RUB', 'USD' ], true ) ? $default : 'RUB';
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_normalize_friendly_pay_amount_limit' ) ) {
+	function crm_fintech_normalize_friendly_pay_amount_limit( $value, string $default ): string {
+		if ( is_string( $value ) ) {
+			$value = str_replace( ',', '.', trim( $value ) );
+		}
+
+		if ( $value === '' || ! is_numeric( $value ) ) {
+			$value = $default;
+		}
+
+		$number     = max( 0, round( (float) $value, 2 ) );
+		$normalized = number_format( $number, 2, '.', '' );
+		$normalized = rtrim( rtrim( $normalized, '0' ), '.' );
+
+		return $normalized !== '' ? $normalized : '0';
+	}
+}
+
+if ( ! function_exists( 'crm_fintech_get_friendly_pay_cart_name' ) ) {
+	function crm_fintech_get_friendly_pay_cart_name( int $company_id ): string {
+		$name = crm_fintech_normalize_payment_purpose(
+			crm_get_setting(
+				'fintech_friendly_pay_cart_name',
+				$company_id,
+				crm_fintech_default_friendly_pay_cart_name()
+			)
+		);
+
+		return $name !== '' ? $name : crm_fintech_default_friendly_pay_cart_name();
+	}
+}
+
 if ( ! function_exists( 'crm_fintech_seed_company_settings' ) ) {
 	function crm_fintech_seed_company_settings( int $company_id ): void {
 		if ( $company_id <= 0 ) {
@@ -142,6 +239,13 @@ if ( ! function_exists( 'crm_fintech_seed_company_settings' ) ) {
 		$defaults = [
 			'fintech_kanyon_rapira_markup_percent'   => crm_fintech_default_kanyon_rapira_markup_percent(),
 			'fintech_pay2day_default_payment_purpose' => crm_fintech_default_pay2day_payment_purpose(),
+			'fintech_friendly_pay_api_token'          => '',
+			'fintech_friendly_pay_secret_key'         => '',
+			'fintech_friendly_pay_transaction_type'   => crm_fintech_default_friendly_pay_transaction_type(),
+			'fintech_friendly_pay_cart_name'          => crm_fintech_default_friendly_pay_cart_name(),
+			'fintech_friendly_pay_cart_currency'      => crm_fintech_default_friendly_pay_cart_currency(),
+			'fintech_friendly_pay_min_amount_rub'     => crm_fintech_default_friendly_pay_min_amount_rub(),
+			'fintech_friendly_pay_max_amount_rub'     => crm_fintech_default_friendly_pay_max_amount_rub(),
 		];
 
 		foreach ( $defaults as $setting_key => $setting_value ) {
@@ -169,7 +273,7 @@ if ( ! function_exists( 'crm_fintech_normalize_allowed_providers' ) ) {
 		}
 
 		$ordered = [];
-		foreach ( crm_fintech_default_allowed_providers() as $provider ) {
+		foreach ( crm_fintech_all_provider_codes() as $provider ) {
 			if ( isset( $normalized[ $provider ] ) ) {
 				$ordered[] = $provider;
 			}
@@ -187,7 +291,7 @@ if ( ! function_exists( 'crm_fintech_parse_allowed_providers' ) ) {
 
 		$raw_value = trim( (string) $raw_value );
 		if ( $raw_value === '' ) {
-			return crm_fintech_default_allowed_providers();
+			return [];
 		}
 
 		$decoded = json_decode( $raw_value, true );
@@ -261,6 +365,39 @@ function crm_fintech_collect_settings( int $company_id ): array {
 		'doverka_kyc_redirect_url' => trim( (string) crm_get_setting( 'fintech_doverka_kyc_redirect_url', $company_id, '' ) ),
 		'kanyon_verify_signature'  => crm_get_setting( 'fintech_kanyon_verify_signature', $company_id, '0' ) === '1',
 		'kanyon_public_key_pem'    => trim( (string) crm_get_setting( 'fintech_kanyon_public_key_pem', $company_id, '' ) ),
+		'friendly_pay_api_token'   => trim( (string) crm_get_setting( 'fintech_friendly_pay_api_token', $company_id, '' ) ),
+		'friendly_pay_secret_key'  => trim( (string) crm_get_setting( 'fintech_friendly_pay_secret_key', $company_id, '' ) ),
+		'friendly_pay_base_url'    => crm_fintech_friendly_pay_base_url(),
+		'friendly_pay_transaction_type' => strtolower( trim( (string) crm_get_setting(
+			'fintech_friendly_pay_transaction_type',
+			$company_id,
+			crm_fintech_default_friendly_pay_transaction_type()
+		) ) ),
+		'friendly_pay_cart_name'   => crm_fintech_get_friendly_pay_cart_name( $company_id ),
+		'friendly_pay_cart_currency' => crm_fintech_normalize_friendly_pay_cart_currency(
+			crm_get_setting(
+				'fintech_friendly_pay_cart_currency',
+				$company_id,
+				crm_fintech_default_friendly_pay_cart_currency()
+			),
+			crm_fintech_default_friendly_pay_cart_currency()
+		),
+		'friendly_pay_min_amount_rub' => crm_fintech_normalize_friendly_pay_amount_limit(
+			crm_get_setting(
+				'fintech_friendly_pay_min_amount_rub',
+				$company_id,
+				crm_fintech_default_friendly_pay_min_amount_rub()
+			),
+			crm_fintech_default_friendly_pay_min_amount_rub()
+		),
+		'friendly_pay_max_amount_rub' => crm_fintech_normalize_friendly_pay_amount_limit(
+			crm_get_setting(
+				'fintech_friendly_pay_max_amount_rub',
+				$company_id,
+				crm_fintech_default_friendly_pay_max_amount_rub()
+			),
+			crm_fintech_default_friendly_pay_max_amount_rub()
+		),
 		'allowed_providers'        => crm_fintech_get_allowed_providers( $company_id ),
 	];
 }
@@ -356,6 +493,29 @@ function crm_fintech_get_configuration_status( int $company_id ): array {
 		if ( $settings['doverka_kyc_redirect_url'] === '' ) {
 			$missing_provider[] = [ 'id' => 'fintech_doverka_kyc_redirect_url', 'label' => 'KYC Redirect URL' ];
 		}
+	} elseif ( $provider === 'friendly_pay' ) {
+		$provider_section_name = 'Friendly Pay — Учётные данные';
+		if ( $settings['friendly_pay_api_token'] === '' ) {
+			$missing_provider[] = [ 'id' => 'fintech_friendly_pay_api_token', 'label' => 'API Token' ];
+		}
+		if ( $settings['friendly_pay_secret_key'] === '' ) {
+			$missing_provider[] = [ 'id' => 'fintech_friendly_pay_secret_key', 'label' => 'Secret Key' ];
+		}
+		if ( $settings['friendly_pay_transaction_type'] !== 'sbp' ) {
+			$missing_provider[] = [ 'id' => 'fintech_friendly_pay_transaction_type', 'label' => 'Тип транзакции' ];
+		}
+		if ( $settings['friendly_pay_cart_name'] === '' ) {
+			$missing_provider[] = [ 'id' => 'fintech_friendly_pay_cart_name', 'label' => 'Название позиции cart' ];
+		}
+		if ( ! in_array( $settings['friendly_pay_cart_currency'], [ 'RUB', 'USD' ], true ) ) {
+			$missing_provider[] = [ 'id' => 'fintech_friendly_pay_cart_currency', 'label' => 'Валюта cart' ];
+		}
+		if ( (float) $settings['friendly_pay_min_amount_rub'] < 30 ) {
+			$missing_provider[] = [ 'id' => 'fintech_friendly_pay_min_amount_rub', 'label' => 'Минимум RUB' ];
+		}
+		if ( (float) $settings['friendly_pay_max_amount_rub'] > 200000 || (float) $settings['friendly_pay_max_amount_rub'] < (float) $settings['friendly_pay_min_amount_rub'] ) {
+			$missing_provider[] = [ 'id' => 'fintech_friendly_pay_max_amount_rub', 'label' => 'Максимум RUB' ];
+		}
 	}
 
 		$missing_fields = array_merge( $missing_general, $missing_provider );
@@ -429,6 +589,17 @@ function crm_fintech_settings( int $company_id = 0 ): array {
 			'kyc_redirect_url'=> $settings['doverka_kyc_redirect_url'],
 			'callback_url'    => '',
 		],
+		'friendly_pay'          => [
+			'api_token'        => $settings['friendly_pay_api_token'],
+			'secret_key'       => $settings['friendly_pay_secret_key'],
+			'base_url'         => $settings['friendly_pay_base_url'],
+			'transaction_type' => $settings['friendly_pay_transaction_type'],
+			'cart_name'        => $settings['friendly_pay_cart_name'],
+			'cart_currency'    => $settings['friendly_pay_cart_currency'],
+			'min_amount_rub'   => $settings['friendly_pay_min_amount_rub'],
+			'max_amount_rub'   => $settings['friendly_pay_max_amount_rub'],
+			'callback_url'     => '',
+		],
 	];
 }
 
@@ -438,6 +609,7 @@ class Fintech_Payment_Gateway {
 
 	public const PROVIDER_KANYON  = 'kanyon';
 	public const PROVIDER_DOVERKA = 'doverka';
+	public const PROVIDER_FRIENDLY_PAY = 'friendly_pay';
 
 	// Base URLs — инфраструктурные значения, оператор не меняет
 	private const PAY2DAY_IDENTITY_BASE_URL = 'https://identity.authpoint.pro/api/v1';
@@ -473,6 +645,12 @@ class Fintech_Payment_Gateway {
 		if ( $provider === self::PROVIDER_DOVERKA ) {
 			return self::doverka_create_invoice( $amount_usdt, $merchant_order_id, $description );
 		}
+		if ( $provider === self::PROVIDER_FRIENDLY_PAY ) {
+			return self::build_error_response(
+				'Friendly Pay работает как RUB/SBP-contour и не поддерживает USDT create_invoice.',
+				self::PROVIDER_FRIENDLY_PAY
+			);
+		}
 
 		return self::pay2day_create_invoice( $amount_usdt, $merchant_order_id, $description );
 	}
@@ -490,6 +668,15 @@ class Fintech_Payment_Gateway {
 				'provider' => '',
 				'error'    => 'Активный платёжный контур недоступен для этой компании.',
 			];
+		}
+
+		if ( $provider === self::PROVIDER_FRIENDLY_PAY ) {
+			return self::friendly_pay_create_invoice_by_payment_amount(
+				$payment_amount,
+				$payment_currency,
+				$merchant_order_id,
+				$description
+			);
 		}
 
 		if ( $provider !== self::PROVIDER_KANYON ) {
@@ -536,24 +723,45 @@ class Fintech_Payment_Gateway {
 	}
 
 	public static function get_order_status_for_provider( string $provider, string $order_id ): array {
-		if ( strtolower( trim( $provider ) ) === self::PROVIDER_DOVERKA ) {
+		$provider = strtolower( trim( $provider ) );
+		if ( $provider === self::PROVIDER_DOVERKA ) {
 			return self::doverka_get_order_status( $order_id );
+		}
+		if ( $provider === self::PROVIDER_FRIENDLY_PAY ) {
+			return self::friendly_pay_get_order_status( $order_id );
+		}
+		if ( $provider !== self::PROVIDER_KANYON ) {
+			return self::build_error_response( 'Неизвестный платёжный провайдер для проверки статуса.', $provider );
 		}
 
 		return self::pay2day_get_order_status( $order_id );
 	}
 
 	public static function get_order_data_for_provider( string $provider, string $order_id ): array {
-		if ( strtolower( trim( $provider ) ) === self::PROVIDER_DOVERKA ) {
+		$provider = strtolower( trim( $provider ) );
+		if ( $provider === self::PROVIDER_DOVERKA ) {
 			return self::doverka_get_order_data( $order_id );
+		}
+		if ( $provider === self::PROVIDER_FRIENDLY_PAY ) {
+			return self::friendly_pay_get_order_data( $order_id );
+		}
+		if ( $provider !== self::PROVIDER_KANYON ) {
+			return self::build_error_response( 'Неизвестный платёжный провайдер для получения данных ордера.', $provider );
 		}
 
 		return self::pay2day_get_order_data( $order_id );
 	}
 
 	public static function get_order_qr_data_for_provider( string $provider, string $order_id ): array {
-		if ( strtolower( trim( $provider ) ) === self::PROVIDER_DOVERKA ) {
+		$provider = strtolower( trim( $provider ) );
+		if ( $provider === self::PROVIDER_DOVERKA ) {
 			return self::doverka_get_order_qr_data( $order_id );
+		}
+		if ( $provider === self::PROVIDER_FRIENDLY_PAY ) {
+			return self::friendly_pay_get_order_qr_data( $order_id );
+		}
+		if ( $provider !== self::PROVIDER_KANYON ) {
+			return self::build_error_response( 'Неизвестный платёжный провайдер для получения QR.', $provider );
 		}
 
 		return self::pay2day_get_qrc_data( $order_id );
@@ -871,6 +1079,120 @@ class Fintech_Payment_Gateway {
 			'raw'      => $raw_body,
 			'error'    => ( $http_code >= 200 && $http_code < 300 ) ? null : ( 'HTTP ' . $http_code ),
 		];
+	}
+
+	private static function friendly_pay_http_request( string $method, string $path, ?array $body = null ): array {
+		$settings   = self::get_settings();
+		$api_token  = trim( (string) ( $settings['friendly_pay']['api_token'] ?? '' ) );
+		$secret_key = trim( (string) ( $settings['friendly_pay']['secret_key'] ?? '' ) );
+		$base_url   = rtrim( (string) ( $settings['friendly_pay']['base_url'] ?? crm_fintech_friendly_pay_base_url() ), '/' );
+
+		if ( $api_token === '' || $secret_key === '' ) {
+			return [
+				'success'  => false,
+				'httpCode' => 0,
+				'data'     => null,
+				'raw'      => null,
+				'error'    => 'Friendly Pay credentials are not configured',
+			];
+		}
+
+		$url       = $base_url . '/' . ltrim( $path, '/' );
+		$body_json = $body !== null ? wp_json_encode( $body, JSON_UNESCAPED_UNICODE ) : null;
+		$attempts  = [];
+		foreach ( [ 'milliseconds', 'seconds' ] as $timestamp_unit ) {
+			if ( $body_json !== null ) {
+				$attempts[] = [ 'encoding' => 'hex', 'timestamp_unit' => $timestamp_unit, 'include_empty_body_separator' => true ];
+				$attempts[] = [ 'encoding' => 'base64', 'timestamp_unit' => $timestamp_unit, 'include_empty_body_separator' => true ];
+				continue;
+			}
+
+			$attempts[] = [ 'encoding' => 'hex', 'timestamp_unit' => $timestamp_unit, 'include_empty_body_separator' => false ];
+			$attempts[] = [ 'encoding' => 'hex', 'timestamp_unit' => $timestamp_unit, 'include_empty_body_separator' => true ];
+			$attempts[] = [ 'encoding' => 'base64', 'timestamp_unit' => $timestamp_unit, 'include_empty_body_separator' => false ];
+			$attempts[] = [ 'encoding' => 'base64', 'timestamp_unit' => $timestamp_unit, 'include_empty_body_separator' => true ];
+		}
+
+		$response = null;
+		foreach ( $attempts as $index => $attempt ) {
+			$headers  = self::friendly_pay_signed_headers(
+				$api_token,
+				$secret_key,
+				$body_json,
+				(string) $attempt['encoding'],
+				(string) $attempt['timestamp_unit'],
+				(bool) $attempt['include_empty_body_separator']
+			);
+			$response = self::http_request( $method, $url, $headers, $body );
+
+			if ( ! self::friendly_pay_should_retry_signature_variant( $response ) ) {
+				break;
+			}
+			if ( $index === count( $attempts ) - 1 ) {
+				break;
+			}
+		}
+
+		return $response ?? [
+			'success'  => false,
+			'httpCode' => 0,
+			'data'     => null,
+			'raw'      => null,
+			'error'    => 'Friendly Pay request was not sent',
+		];
+	}
+
+	private static function friendly_pay_signed_headers(
+		string $api_token,
+		string $secret_key,
+		?string $body_json,
+		string $encoding,
+		string $timestamp_unit,
+		bool $include_empty_body_separator
+	): array {
+		$timestamp = $timestamp_unit === 'seconds'
+			? (string) time()
+			: (string) (int) floor( microtime( true ) * 1000 );
+		$nonce     = function_exists( 'wp_generate_uuid4' ) ? wp_generate_uuid4() : bin2hex( random_bytes( 16 ) );
+
+		$signing_string = $timestamp . '_' . $nonce;
+		if ( $body_json !== null || $include_empty_body_separator ) {
+			$signing_string .= '_' . (string) $body_json;
+		}
+
+		$signature = $encoding === 'base64'
+			? base64_encode( hash_hmac( 'sha256', $signing_string, $secret_key, true ) )
+			: hash_hmac( 'sha256', $signing_string, $secret_key );
+
+		return [
+			'x-fp-timestamp' => $timestamp,
+			'x-fp-nonce'     => $nonce,
+			'x-fp-api-token' => $api_token,
+			'x-fp-signature' => $signature,
+		];
+	}
+
+	private static function friendly_pay_should_retry_signature_variant( array $response ): bool {
+		$http_code = (int) ( $response['httpCode'] ?? 0 );
+		if ( in_array( $http_code, [ 401, 403 ], true ) ) {
+			return true;
+		}
+		if ( $http_code !== 400 ) {
+			return false;
+		}
+
+		$haystack = strtolower( (string) ( $response['raw'] ?? '' ) );
+		if ( is_array( $response['data'] ?? null ) ) {
+			$haystack .= ' ' . strtolower( wp_json_encode( $response['data'], JSON_UNESCAPED_UNICODE ) );
+		}
+
+		foreach ( [ 'signature', 'x-fp-signature', 'timestamp', 'nonce', 'token', 'auth', 'unauthorized', 'forbidden' ] as $needle ) {
+			if ( strpos( $haystack, $needle ) !== false ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	// ── Pay2Day / Kanyon ────────────────────────────────────────────────────
@@ -1503,6 +1825,304 @@ class Fintech_Payment_Gateway {
 		return [
 			'success'         => true,
 			'provider'        => self::PROVIDER_DOVERKA,
+			'qrcId'           => $order_data['qrcId'] ?? null,
+			'payload'         => $order_data['payload'] ?? null,
+			'externalOrderId' => $order_data['externalOrderId'] ?? null,
+			'error'           => null,
+			'raw'             => $order_data['raw'] ?? null,
+		];
+	}
+
+	// ── Friendly Pay ────────────────────────────────────────────────────────
+
+	private static function friendly_pay_compose_error_message( string $fallback_message, array $response ): string {
+		$parts = [];
+
+		if ( ! empty( $response['httpCode'] ) ) {
+			$parts[] = 'HTTP ' . (int) $response['httpCode'];
+		}
+
+		$data = isset( $response['data'] ) && is_array( $response['data'] )
+			? $response['data']
+			: [];
+
+		foreach ( [ 'message', 'error', 'description' ] as $key ) {
+			if ( ! empty( $data[ $key ] ) ) {
+				$parts[] = is_scalar( $data[ $key ] ) ? (string) $data[ $key ] : wp_json_encode( $data[ $key ], JSON_UNESCAPED_UNICODE );
+				break;
+			}
+		}
+
+		if ( empty( $parts ) && ! empty( $response['error'] ) ) {
+			$parts[] = (string) $response['error'];
+		}
+
+		return ! empty( $parts )
+			? $fallback_message . ': ' . implode( ' | ', array_filter( $parts ) )
+			: $fallback_message;
+	}
+
+	private static function friendly_pay_money_value( array $money ): ?float {
+		if ( ! isset( $money['value'] ) || ! is_numeric( $money['value'] ) ) {
+			return null;
+		}
+
+		return round( (float) $money['value'], 2 );
+	}
+
+	private static function friendly_pay_money_currency( array $money, string $fallback = 'RUB' ): string {
+		$currency = strtoupper( trim( (string) ( $money['currency'] ?? '' ) ) );
+
+		return $currency !== '' ? $currency : $fallback;
+	}
+
+	private static function friendly_pay_build_invoice_success_response(
+		array $transaction,
+		array $raw_payload,
+		float $requested_amount,
+		string $requested_currency,
+		string $merchant_order_id,
+		?string $warning = null
+	): array {
+		$transaction_id   = (string) ( $transaction['id'] ?? ( $transaction['transactionId'] ?? '' ) );
+		$provider_status = (string) ( $transaction['status'] ?? 'created' );
+		$order_amount    = isset( $transaction['orderAmount'] ) && is_array( $transaction['orderAmount'] )
+			? $transaction['orderAmount']
+			: [ 'value' => $requested_amount, 'currency' => $requested_currency ];
+		$payment_amount  = isset( $transaction['paymentAmount'] ) && is_array( $transaction['paymentAmount'] )
+			? $transaction['paymentAmount']
+			: $order_amount;
+		$order_value     = self::friendly_pay_money_value( $order_amount ) ?? $requested_amount;
+		$payment_value   = self::friendly_pay_money_value( $payment_amount ) ?? $order_value;
+		$order_currency  = self::friendly_pay_money_currency( $order_amount, $requested_currency );
+		$payment_currency = self::friendly_pay_money_currency( $payment_amount, $requested_currency );
+		$qr_link         = trim( (string) ( $transaction['qrLink'] ?? '' ) );
+		$qrc_id          = $qr_link !== ''
+			? self::extract_qrc_id_from_link( $qr_link, $transaction_id )
+			: ( $transaction_id !== '' ? $transaction_id : null );
+
+		return [
+			'success'             => true,
+			'provider'            => self::PROVIDER_FRIENDLY_PAY,
+			'error'               => null,
+			'warning'             => $warning,
+			'orderId'             => $transaction_id,
+			'merchantOrderId'     => (string) ( $transaction['merchantOrderId'] ?? $merchant_order_id ),
+			'payloadMode'         => 'paymentAmount',
+			'amountUsdt'          => null,
+			'amountAssetCode'     => $order_currency,
+			'amountAssetValue'    => $order_value,
+			'orderCurrency'       => $order_currency,
+			'orderAmountCents'    => self::amount_to_minor_units( $order_value ),
+			'paymentAmountRub'    => $payment_currency === 'RUB' ? self::amount_to_minor_units( $payment_value ) : null,
+			'paymentAmountMinor'  => self::amount_to_minor_units( $payment_value ),
+			'paymentAmountValue'  => $payment_value,
+			'paymentCurrencyCode' => $payment_currency,
+			'qrcId'               => $qrc_id,
+			'payload'             => $qr_link !== '' ? $qr_link : null,
+			'externalOrderId'     => isset( $transaction['orderId'] ) ? (string) $transaction['orderId'] : null,
+			'providerStatus'      => $provider_status,
+			'raw'                 => $raw_payload,
+		];
+	}
+
+	private static function friendly_pay_create_invoice_by_payment_amount(
+		float $payment_amount,
+		string $payment_currency,
+		?string $merchant_order_id,
+		string $description
+	): array {
+		$settings = self::get_settings();
+		$payment_currency = strtoupper( trim( $payment_currency ) );
+		$min_amount = (float) ( $settings['friendly_pay']['min_amount_rub'] ?? crm_fintech_default_friendly_pay_min_amount_rub() );
+		$max_amount = (float) ( $settings['friendly_pay']['max_amount_rub'] ?? crm_fintech_default_friendly_pay_max_amount_rub() );
+
+		if ( $payment_currency !== 'RUB' ) {
+			return self::build_error_response(
+				'Friendly Pay SBP поддерживает создание платежа только в RUB.',
+				self::PROVIDER_FRIENDLY_PAY,
+				[ 'paymentCurrency' => $payment_currency ]
+			);
+		}
+
+		if ( $payment_amount < $min_amount || $payment_amount > $max_amount ) {
+			return self::build_error_response(
+				sprintf(
+					'Сумма Friendly Pay должна быть от %s до %s RUB за одну транзакцию.',
+					crm_fintech_normalize_friendly_pay_amount_limit( $min_amount, crm_fintech_default_friendly_pay_min_amount_rub() ),
+					crm_fintech_normalize_friendly_pay_amount_limit( $max_amount, crm_fintech_default_friendly_pay_max_amount_rub() )
+				),
+				self::PROVIDER_FRIENDLY_PAY,
+				[
+					'paymentAmount'   => $payment_amount,
+					'paymentCurrency' => $payment_currency,
+				]
+			);
+		}
+
+		if ( $merchant_order_id === null || trim( $merchant_order_id ) === '' ) {
+			$merchant_order_id = self::build_merchant_order_id();
+		}
+
+		$cart_name     = crm_fintech_normalize_payment_purpose( (string) ( $settings['friendly_pay']['cart_name'] ?? '' ) );
+		$cart_name     = $cart_name !== '' ? $cart_name : crm_fintech_default_friendly_pay_cart_name();
+		$cart_currency = crm_fintech_normalize_friendly_pay_cart_currency(
+			(string) ( $settings['friendly_pay']['cart_currency'] ?? $payment_currency ),
+			$payment_currency
+		);
+		$amount_value  = round( $payment_amount, 2 );
+
+		$payload = [
+			'merchantOrderId' => $merchant_order_id,
+			'callbackUrl'     => self::get_callback_url(),
+			'orderAmount'     => [
+				'value'    => $amount_value,
+				'currency' => $payment_currency,
+			],
+			'cart'            => [
+				[
+					'name'     => $cart_name,
+					'price'    => $amount_value,
+					'currency' => $cart_currency,
+					'quantity' => 1,
+				],
+			],
+		];
+
+		$create_response = self::friendly_pay_http_request( 'POST', '/v1/transactions/sbp', $payload );
+		$transaction_id  = is_array( $create_response['data'] ?? null )
+			? (string) ( $create_response['data']['transactionId'] ?? '' )
+			: '';
+
+		if ( empty( $create_response['success'] ) || $transaction_id === '' ) {
+			return self::build_error_response(
+				self::friendly_pay_compose_error_message( 'Friendly Pay transaction creation failed', $create_response ),
+				self::PROVIDER_FRIENDLY_PAY,
+				[
+					'raw'             => $create_response,
+					'merchantOrderId' => $merchant_order_id,
+				]
+			);
+		}
+
+		$transaction_response = self::friendly_pay_get_transaction_payload( $transaction_id );
+		if ( ! empty( $transaction_response['success'] ) && is_array( $transaction_response['transaction'] ?? null ) ) {
+			return self::friendly_pay_build_invoice_success_response(
+				$transaction_response['transaction'],
+				[
+					'createTransaction' => $create_response,
+					'getTransaction'    => $transaction_response['raw'] ?? null,
+				],
+				$amount_value,
+				$payment_currency,
+				$merchant_order_id
+			);
+		}
+
+		return self::friendly_pay_build_invoice_success_response(
+			[
+				'id'              => $transaction_id,
+				'merchantOrderId' => $merchant_order_id,
+				'status'          => 'created',
+				'orderAmount'     => $payload['orderAmount'],
+				'paymentAmount'   => $payload['orderAmount'],
+			],
+			[
+				'createTransaction' => $create_response,
+				'getTransaction'    => $transaction_response,
+			],
+			$amount_value,
+			$payment_currency,
+			$merchant_order_id,
+			'Friendly Pay создал транзакцию, но QR пока не получен. Попробуйте обновить статус ордера через несколько секунд.'
+		);
+	}
+
+	private static function friendly_pay_get_transaction_payload( string $transaction_id ): array {
+		$transaction_id = trim( $transaction_id );
+		if ( $transaction_id === '' ) {
+			return [ 'success' => false, 'transaction' => null, 'error' => 'Friendly Pay transaction id is empty', 'raw' => null ];
+		}
+
+		$response    = self::friendly_pay_http_request( 'GET', '/v1/transactions/sbp/' . rawurlencode( $transaction_id ) );
+		$transaction = $response['data'] ?? null;
+
+		if ( empty( $response['success'] ) || ! is_array( $transaction ) ) {
+			return [
+				'success'     => false,
+				'transaction' => null,
+				'error'       => self::friendly_pay_compose_error_message( 'Friendly Pay transaction request failed', $response ),
+				'raw'         => $response,
+			];
+		}
+
+		return [
+			'success'     => true,
+			'transaction' => $transaction,
+			'error'       => null,
+			'raw'         => $response,
+		];
+	}
+
+	private static function friendly_pay_get_order_status( string $order_id ): array {
+		$transaction_response = self::friendly_pay_get_transaction_payload( $order_id );
+		if ( empty( $transaction_response['success'] ) ) {
+			return self::build_error_response(
+				'Friendly Pay status request failed: ' . ( $transaction_response['error'] ?? 'unknown' ),
+				self::PROVIDER_FRIENDLY_PAY,
+				[ 'raw' => $transaction_response['raw'] ?? null, 'status' => null, 'providerStatus' => null ]
+			);
+		}
+
+		$provider_status = (string) ( $transaction_response['transaction']['status'] ?? '' );
+
+		return [
+			'success'        => true,
+			'provider'       => self::PROVIDER_FRIENDLY_PAY,
+			'status'         => $provider_status,
+			'providerStatus' => $provider_status,
+			'error'          => null,
+			'raw'            => $transaction_response['raw'] ?? null,
+		];
+	}
+
+	private static function friendly_pay_get_order_data( string $order_id ): array {
+		$transaction_response = self::friendly_pay_get_transaction_payload( $order_id );
+		if ( empty( $transaction_response['success'] ) ) {
+			return self::build_error_response(
+				'Friendly Pay order data request failed: ' . ( $transaction_response['error'] ?? 'unknown' ),
+				self::PROVIDER_FRIENDLY_PAY,
+				[ 'raw' => $transaction_response['raw'] ?? null, 'order' => null, 'status' => null ]
+			);
+		}
+
+		$transaction = $transaction_response['transaction'];
+		$invoice     = self::friendly_pay_build_invoice_success_response(
+			$transaction,
+			[ 'getTransaction' => $transaction_response['raw'] ?? null ],
+			self::friendly_pay_money_value( is_array( $transaction['orderAmount'] ?? null ) ? $transaction['orderAmount'] : [] ) ?? 0.0,
+			self::friendly_pay_money_currency( is_array( $transaction['orderAmount'] ?? null ) ? $transaction['orderAmount'] : [], 'RUB' ),
+			(string) ( $transaction['merchantOrderId'] ?? $order_id )
+		);
+
+		return array_merge(
+			$invoice,
+			[
+				'order'  => $transaction,
+				'status' => $invoice['providerStatus'],
+			]
+		);
+	}
+
+	private static function friendly_pay_get_order_qr_data( string $order_id ): array {
+		$order_data = self::friendly_pay_get_order_data( $order_id );
+		if ( empty( $order_data['success'] ) ) {
+			return $order_data;
+		}
+
+		return [
+			'success'         => true,
+			'provider'        => self::PROVIDER_FRIENDLY_PAY,
 			'qrcId'           => $order_data['qrcId'] ?? null,
 			'payload'         => $order_data['payload'] ?? null,
 			'externalOrderId' => $order_data['externalOrderId'] ?? null,

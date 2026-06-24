@@ -356,7 +356,9 @@ function crm_merchant_api_get_company_mode_summary( int $company_id, $merchant =
 	$order_currency = function_exists( 'crm_fintech_normalize_kanyon_order_currency' )
 		? crm_fintech_normalize_kanyon_order_currency( (string) crm_get_setting( 'fintech_pay2day_order_currency', $company_id, '' ) )
 		: strtoupper( trim( (string) crm_get_setting( 'fintech_pay2day_order_currency', $company_id, '' ) ) );
-	$active_provider = sanitize_key( (string) crm_get_setting( 'fintech_active_provider', $company_id, '' ) );
+	$active_provider = function_exists( 'crm_fintech_normalize_provider_code' )
+		? crm_fintech_normalize_provider_code( (string) crm_get_setting( 'fintech_active_provider', $company_id, '' ) )
+		: sanitize_key( (string) crm_get_setting( 'fintech_active_provider', $company_id, '' ) );
 	$enabled_directions = [];
 	if ( $merchant && function_exists( 'crm_merchant_resolve_invoice_directions_from_row' ) ) {
 		$enabled_directions = crm_merchant_resolve_invoice_directions_from_row( $merchant, true );
@@ -372,6 +374,9 @@ function crm_merchant_api_get_company_mode_summary( int $company_id, $merchant =
 		$provider_mode = 'orderAmount';
 		$requested_amount_currency = 'USDT';
 	} elseif ( $active_provider === 'kanyon' && $order_currency === 'RUB' ) {
+		$provider_mode = 'paymentAmount';
+		$requested_amount_currency = 'RUB';
+	} elseif ( $active_provider === 'friendly_pay' ) {
 		$provider_mode = 'paymentAmount';
 		$requested_amount_currency = 'RUB';
 	} else {
@@ -1062,6 +1067,10 @@ function crm_merchant_api_order_summary( object $order, bool $include_sensitive_
 		$request_amount = crm_merchant_api_money( $order->amount_asset_value, $amount_code );
 	}
 
+	$provider_mode = isset( $meta['provider_payload_mode'] )
+		? (string) $meta['provider_payload_mode']
+		: ( isset( $meta['kanyon_payload_mode'] ) ? (string) $meta['kanyon_payload_mode'] : null );
+
 	return [
 		'id'                     => (int) $order->id,
 		'merchant_order_id'      => (string) ( $order->merchant_order_id ?? '' ),
@@ -1087,7 +1096,7 @@ function crm_merchant_api_order_summary( object $order, bool $include_sensitive_
 		'paid_at'                => crm_merchant_api_iso8601( $order->paid_at ?? '' ),
 		'merchant_rate'          => isset( $meta['merchant_rate'] ) ? crm_merchant_api_format_rate( $meta['merchant_rate'], 4 ) : null,
 		'payment_purpose'        => isset( $meta['payment_purpose'] ) ? (string) $meta['payment_purpose'] : null,
-		'provider_mode'          => isset( $meta['kanyon_payload_mode'] ) ? (string) $meta['kanyon_payload_mode'] : null,
+		'provider_mode'          => $provider_mode,
 	];
 }
 

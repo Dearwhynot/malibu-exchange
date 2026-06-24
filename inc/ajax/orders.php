@@ -283,7 +283,7 @@ function me_ajax_orders_create(): void {
 	$amount_value = isset( $_POST['amount_value'] ) ? (float) wp_unslash( $_POST['amount_value'] ) : 0;
 	if ( $amount_value <= 0 ) {
 		$amount_label = 'USDT';
-		if ( in_array( $_create_input_mode, [ 'rub', 'rub_usdt', 'rub_usdt_live', 'rub_thb_rub_rapira', 'rub_thb_rub_live' ], true ) ) {
+		if ( in_array( $_create_input_mode, [ 'friendly_pay_rub', 'rub', 'rub_usdt', 'rub_usdt_live', 'rub_thb_rub_rapira', 'rub_thb_rub_live' ], true ) ) {
 			$amount_label = 'RUB';
 		} elseif ( in_array( $_create_input_mode, [ 'rub_thb_thb_rapira', 'rub_thb_thb_live' ], true ) ) {
 			$amount_label = 'THB';
@@ -292,6 +292,23 @@ function me_ajax_orders_create(): void {
 		wp_send_json_error( [
 			'message' => sprintf( 'Укажите корректную сумму %s (больше нуля).', $amount_label ),
 		] );
+	}
+
+	if ( $_create_input_mode === 'friendly_pay_rub' ) {
+		$min_amount = (float) crm_fintech_normalize_friendly_pay_amount_limit(
+			crm_get_setting( 'fintech_friendly_pay_min_amount_rub', $_create_company_id, crm_fintech_default_friendly_pay_min_amount_rub() ),
+			crm_fintech_default_friendly_pay_min_amount_rub()
+		);
+		$max_amount = (float) crm_fintech_normalize_friendly_pay_amount_limit(
+			crm_get_setting( 'fintech_friendly_pay_max_amount_rub', $_create_company_id, crm_fintech_default_friendly_pay_max_amount_rub() ),
+			crm_fintech_default_friendly_pay_max_amount_rub()
+		);
+
+		if ( $amount_value < $min_amount || $amount_value > $max_amount ) {
+			wp_send_json_error( [
+				'message' => sprintf( 'Сумма Friendly Pay должна быть от %s до %s RUB за одну транзакцию.', $min_amount, $max_amount ),
+			], 422 );
+		}
 	}
 
 	$description = isset( $_POST['description'] )
@@ -311,80 +328,14 @@ function me_ajax_orders_create(): void {
 		], 403 );
 	}
 
-	if ( $_create_input_mode === 'rub' ) {
-		$result = crm_fintech_create_order_by_payment_amount(
-			$amount_value,
-			'RUB',
-			$_create_company_id,
-			'web',
-			$_create_uid,
-			$description
-		);
-	} elseif ( $_create_input_mode === 'rub_usdt' ) {
-		$result = crm_fintech_create_usdt_order_from_rub_amount(
-			$amount_value,
-			$_create_company_id,
-			'web',
-			$_create_uid,
-			$description
-		);
-	} elseif ( $_create_input_mode === 'rub_usdt_live' ) {
-		$result = crm_fintech_create_usdt_order_from_rub_amount_via_live_kanyon(
-			$amount_value,
-			$_create_company_id,
-			'web',
-			$_create_uid,
-			$description
-		);
-	} elseif ( $_create_input_mode === 'rub_thb_rub_rapira' ) {
-		$result = crm_fintech_create_usdt_order_for_rub_thb_direction(
-			$amount_value,
-			'RUB',
-			'rapira',
-			$_create_company_id,
-			'web',
-			$_create_uid,
-			$description
-		);
-	} elseif ( $_create_input_mode === 'rub_thb_rub_live' ) {
-		$result = crm_fintech_create_usdt_order_for_rub_thb_direction(
-			$amount_value,
-			'RUB',
-			'live_kanyon',
-			$_create_company_id,
-			'web',
-			$_create_uid,
-			$description
-		);
-	} elseif ( $_create_input_mode === 'rub_thb_thb_rapira' ) {
-		$result = crm_fintech_create_usdt_order_for_rub_thb_direction(
-			$amount_value,
-			'THB',
-			'rapira',
-			$_create_company_id,
-			'web',
-			$_create_uid,
-			$description
-		);
-	} elseif ( $_create_input_mode === 'rub_thb_thb_live' ) {
-		$result = crm_fintech_create_usdt_order_for_rub_thb_direction(
-			$amount_value,
-			'THB',
-			'live_kanyon',
-			$_create_company_id,
-			'web',
-			$_create_uid,
-			$description
-		);
-	} else {
-		$result = crm_fintech_create_order(
-			$amount_value,
-			$_create_company_id,
-			'web',                      // source_channel
-			$_create_uid,
-			$description
-		);
-	}
+	$result = crm_fintech_create_company_order_from_mode(
+		$_create_input_mode,
+		$amount_value,
+		$_create_company_id,
+		'web',
+		$_create_uid,
+		$description
+	);
 
 	if ( empty( $result['success'] ) ) {
 		wp_send_json_error( [ 'message' => $result['error'] ?? 'Ошибка создания ордера.' ] );

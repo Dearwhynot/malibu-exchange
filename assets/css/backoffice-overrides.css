@@ -35,6 +35,16 @@
 	vertical-align: middle;
 }
 
+.overlay[data-pages="search"].hide,
+.overlay[data-pages="search"].closed {
+	display: none !important;
+	pointer-events: none !important;
+}
+
+.overlay[data-pages="search"]:not(.hide):not(.closed) {
+	pointer-events: auto;
+}
+
 .header .brand .backoffice-header-logo {
 	display: inline-block;
 }
@@ -501,6 +511,161 @@ body.menu-pin .page-sidebar:not(.page-sidebar-root) .sidebar-header .sidebar-hea
 	color: #8090a0;
 }
 
+.dashboard-week-legend {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px 18px;
+}
+
+.dashboard-week-legend__item {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 12px;
+	font-weight: 500;
+	color: #637282;
+}
+
+.dashboard-week-legend__swatch {
+	display: inline-block;
+	width: 12px;
+	height: 12px;
+	border-radius: 4px;
+}
+
+.dashboard-week-legend__swatch--total {
+	background: linear-gradient(180deg, #7483d8 0%, #6270c4 100%);
+}
+
+.dashboard-week-legend__swatch--paid {
+	background: linear-gradient(180deg, #35d9c8 0%, #11bfae 100%);
+}
+
+.dashboard-week-badge {
+	display: inline-flex;
+	align-items: center;
+	padding: 6px 10px;
+	border-radius: 999px;
+	background: #f8fbfd;
+	border: 1px solid #ddebf2;
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: #5f8091;
+}
+
+.dashboard-week-grid {
+	display: grid;
+	grid-template-columns: repeat(7, minmax(0, 1fr));
+	gap: 12px;
+}
+
+.dashboard-week-day {
+	display: flex;
+	flex-direction: column;
+	justify-content: space-between;
+	min-height: 192px;
+	padding: 14px 12px 12px;
+	border-radius: 18px;
+	border: 1px solid #e5edf4;
+	background:
+		linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(246, 250, 253, 0.96) 100%);
+	box-shadow: 0 14px 32px rgba(35, 55, 80, 0.06);
+}
+
+.dashboard-week-day.is-empty {
+	background: linear-gradient(180deg, rgba(251, 252, 253, 0.98) 0%, rgba(247, 249, 251, 0.98) 100%);
+	border-style: dashed;
+	box-shadow: none;
+}
+
+.dashboard-week-day__top {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.dashboard-week-day__label {
+	font-size: 12px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: #415364;
+}
+
+.dashboard-week-day__share {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 42px;
+	padding: 4px 8px;
+	border-radius: 999px;
+	background: #eef6f6;
+	font-size: 11px;
+	font-weight: 700;
+	color: #0f8576;
+}
+
+.dashboard-week-day__bars {
+	display: flex;
+	align-items: flex-end;
+	justify-content: center;
+	gap: 14px;
+	flex: 1;
+	min-height: 96px;
+	padding: 12px 0 10px;
+}
+
+.dashboard-week-day__bar {
+	display: block;
+	width: 22px;
+	min-height: 8px;
+	border-radius: 999px 999px 8px 8px;
+	box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.08);
+}
+
+.dashboard-week-day__bar--total {
+	background: linear-gradient(180deg, #7a88de 0%, #6674cb 100%);
+}
+
+.dashboard-week-day__bar--paid {
+	background: linear-gradient(180deg, #42dfcd 0%, #16c2b1 100%);
+}
+
+.dashboard-week-day__stats {
+	display: grid;
+	gap: 6px;
+	padding-top: 8px;
+	border-top: 1px solid rgba(226, 234, 241, 0.9);
+	font-size: 12px;
+	color: #6b7d8f;
+}
+
+.dashboard-week-day__stats strong {
+	font-size: 16px;
+	font-weight: 700;
+	color: #20303f;
+}
+
+.dashboard-week-foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px 16px;
+	margin-top: 14px;
+	font-size: 12px;
+	color: #6f7f90;
+}
+
+.dashboard-week-foot strong {
+	font-weight: 700;
+	color: #304253;
+}
+
 @media (max-width: 991px) {
 	.dashboard-kpi-card .card-body {
 		min-height: 0;
@@ -509,6 +674,14 @@ body.menu-pin .page-sidebar:not(.page-sidebar-root) .sidebar-header .sidebar-hea
 	.dashboard-empty-state {
 		min-height: 0;
 		padding: 14px 12px;
+	}
+
+	.dashboard-week-grid {
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+	}
+
+	.dashboard-week-day {
+		min-height: 176px;
 	}
 }
 
@@ -525,6 +698,19 @@ body.menu-pin .page-sidebar:not(.page-sidebar-root) .sidebar-header .sidebar-hea
 
 	.dashboard-kpi-card__value {
 		font-size: 32px;
+	}
+
+	.dashboard-week-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.dashboard-week-day {
+		min-height: 164px;
+	}
+
+	.dashboard-week-foot {
+		flex-direction: column;
+		align-items: flex-start;
 	}
 }
 

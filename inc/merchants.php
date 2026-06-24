@@ -953,24 +953,27 @@ function crm_merchant_validate_rub_invoice_prerequisites( $merchant ): array {
 		return $result;
 	}
 
-	if ( $order_currency !== 'RUB' ) {
+	if ( ! in_array( $active_provider, [ Fintech_Payment_Gateway::PROVIDER_KANYON, Fintech_Payment_Gateway::PROVIDER_FRIENDLY_PAY ], true ) ) {
 		$result['error'] = sprintf(
-			'У компании сейчас включён legacy Kanyon-контур `%s`. Новый merchant RUB -> USDT flow доступен только при `fintech_pay2day_order_currency = RUB`.',
-			$order_currency !== '' ? $order_currency : 'не задано'
-		);
-		return $result;
-	}
-
-	if ( $active_provider !== Fintech_Payment_Gateway::PROVIDER_KANYON ) {
-		$result['error'] = sprintf(
-			'Merchant RUB -> USDT flow пока работает только через Kanyon. Сейчас активный провайдер компании: %s.',
+			'Merchant RUB -> USDT flow работает только через Kanyon или Friendly Pay. Сейчас активный провайдер компании: %s.',
 			$active_provider !== '' ? crm_fintech_provider_label( $active_provider ) : 'не выбран'
 		);
 		return $result;
 	}
 
-	if ( ! crm_fintech_is_provider_allowed( $company_id, Fintech_Payment_Gateway::PROVIDER_KANYON ) ) {
-		$result['error'] = 'Kanyon отключён для этой компании. Обратитесь к root-администратору.';
+	if ( $active_provider === Fintech_Payment_Gateway::PROVIDER_KANYON && $order_currency !== 'RUB' ) {
+		$result['error'] = sprintf(
+			'У компании сейчас включён legacy Kanyon-контур `%s`. Новый merchant RUB -> USDT flow через Kanyon доступен только при `fintech_pay2day_order_currency = RUB`.',
+			$order_currency !== '' ? $order_currency : 'не задано'
+		);
+		return $result;
+	}
+
+	if ( ! crm_fintech_is_provider_allowed( $company_id, $active_provider ) ) {
+		$result['error'] = sprintf(
+			'%s отключён для этой компании. Обратитесь к root-администратору.',
+			crm_fintech_provider_label( $active_provider )
+		);
 		return $result;
 	}
 
@@ -990,7 +993,7 @@ function crm_merchant_validate_rub_invoice_prerequisites( $merchant ): array {
 			$config_status['missing_fields'] ?? []
 		);
 		$missing_labels = array_values( array_filter( $missing_labels ) );
-		$result['error'] = 'Kanyon не настроен для этой компании.'
+		$result['error'] = crm_fintech_provider_label( $active_provider ) . ' не настроен для этой компании.'
 			. ( ! empty( $missing_labels ) ? ' Не хватает: ' . implode( ', ', $missing_labels ) . '.' : '' );
 		return $result;
 	}
@@ -1373,6 +1376,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 		'merchant_payable_usdt'  => 0.0,
 		'platform_fee_usdt'      => 0.0,
 		'kanyon_gross_usdt'      => 0.0,
+		'provider_gross_usdt'    => 0.0,
 		'merchant_markup_basis'  => 'acquirer_cost',
 		'rub_invoice_markup_mode'=> 'none',
 		'merchant_markup_added_rub' => 0.0,
@@ -1404,6 +1408,8 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 	}
 
 	$company_id               = (int) $precheck['company_id'];
+	$active_provider          = (string) ( $precheck['active_provider'] ?? '' );
+	$is_friendly_pay_provider = $active_provider === Fintech_Payment_Gateway::PROVIDER_FRIENDLY_PAY;
 	$acquirer_markup_percent  = (float) $precheck['acquirer_markup_percent'];
 	$merchant_markup_percent  = (float) $precheck['merchant_markup_percent'];
 	$merchant_markup_basis    = (string) ( $precheck['merchant_markup_basis'] ?? 'acquirer_cost' );
@@ -1489,7 +1495,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 			'category'    => 'payments',
 			'level'       => 'error',
 			'action'      => 'create',
-			'message'     => 'Kanyon не создал merchant RUB invoice.',
+			'message'     => crm_fintech_provider_label( $active_provider ) . ' не создал merchant RUB invoice.',
 			'target_type' => 'merchant',
 			'target_id'   => $merchant_id,
 			'org_id'      => $company_id,
@@ -1507,11 +1513,14 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 	}
 
 	$payload_mode        = (string) ( $invoice['payloadMode'] ?? 'paymentAmount' );
-	$kanyon_gross_usdt   = isset( $invoice['amountAssetValue'] ) && $invoice['amountAssetValue'] !== null
-		? round( max( 0, (float) $invoice['amountAssetValue'] ), 8 )
-		: 0.0;
-	$platform_fee_usdt   = round( max( 0, $kanyon_gross_usdt - $merchant_payable_usdt ), 8 );
-	$gross_difference    = abs( $expected_acquirer_gross - $kanyon_gross_usdt );
+	$provider_gross_usdt = $is_friendly_pay_provider
+		? round( max( 0, $expected_acquirer_gross ), 8 )
+		: ( isset( $invoice['amountAssetValue'] ) && $invoice['amountAssetValue'] !== null
+			? round( max( 0, (float) $invoice['amountAssetValue'] ), 8 )
+			: 0.0 );
+	$kanyon_gross_usdt   = $is_friendly_pay_provider ? 0.0 : $provider_gross_usdt;
+	$platform_fee_usdt   = round( max( 0, $provider_gross_usdt - $merchant_payable_usdt ), 8 );
+	$gross_difference    = $is_friendly_pay_provider ? 0.0 : abs( $expected_acquirer_gross - $provider_gross_usdt );
 
 	$result['warning']             = isset( $invoice['warning'] ) ? (string) $invoice['warning'] : null;
 	$result['provider']            = (string) ( $invoice['provider'] ?? Fintech_Payment_Gateway::PROVIDER_KANYON );
@@ -1526,9 +1535,12 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 		? round( (float) $invoice['paymentAmountValue'], 2 )
 		: $payment_amount_rub;
 	$result['kanyon_gross_usdt']   = $kanyon_gross_usdt;
+	$result['provider_gross_usdt'] = $provider_gross_usdt;
 	$result['platform_fee_usdt']   = $platform_fee_usdt;
 
 	$merchant_meta = [
+		'provider'                     => (string) ( $invoice['provider'] ?? $active_provider ),
+		'merchant_flow'                => $is_friendly_pay_provider ? 'rub_usdt_rapira_friendly_pay' : 'rub_usdt_rapira_kanyon',
 		'rapira_symbol'                => (string) ( $rapira['symbol'] ?? 'USDT/RUB' ),
 		'rapira_bid'                   => isset( $rapira['bid'] ) && $rapira['bid'] !== null ? (float) $rapira['bid'] : null,
 		'rapira_ask'                   => $rapira_ask,
@@ -1546,10 +1558,13 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 		'merchant_rate'                => $merchant_rate,
 		'merchant_rate_raw'            => $merchant_rate_raw,
 		'expected_acquirer_gross_usdt' => $expected_acquirer_gross,
-		'kanyon_gross_usdt'            => $kanyon_gross_usdt > 0 ? $kanyon_gross_usdt : null,
-		'kanyon_order_amount_raw'      => $invoice['orderAmountCents'] ?? null,
-		'kanyon_payment_amount_raw'    => $invoice['paymentAmountMinor'] ?? null,
-		'kanyon_payload_mode'          => $payload_mode,
+		'provider_gross_usdt'          => $provider_gross_usdt > 0 ? $provider_gross_usdt : null,
+		'kanyon_gross_usdt'            => ! $is_friendly_pay_provider && $kanyon_gross_usdt > 0 ? $kanyon_gross_usdt : null,
+		'kanyon_order_amount_raw'      => ! $is_friendly_pay_provider ? ( $invoice['orderAmountCents'] ?? null ) : null,
+		'kanyon_payment_amount_raw'    => ! $is_friendly_pay_provider ? ( $invoice['paymentAmountMinor'] ?? null ) : null,
+		'friendly_pay_payment_amount_rub' => $is_friendly_pay_provider ? $result['payment_amount_rub'] : null,
+		'provider_payload_mode'        => $payload_mode,
+		'kanyon_payload_mode'          => ! $is_friendly_pay_provider ? $payload_mode : null,
 		'payment_purpose'              => $payment_purpose !== '' ? $payment_purpose : null,
 		'payment_purpose_source'       => $payment_purpose_source,
 	];
@@ -1563,9 +1578,9 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 			'merchant_id'                 => $merchant_id,
 			'created_for_type'            => 'merchant',
 			'amount_asset_code'           => 'USDT',
-			'amount_asset_value'          => number_format( $kanyon_gross_usdt, 8, '.', '' ),
+			'amount_asset_value'          => number_format( $provider_gross_usdt, 8, '.', '' ),
 			'payment_currency_code'       => 'RUB',
-			'payment_amount_value'        => number_format( $payment_amount_rub, 2, '.', '' ),
+			'payment_amount_value'        => number_format( $result['payment_amount_rub'], 2, '.', '' ),
 			'merchant_requested_rub_value'=> number_format( $requested_rub_input, 2, '.', '' ),
 			'merchant_payable_value'      => number_format( $merchant_payable_usdt, 8, '.', '' ),
 			'merchant_markup_value'       => number_format( $platform_fee_usdt, 8, '.', '' ),
@@ -1576,17 +1591,18 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 			'idempotency_key'             => $idempotency_key !== '' ? $idempotency_key : null,
 			'meta_json'                   => wp_json_encode(
 				[
-					'merchant_flow' => 'rub_usdt_rapira_kanyon',
+					'merchant_flow' => $is_friendly_pay_provider ? 'rub_usdt_rapira_friendly_pay' : 'rub_usdt_rapira_kanyon',
 					'merchant_id'   => $merchant_id,
 					'merchant_name' => $merchant_label,
 					'merchant_markup_basis' => $merchant_markup_basis,
 					'rub_invoice_markup_mode' => $rub_invoice_markup_mode,
 					'merchant_requested_rub_input' => $requested_rub_input,
-					'payment_amount_rub' => $payment_amount_rub,
+					'payment_amount_rub' => $result['payment_amount_rub'],
 					'merchant_markup_added_rub' => $merchant_markup_added_rub,
 					'external_order_id' => $external_order_id !== '' ? $external_order_id : null,
 					'payment_purpose' => $payment_purpose,
 					'payment_purpose_source' => $payment_purpose_source,
+					'provider' => (string) ( $invoice['provider'] ?? $active_provider ),
 				],
 				JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
 			),
@@ -1594,9 +1610,11 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 				$merchant_meta,
 				JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
 			),
-			'notes'                       => $kanyon_gross_usdt > 0
-				? 'Merchant RUB -> USDT invoice created via Rapira + Kanyon paymentAmount flow.'
-				: 'Merchant RUB -> USDT invoice created via Rapira + Kanyon paymentAmount flow. Waiting for provider gross orderAmount.',
+			'notes'                       => $is_friendly_pay_provider
+				? 'Merchant RUB -> USDT invoice created via Rapira + Friendly Pay SBP flow.'
+				: ( $kanyon_gross_usdt > 0
+					? 'Merchant RUB -> USDT invoice created via Rapira + Kanyon paymentAmount flow.'
+					: 'Merchant RUB -> USDT invoice created via Rapira + Kanyon paymentAmount flow. Waiting for provider gross orderAmount.' ),
 		]
 	);
 
@@ -1619,6 +1637,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 				'external_order_id' => $external_order_id !== '' ? $external_order_id : null,
 				'merchant_markup_basis' => $merchant_markup_basis,
 				'payment_purpose'   => $payment_purpose,
+				'provider'          => (string) ( $invoice['provider'] ?? $active_provider ),
 			],
 		] );
 
@@ -1636,7 +1655,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 		);
 	}
 
-	if ( $gross_difference > 0.01 ) {
+	if ( ! $is_friendly_pay_provider && $gross_difference > 0.01 ) {
 		crm_log( 'merchant.invoice.gross_mismatch', [
 			'category'    => 'payments',
 			'level'       => 'warning',
@@ -1674,10 +1693,12 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 			'merchant_order_id'        => $result['merchant_order_id'],
 			'provider_order_id'        => $result['provider_order_id'],
 			'requested_rub'            => $requested_rub,
-			'payment_amount_rub'       => $payment_amount_rub,
+			'payment_amount_rub'       => $result['payment_amount_rub'],
 			'merchant_payable_usdt'    => $merchant_payable_usdt,
 			'platform_fee_usdt'        => $platform_fee_usdt,
 			'kanyon_gross_usdt'        => $kanyon_gross_usdt,
+			'provider_gross_usdt'      => $provider_gross_usdt,
+			'provider'                 => (string) ( $invoice['provider'] ?? $active_provider ),
 			'external_order_id'        => $external_order_id !== '' ? $external_order_id : null,
 			'rapira_ask'               => $rapira_ask,
 			'acquirer_rate'            => $acquirer_rate,

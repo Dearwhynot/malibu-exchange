@@ -151,6 +151,22 @@ function _me_settings_parse_fintech_pay2day_default_payment_purpose(): string {
 	);
 }
 
+function _me_settings_parse_friendly_pay_amount_limit( string $post_key, string $label, string $default ): string {
+	$raw_value = trim( (string) wp_unslash( $_POST[ $post_key ] ?? $default ) );
+	$raw_value = str_replace( ',', '.', $raw_value );
+
+	if ( $raw_value === '' || ! is_numeric( $raw_value ) ) {
+		wp_send_json_error( [ 'message' => $label . ' должен быть числом.' ], 422 );
+	}
+
+	$value = (float) $raw_value;
+	if ( $value < 0 ) {
+		wp_send_json_error( [ 'message' => $label . ' не может быть отрицательным.' ], 422 );
+	}
+
+	return crm_fintech_normalize_friendly_pay_amount_limit( $value, $default );
+}
+
 function me_ajax_settings_save(): void {
 	check_ajax_referer( 'me_settings_save', 'nonce' );
 
@@ -516,6 +532,72 @@ function me_ajax_settings_save(): void {
 		return;
 	}
 
+	// Fintech: Friendly Pay
+	if ( $section === 'fintech_friendly_pay' ) {
+		_me_settings_require_allowed_fintech_provider( $org_id, 'friendly_pay' );
+
+		$transaction_type = sanitize_key( wp_unslash( $_POST['fintech_friendly_pay_transaction_type'] ?? 'sbp' ) );
+		if ( $transaction_type !== 'sbp' ) {
+			wp_send_json_error( [ 'message' => 'Friendly Pay сейчас поддерживается только для SBP-транзакций.' ], 422 );
+		}
+
+		$cart_currency_raw = strtoupper( trim( (string) wp_unslash( $_POST['fintech_friendly_pay_cart_currency'] ?? 'RUB' ) ) );
+		if ( ! in_array( $cart_currency_raw, [ 'RUB', 'USD' ], true ) ) {
+			wp_send_json_error( [ 'message' => 'Валюта cart для Friendly Pay должна быть RUB или USD.' ], 422 );
+		}
+
+		$min_amount = _me_settings_parse_friendly_pay_amount_limit(
+			'fintech_friendly_pay_min_amount_rub',
+			'Минимальная сумма Friendly Pay',
+			crm_fintech_default_friendly_pay_min_amount_rub()
+		);
+		$max_amount = _me_settings_parse_friendly_pay_amount_limit(
+			'fintech_friendly_pay_max_amount_rub',
+			'Максимальная сумма Friendly Pay',
+			crm_fintech_default_friendly_pay_max_amount_rub()
+		);
+
+		if ( (float) $min_amount < 30 ) {
+			wp_send_json_error( [ 'message' => 'Минимальная сумма Friendly Pay не может быть меньше 30 RUB.' ], 422 );
+		}
+		if ( (float) $max_amount > 200000 ) {
+			wp_send_json_error( [ 'message' => 'Максимальная сумма Friendly Pay не может быть больше 200000 RUB.' ], 422 );
+		}
+		if ( (float) $max_amount < (float) $min_amount ) {
+			wp_send_json_error( [ 'message' => 'Максимальная сумма Friendly Pay не может быть меньше минимальной.' ], 422 );
+		}
+
+		$values = [
+			'fintech_friendly_pay_api_token'        => sanitize_textarea_field( wp_unslash( $_POST['fintech_friendly_pay_api_token'] ?? '' ) ),
+			'fintech_friendly_pay_secret_key'       => sanitize_textarea_field( wp_unslash( $_POST['fintech_friendly_pay_secret_key'] ?? '' ) ),
+			'fintech_friendly_pay_transaction_type' => $transaction_type,
+			'fintech_friendly_pay_cart_name'        => crm_fintech_normalize_payment_purpose( wp_unslash( $_POST['fintech_friendly_pay_cart_name'] ?? '' ) ),
+			'fintech_friendly_pay_cart_currency'    => crm_fintech_normalize_friendly_pay_cart_currency( $cart_currency_raw ),
+			'fintech_friendly_pay_min_amount_rub'   => $min_amount,
+			'fintech_friendly_pay_max_amount_rub'   => $max_amount,
+		];
+
+		foreach ( $values as $key => $value ) {
+			crm_set_setting( $key, (string) $value, $org_id );
+		}
+
+		crm_log_entity( 'settings.fintech_friendly_pay_saved', 'settings', 'update',
+			'Обновлены учётные данные Friendly Pay',
+			'settings', 0, [ 'context' => [
+				'section'          => 'fintech_friendly_pay',
+				'transaction_type' => $transaction_type,
+				'cart_currency'    => $values['fintech_friendly_pay_cart_currency'],
+				'min_amount_rub'   => $min_amount,
+				'max_amount_rub'   => $max_amount,
+				'api_token_set'    => $values['fintech_friendly_pay_api_token'] !== '',
+				'secret_key_set'   => $values['fintech_friendly_pay_secret_key'] !== '',
+			] ]
+		);
+
+		wp_send_json_success( _me_settings_fintech_status_message( 'Настройки Friendly Pay сохранены.', $org_id ) );
+		return;
+	}
+
 	// Fintech: legacy section (backward compat — save all)
 	if ( $section === 'fintech' ) {
 		$active_provider = crm_fintech_normalize_provider_code(
@@ -653,6 +735,38 @@ function me_ajax_settings_save(): void {
 	);
 
 	$telegram_status = _me_settings_telegram_status_payload( $org_id, $telegram_context );
+	$post_save_tasks = [
+		'success' => true,
+		'steps'   => [],
+		'message' => '',
+	];
+
+	if ( $token !== '' && $username !== '' && function_exists( 'crm_telegram_run_post_connect_tasks' ) ) {
+		$post_save_tasks = crm_telegram_run_post_connect_tasks( $org_id, $telegram_context );
+
+		crm_log_entity(
+			! empty( $post_save_tasks['success'] ) ? 'settings.telegram_commands_synced' : 'settings.telegram_commands_sync_failed',
+			'settings',
+			'update',
+			! empty( $post_save_tasks['success'] )
+				? 'Telegram slash-команды обновлены после сохранения настроек'
+				: 'Не удалось автоматически обновить Telegram slash-команды после сохранения настроек',
+			'settings',
+			0,
+			[
+				'org_id'      => $org_id,
+				'is_success'  => ! empty( $post_save_tasks['success'] ),
+				'level'       => ! empty( $post_save_tasks['success'] ) ? 'info' : 'warning',
+				'context'     => [
+					'section'      => 'telegram',
+					'bot_context'  => $telegram_context,
+					'bot_username' => $username !== '' ? '@' . $username : '',
+					'post_save'    => $post_save_tasks,
+				],
+			]
+		);
+	}
+
 	$message = 'Telegram-настройки «' . $context_label . '» сохранены.';
 	if ( $settings_changed && $old_token !== '' && $old_token !== $token ) {
 		if ( ! empty( $old_webhook_drop['success'] ) ) {
@@ -665,11 +779,19 @@ function me_ajax_settings_save(): void {
 	if ( ! empty( $telegram_status['is_configured'] ) && empty( $telegram_status['webhook_ready'] ) ) {
 		$message .= ' Теперь нажмите «Подключить callback».';
 	}
+	if ( ! empty( $post_save_tasks['steps'] ) ) {
+		if ( ! empty( $post_save_tasks['success'] ) ) {
+			$message .= ' Slash-меню бота обновлено автоматически.';
+		} elseif ( ! empty( $post_save_tasks['message'] ) ) {
+			$message .= ' Но slash-меню не обновилось автоматически: ' . (string) $post_save_tasks['message'];
+		}
+	}
 
 	wp_send_json_success( [
 		'message'         => $message,
 		'telegram_status' => $telegram_status,
 		'telegram_context' => $telegram_context,
+		'post_save'       => $post_save_tasks,
 	] );
 }
 
@@ -749,7 +871,7 @@ function me_ajax_settings_telegram_connect(): void {
 	$post_connect = is_array( $result['post_connect'] ?? null ) ? $result['post_connect'] : [];
 	$message      = (string) ( crm_telegram_get_context_status_meta( $telegram_context )['connect_message'] ?? 'Telegram callback подключён.' );
 
-	if ( $telegram_context === 'merchant' ) {
+	if ( ! empty( $post_connect['steps'] ) ) {
 		if ( ! empty( $post_connect['success'] ) ) {
 			$message .= ' Меню команд бота создано/обновлено автоматически.';
 		} elseif ( ! empty( $post_connect['message'] ) ) {

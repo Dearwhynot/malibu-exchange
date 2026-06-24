@@ -53,7 +53,7 @@ INSERT IGNORE INTO `crm_settings` (`org_id`, `setting_key`, `setting_value`) VAL
 (1, 'telegram_service_webhook_connected_at', ''),
 (1, 'telegram_service_webhook_last_error', ''),
 (1, 'telegram_service_webhook_lock', '0'),
-(1, 'fintech_allowed_providers', '["kanyon","doverka"]'),
+(1, 'fintech_allowed_providers', '[]'),
 (1, 'rub_usdt_fixation_mode', 'rapira_manual'),
 (1, 'merchant_invite_ttl_minutes', '60'),
 (1, 'merchant_default_platform_fee_type', 'percent'),
@@ -63,4 +63,11 @@ INSERT IGNORE INTO `crm_settings` (`org_id`, `setting_key`, `setting_value`) VAL
 (1, 'merchant_referral_reward_type', 'percent'),
 (1, 'merchant_referral_reward_value', '0'),
 (1, 'fintech_kanyon_rapira_markup_percent', '6'),
-(1, 'fintech_pay2day_default_payment_purpose', '');
+(1, 'fintech_pay2day_default_payment_purpose', ''),
+(1, 'fintech_friendly_pay_api_token', ''),
+(1, 'fintech_friendly_pay_secret_key', ''),
+(1, 'fintech_friendly_pay_transaction_type', 'sbp'),
+(1, 'fintech_friendly_pay_cart_name', 'Payment'),
+(1, 'fintech_friendly_pay_cart_currency', 'RUB'),
+(1, 'fintech_friendly_pay_min_amount_rub', '30'),
+(1, 'fintech_friendly_pay_max_amount_rub', '200000');

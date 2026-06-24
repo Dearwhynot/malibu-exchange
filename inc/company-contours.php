@@ -36,8 +36,9 @@ if ( ! function_exists( 'crm_company_contours_registry' ) ) {
 		$fintech_labels = function_exists( 'crm_fintech_provider_labels' )
 			? crm_fintech_provider_labels()
 			: [
-				'kanyon'  => 'Kanyon (Pay2Day)',
-				'doverka' => 'Doverka',
+				'kanyon'       => 'Kanyon (Pay2Day)',
+				'doverka'      => 'Doverka',
+				'friendly_pay' => 'Friendly Pay',
 			];
 
 		$telegram_labels = function_exists( 'crm_telegram_bot_context_labels' )
@@ -103,6 +104,13 @@ if ( ! function_exists( 'crm_company_contours_registry' ) ) {
 					'title' => (string) ( $fintech_labels['doverka'] ?? 'Doverka' ),
 					'label' => 'Doverka',
 					'hint'  => 'API-ключ Doverka, выбор активного провайдера и создание новых ордеров.',
+				],
+				'friendly_pay' => [
+					'group' => 'fintech_providers',
+					'code'  => 'friendly_pay',
+					'title' => (string) ( $fintech_labels['friendly_pay'] ?? 'Friendly Pay' ),
+					'label' => 'Friendly Pay',
+					'hint'  => 'API token, secret key и RUB/SBP платежи через Friendly Pay.',
 				],
 			],
 			'telegram_contexts' => [
@@ -369,7 +377,7 @@ if ( ! function_exists( 'crm_company_get_enabled_fintech_providers' ) ) {
 		$parsed   = crm_company_contours_parse_json_allowlist( $raw );
 
 		if ( $raw_text === '' ) {
-			$parsed = array_keys( $registry );
+			$parsed = [];
 		}
 
 		$enabled = [];
@@ -855,6 +863,9 @@ if ( ! function_exists( 'crm_company_render_fintech_provider_badges_html' ) ) {
 					continue;
 				}
 				$badge_class = $provider['code'] === 'doverka' ? 'badge-info' : 'badge-primary';
+				if ( $provider['code'] === 'friendly_pay' ) {
+					$badge_class = 'badge-success';
+				}
 				?>
 				<span class="badge <?php echo esc_attr( $badge_class ); ?> m-r-2"><?php echo esc_html( $provider['title'] ); ?></span>
 				<?php

@@ -33,17 +33,21 @@ $company_id      = function_exists( 'crm_get_current_user_company_id' )
 $input_mode      = function_exists( 'crm_fintech_company_create_order_input_mode' )
 	? crm_fintech_company_create_order_input_mode( $company_id )
 	: 'usdt';
-$is_rub_mode     = $input_mode === 'rub';
-$amount_label    = $is_rub_mode ? 'Сумма в RUB' : 'Сумма в USDT';
-$amount_suffix   = $is_rub_mode ? 'RUB' : 'USDT';
-$amount_example  = $is_rub_mode ? '30000' : '100.00';
-$amount_hint     = $is_rub_mode
-	? 'У компании включён рублёвый contour Kanyon. Введите сумму, которую клиент должен оплатить в RUB; итоговая сумма в USDT будет рассчитана провайдером.'
-	: 'Введите сумму в USDT. Конвертация в RUB производится провайдером.';
-$amount_error    = $is_rub_mode
-	? 'Введите корректную сумму RUB.'
-	: 'Введите корректную сумму USDT.';
+$input_currency  = function_exists( 'crm_fintech_create_order_mode_input_currency' )
+	? crm_fintech_create_order_mode_input_currency( $input_mode )
+	: ( $input_mode === 'rub' ? 'RUB' : 'USDT' );
+$amount_label    = 'Сумма в ' . $input_currency;
+$amount_suffix   = $input_currency;
+$amount_example  = $input_currency === 'RUB' ? '30000' : '100.00';
+$amount_hint     = 'Введите сумму в USDT. Конвертация в RUB производится провайдером.';
+$amount_error    = 'Введите корректную сумму ' . $input_currency . '.';
 $default_payment_purpose = '';
+
+if ( $input_mode === 'rub' ) {
+	$amount_hint = 'У компании включён рублёвый contour Kanyon. Введите сумму, которую клиент должен оплатить в RUB; итоговая сумма в USDT будет рассчитана провайдером.';
+} elseif ( $input_mode === 'friendly_pay_rub' ) {
+	$amount_hint = 'У компании выбран Friendly Pay SBP. Введите сумму платежа в RUB; лимиты провайдера проверяются на сервере.';
+}
 
 if ( $company_id > 0 && function_exists( 'crm_fintech_get_pay2day_default_payment_purpose' ) ) {
 	$default_payment_purpose = crm_fintech_get_pay2day_default_payment_purpose( $company_id );

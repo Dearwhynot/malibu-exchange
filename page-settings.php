@@ -80,7 +80,7 @@ $fintech_missing_ids     = array_values( array_filter( array_map(
 $fintech_provider_labels       = crm_fintech_provider_labels();
 $fintech_allowed_providers     = function_exists( 'crm_company_get_enabled_fintech_providers' )
 	? crm_company_get_enabled_fintech_providers( $org_id )
-	: array_values( $fintech['allowed_providers'] ?? crm_fintech_default_allowed_providers() );
+	: array_values( $fintech['allowed_providers'] ?? [] );
 $fintech_active_provider_allowed = in_array( $fintech['active_provider'], $fintech_allowed_providers, true );
 $fintech_kanyon_order_currency_options = crm_fintech_kanyon_order_currency_options();
 $show_fintech_kanyon_rapira_markup = crm_fintech_normalize_kanyon_order_currency(
@@ -964,6 +964,87 @@ get_header();
 					</div>
 					<?php endif; ?>
 
+					<!-- ─── Fintech: Friendly Pay ────────────────────────────────── -->
+					<?php if ( in_array( 'friendly_pay', $fintech_allowed_providers, true ) ) : ?>
+					<div class="card card-default m-b-30">
+						<div class="card-header">
+							<div class="card-title">Friendly Pay — Учётные данные</div>
+						</div>
+						<div class="card-body">
+							<div id="fintech-friendly-pay-status" class="crm-fintech-status-line"></div>
+							<form id="fintech-friendly-pay-form">
+								<div class="row">
+									<div class="col-md-6">
+										<div class="form-group">
+											<label for="fintech_friendly_pay_api_token">API Token</label>
+											<input type="password" class="form-control<?php echo in_array( 'fintech_friendly_pay_api_token', $fintech_missing_ids, true ) ? ' crm-fintech-missing' : ''; ?>" id="fintech_friendly_pay_api_token" name="fintech_friendly_pay_api_token" data-fintech-field="fintech_friendly_pay_api_token"
+											       value="<?php echo esc_attr( $fintech['friendly_pay_api_token'] ?? '' ); ?>"
+										       placeholder="••••••••••••••••" autocomplete="new-password">
+										</div>
+									</div>
+									<div class="col-md-6">
+										<div class="form-group">
+											<label for="fintech_friendly_pay_secret_key">Secret Key</label>
+											<input type="password" class="form-control<?php echo in_array( 'fintech_friendly_pay_secret_key', $fintech_missing_ids, true ) ? ' crm-fintech-missing' : ''; ?>" id="fintech_friendly_pay_secret_key" name="fintech_friendly_pay_secret_key" data-fintech-field="fintech_friendly_pay_secret_key"
+											       value="<?php echo esc_attr( $fintech['friendly_pay_secret_key'] ?? '' ); ?>"
+										       placeholder="••••••••••••••••" autocomplete="new-password">
+										</div>
+									</div>
+								</div>
+								<div class="row">
+									<div class="col-md-3">
+										<div class="form-group">
+											<label for="fintech_friendly_pay_transaction_type">Тип транзакции</label>
+											<select class="full-width<?php echo in_array( 'fintech_friendly_pay_transaction_type', $fintech_missing_ids, true ) ? ' crm-fintech-missing' : ''; ?>" id="fintech_friendly_pay_transaction_type" name="fintech_friendly_pay_transaction_type" data-init-plugin="select2" data-select2-hide-search="1" data-fintech-field="fintech_friendly_pay_transaction_type">
+												<option value="sbp" <?php selected( $fintech['friendly_pay_transaction_type'] ?? 'sbp', 'sbp' ); ?>>SBP</option>
+											</select>
+										</div>
+									</div>
+									<div class="col-md-3">
+										<div class="form-group">
+											<label for="fintech_friendly_pay_cart_name">Название позиции cart</label>
+											<input type="text" class="form-control<?php echo in_array( 'fintech_friendly_pay_cart_name', $fintech_missing_ids, true ) ? ' crm-fintech-missing' : ''; ?>" id="fintech_friendly_pay_cart_name" name="fintech_friendly_pay_cart_name" data-fintech-field="fintech_friendly_pay_cart_name"
+											       value="<?php echo esc_attr( $fintech['friendly_pay_cart_name'] ?? 'Payment' ); ?>"
+											       maxlength="120" placeholder="ProductName">
+										</div>
+									</div>
+									<div class="col-md-2">
+										<div class="form-group">
+											<label for="fintech_friendly_pay_cart_currency">Валюта cart</label>
+											<select class="full-width<?php echo in_array( 'fintech_friendly_pay_cart_currency', $fintech_missing_ids, true ) ? ' crm-fintech-missing' : ''; ?>" id="fintech_friendly_pay_cart_currency" name="fintech_friendly_pay_cart_currency" data-init-plugin="select2" data-select2-hide-search="1" data-fintech-field="fintech_friendly_pay_cart_currency">
+												<option value="RUB" <?php selected( $fintech['friendly_pay_cart_currency'] ?? 'RUB', 'RUB' ); ?>>RUB</option>
+												<option value="USD" <?php selected( $fintech['friendly_pay_cart_currency'] ?? 'RUB', 'USD' ); ?>>USD</option>
+											</select>
+										</div>
+									</div>
+									<div class="col-md-2">
+										<div class="form-group">
+											<label for="fintech_friendly_pay_min_amount_rub">Мин. RUB</label>
+											<input type="number" class="form-control<?php echo in_array( 'fintech_friendly_pay_min_amount_rub', $fintech_missing_ids, true ) ? ' crm-fintech-missing' : ''; ?>" id="fintech_friendly_pay_min_amount_rub" name="fintech_friendly_pay_min_amount_rub" data-fintech-field="fintech_friendly_pay_min_amount_rub"
+											       value="<?php echo esc_attr( $fintech['friendly_pay_min_amount_rub'] ?? '30' ); ?>"
+											       min="30" max="200000" step="0.01">
+										</div>
+									</div>
+									<div class="col-md-2">
+										<div class="form-group">
+											<label for="fintech_friendly_pay_max_amount_rub">Макс. RUB</label>
+											<input type="number" class="form-control<?php echo in_array( 'fintech_friendly_pay_max_amount_rub', $fintech_missing_ids, true ) ? ' crm-fintech-missing' : ''; ?>" id="fintech_friendly_pay_max_amount_rub" name="fintech_friendly_pay_max_amount_rub" data-fintech-field="fintech_friendly_pay_max_amount_rub"
+											       value="<?php echo esc_attr( $fintech['friendly_pay_max_amount_rub'] ?? '200000' ); ?>"
+											       min="30" max="200000" step="0.01">
+										</div>
+									</div>
+								</div>
+								<p class="hint-text m-t-5">
+									Friendly Pay требует cart при создании платежа. API endpoint зафиксирован в коде, в настройках остаются только company-scoped данные.
+								</p>
+								<button type="submit" class="btn btn-primary btn-cons">
+									Сохранить Friendly Pay
+								</button>
+							</form>
+						</div>
+					</div>
+					<?php endif; ?>
+
 			</div>
 		</div>
 		<?php get_template_part( 'template-parts/footer-backoffice' ); ?>
@@ -1032,7 +1113,7 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 		if (!TELEGRAM_STATUSES.merchant && BOOTSTRAP.telegram_status) {
 			TELEGRAM_STATUSES.merchant = BOOTSTRAP.telegram_status || {};
 		}
-		var FINTECH_FORM_SELECTOR = '#fintech-settings-form, #fintech-kanyon-form, #fintech-doverka-form';
+		var FINTECH_FORM_SELECTOR = '#fintech-settings-form, #fintech-kanyon-form, #fintech-doverka-form, #fintech-friendly-pay-form';
 		var pendingTelegramCallbackConnect = null;
 		var telegramCallbackConfirmModal = null;
 
@@ -1197,43 +1278,43 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 		showTelegramCallbackConfirmModal();
 	}
 
-		function collectFintechStatus() {
-			var provider = getTrimmedValue('#fintech_active_provider').toLowerCase();
-			var providerLabels = FINTECH_PROVIDER_LABELS || {};
-			var allowedProviders = (FINTECH_ALLOWED_PROVIDERS || []).slice();
-			var missingGeneral = [];
-			var missingProvider = [];
-			var providerSectionLabel = '';
-			var blockedReason = '';
-			var providerUnavailable = false;
-			var allowedProviderLabels = $.map(allowedProviders, function (providerCode) {
-				return providerLabels[providerCode] || providerCode;
-			});
+	function collectFintechStatus() {
+		var provider = getTrimmedValue('#fintech_active_provider').toLowerCase();
+		var providerLabels = FINTECH_PROVIDER_LABELS || {};
+		var allowedProviders = (FINTECH_ALLOWED_PROVIDERS || []).slice();
+		var missingGeneral = [];
+		var missingProvider = [];
+		var providerSectionLabel = '';
+		var blockedReason = '';
+		var providerUnavailable = false;
+		var allowedProviderLabels = $.map(allowedProviders, function (providerCode) {
+			return providerLabels[providerCode] || providerCode;
+		});
 
-			if (!getTrimmedValue('#fintech_company_name')) {
-				missingGeneral.push({ id: 'fintech_company_name', label: 'Название компании' });
+		if (!getTrimmedValue('#fintech_company_name')) {
+			missingGeneral.push({ id: 'fintech_company_name', label: 'Название компании' });
 		}
-			if (!getTrimmedValue('#fintech_merchant_order_prefix')) {
-				missingGeneral.push({ id: 'fintech_merchant_order_prefix', label: 'Префикс ордера' });
-			}
-			if (!allowedProviders.length) {
-				missingGeneral.push({ id: 'fintech_active_provider', label: 'Активный провайдер' });
-				blockedReason = 'Для этой компании сейчас отключены все платёжные контуры.';
-				provider = '';
-			} else if (provider && allowedProviders.indexOf(provider) === -1) {
-				missingGeneral.push({ id: 'fintech_active_provider', label: 'Активный провайдер' });
-				blockedReason = 'Контур ' + (providerLabels[provider] || provider) + ' отключён в настройках компании. Выберите другой доступный контур.';
-				providerUnavailable = true;
-				provider = '';
-			} else if (!providerLabels[provider]) {
-				missingGeneral.push({ id: 'fintech_active_provider', label: 'Активный провайдер' });
-				provider = '';
-			}
+		if (!getTrimmedValue('#fintech_merchant_order_prefix')) {
+			missingGeneral.push({ id: 'fintech_merchant_order_prefix', label: 'Префикс ордера' });
+		}
+		if (!allowedProviders.length) {
+			missingGeneral.push({ id: 'fintech_active_provider', label: 'Активный провайдер' });
+			blockedReason = 'Для этой компании сейчас отключены все платёжные контуры.';
+			provider = '';
+		} else if (provider && allowedProviders.indexOf(provider) === -1) {
+			missingGeneral.push({ id: 'fintech_active_provider', label: 'Активный провайдер' });
+			blockedReason = 'Контур ' + (providerLabels[provider] || provider) + ' отключён в настройках компании. Выберите другой доступный контур.';
+			providerUnavailable = true;
+			provider = '';
+		} else if (!providerLabels[provider]) {
+			missingGeneral.push({ id: 'fintech_active_provider', label: 'Активный провайдер' });
+			provider = '';
+		}
 
-			if (provider === 'kanyon' && $('#fintech-kanyon-form').length) {
-				providerSectionLabel = 'Kanyon / Pay2Day — Учётные данные';
-				if (!getTrimmedValue('#fintech_pay2day_login')) {
-					missingProvider.push({ id: 'fintech_pay2day_login', label: 'Логин (Login)' });
+		if (provider === 'kanyon' && $('#fintech-kanyon-form').length) {
+			providerSectionLabel = 'Kanyon / Pay2Day — Учётные данные';
+			if (!getTrimmedValue('#fintech_pay2day_login')) {
+				missingProvider.push({ id: 'fintech_pay2day_login', label: 'Логин (Login)' });
 			}
 			if (!getTrimmedValue('#fintech_pay2day_password')) {
 				missingProvider.push({ id: 'fintech_pay2day_password', label: 'Пароль (Password)' });
@@ -1247,10 +1328,10 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 			if ($('#fintech_kanyon_verify_signature').is(':checked') && !getTrimmedValue('#fintech_kanyon_public_key_pem')) {
 				missingProvider.push({ id: 'fintech_kanyon_public_key_pem', label: 'Публичный ключ провайдера (PEM)' });
 			}
-			} else if (provider === 'doverka' && $('#fintech-doverka-form').length) {
-				providerSectionLabel = 'Doverka — Учётные данные';
-				if (!getTrimmedValue('#fintech_doverka_api_key')) {
-					missingProvider.push({ id: 'fintech_doverka_api_key', label: 'API Key' });
+		} else if (provider === 'doverka' && $('#fintech-doverka-form').length) {
+			providerSectionLabel = 'Doverka — Учётные данные';
+			if (!getTrimmedValue('#fintech_doverka_api_key')) {
+				missingProvider.push({ id: 'fintech_doverka_api_key', label: 'API Key' });
 			}
 			if ((parseInt($('#fintech_doverka_currency_id').val(), 10) || 0) <= 0) {
 				missingProvider.push({ id: 'fintech_doverka_currency_id', label: 'Currency ID' });
@@ -1261,23 +1342,49 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 			if (!getTrimmedValue('#fintech_doverka_kyc_redirect_url')) {
 				missingProvider.push({ id: 'fintech_doverka_kyc_redirect_url', label: 'KYC Redirect URL' });
 			}
+		} else if (provider === 'friendly_pay' && $('#fintech-friendly-pay-form').length) {
+			providerSectionLabel = 'Friendly Pay — Учётные данные';
+			if (!getTrimmedValue('#fintech_friendly_pay_api_token')) {
+				missingProvider.push({ id: 'fintech_friendly_pay_api_token', label: 'API Token' });
+			}
+			if (!getTrimmedValue('#fintech_friendly_pay_secret_key')) {
+				missingProvider.push({ id: 'fintech_friendly_pay_secret_key', label: 'Secret Key' });
+			}
+			if (getTrimmedValue('#fintech_friendly_pay_transaction_type') !== 'sbp') {
+				missingProvider.push({ id: 'fintech_friendly_pay_transaction_type', label: 'Тип транзакции' });
+			}
+			if (!getTrimmedValue('#fintech_friendly_pay_cart_name')) {
+				missingProvider.push({ id: 'fintech_friendly_pay_cart_name', label: 'Название позиции cart' });
+			}
+			var cartCurrency = getTrimmedValue('#fintech_friendly_pay_cart_currency').toUpperCase();
+			if (cartCurrency !== 'RUB' && cartCurrency !== 'USD') {
+				missingProvider.push({ id: 'fintech_friendly_pay_cart_currency', label: 'Валюта cart' });
+			}
+			var minRub = parseFloat($('#fintech_friendly_pay_min_amount_rub').val());
+			var maxRub = parseFloat($('#fintech_friendly_pay_max_amount_rub').val());
+			if (isNaN(minRub) || minRub < 30) {
+				missingProvider.push({ id: 'fintech_friendly_pay_min_amount_rub', label: 'Минимум RUB' });
+			}
+			if (isNaN(maxRub) || maxRub > 200000 || (!isNaN(minRub) && maxRub < minRub)) {
+				missingProvider.push({ id: 'fintech_friendly_pay_max_amount_rub', label: 'Максимум RUB' });
+			}
 		}
 
 		return {
 			is_configured: provider !== '' && missingGeneral.length === 0 && missingProvider.length === 0,
 			provider: provider,
-				provider_label: provider ? providerLabels[provider] : 'Не выбран',
-				general_section_label: 'Платёжный шлюз — Общие настройки',
-				provider_section_label: providerSectionLabel,
-				missing_general: missingGeneral,
-				missing_provider: missingProvider,
-				missing_fields: missingGeneral.concat(missingProvider),
-				allowed_providers: allowedProviders,
-				allowed_provider_labels: allowedProviderLabels,
-				provider_unavailable: providerUnavailable,
-				blocked_reason: blockedReason
-			};
-		}
+			provider_label: provider ? providerLabels[provider] : 'Не выбран',
+			general_section_label: 'Платёжный шлюз — Общие настройки',
+			provider_section_label: providerSectionLabel,
+			missing_general: missingGeneral,
+			missing_provider: missingProvider,
+			missing_fields: missingGeneral.concat(missingProvider),
+			allowed_providers: allowedProviders,
+			allowed_provider_labels: allowedProviderLabels,
+			provider_unavailable: providerUnavailable,
+			blocked_reason: blockedReason
+		};
+	}
 
 	function labelsFromItems(items) {
 		return $.map(items || [], function (item) {
@@ -1345,6 +1452,9 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 				if ($('#fintech-doverka-status').length) {
 					$('#fintech-doverka-status').html('Этот блок сейчас не обязателен. Он нужен только если активный провайдер = Doverka.');
 				}
+				if ($('#fintech-friendly-pay-status').length) {
+					$('#fintech-friendly-pay-status').html('Этот блок сейчас не обязателен. Он нужен только если активный провайдер = Friendly Pay.');
+				}
 			} else if (status.provider === 'doverka' && $('#fintech-doverka-status').length) {
 				$('#fintech-doverka-status').html(
 					(status.missing_provider || []).length
@@ -1354,12 +1464,30 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 				if ($('#fintech-kanyon-status').length) {
 					$('#fintech-kanyon-status').html('Этот блок сейчас не обязателен. Он нужен только если активный провайдер = Kanyon.');
 				}
+				if ($('#fintech-friendly-pay-status').length) {
+					$('#fintech-friendly-pay-status').html('Этот блок сейчас не обязателен. Он нужен только если активный провайдер = Friendly Pay.');
+				}
+			} else if (status.provider === 'friendly_pay' && $('#fintech-friendly-pay-status').length) {
+				$('#fintech-friendly-pay-status').html(
+					(status.missing_provider || []).length
+						? '<strong>Это активный провайдер.</strong> Не хватает: ' + escapeHtml(labelsFromItems(status.missing_provider).join(', ')) + '.'
+						: '<strong>Это активный провайдер.</strong> Блок Friendly Pay заполнен.'
+				);
+				if ($('#fintech-kanyon-status').length) {
+					$('#fintech-kanyon-status').html('Этот блок сейчас не обязателен. Он нужен только если активный провайдер = Kanyon.');
+				}
+				if ($('#fintech-doverka-status').length) {
+					$('#fintech-doverka-status').html('Этот блок сейчас не обязателен. Он нужен только если активный провайдер = Doverka.');
+				}
 			} else {
 				if ($('#fintech-kanyon-status').length) {
 					$('#fintech-kanyon-status').html('Сначала выберите активный провайдер в общем блоке.');
 				}
 				if ($('#fintech-doverka-status').length) {
 					$('#fintech-doverka-status').html('Сначала выберите активный провайдер в общем блоке.');
+				}
+				if ($('#fintech-friendly-pay-status').length) {
+					$('#fintech-friendly-pay-status').html('Сначала выберите активный провайдер в общем блоке.');
 				}
 			}
 		}
@@ -1799,6 +1927,24 @@ add_action( 'wp_footer', function () use ( $settings_js_bootstrap ) {
 			};
 		},
 		'Сохранить Doverka'
+	);
+
+	handleSettingsForm(
+		$('#fintech-friendly-pay-form'),
+		$('#settings-alert'),
+		function () {
+			return {
+				section: 'fintech_friendly_pay',
+				fintech_friendly_pay_api_token: $('#fintech_friendly_pay_api_token').val(),
+				fintech_friendly_pay_secret_key: $('#fintech_friendly_pay_secret_key').val(),
+				fintech_friendly_pay_transaction_type: $('#fintech_friendly_pay_transaction_type').val(),
+				fintech_friendly_pay_cart_name: $('#fintech_friendly_pay_cart_name').val(),
+				fintech_friendly_pay_cart_currency: $('#fintech_friendly_pay_cart_currency').val(),
+				fintech_friendly_pay_min_amount_rub: $('#fintech_friendly_pay_min_amount_rub').val(),
+				fintech_friendly_pay_max_amount_rub: $('#fintech_friendly_pay_max_amount_rub').val(),
+			};
+		},
+		'Сохранить Friendly Pay'
 	);
 
 	// Toggle PEM key field visibility

@@ -99,7 +99,7 @@ function me_ajax_create_company(): void {
 
 	crm_set_setting(
 		'fintech_allowed_providers',
-		crm_fintech_serialize_allowed_providers( crm_fintech_default_allowed_providers() ),
+		crm_fintech_serialize_allowed_providers( crm_fintech_initial_allowed_providers_for_new_company() ),
 		$company_id
 	);
 	if ( function_exists( 'crm_fintech_seed_company_settings' ) ) {

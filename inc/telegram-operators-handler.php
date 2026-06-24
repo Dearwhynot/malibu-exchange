@@ -400,6 +400,7 @@ if ( ! function_exists( 'crm_operator_tg_company_input_mode' ) ) {
 if ( ! function_exists( 'crm_operator_tg_supported_invoice_modes' ) ) {
 	function crm_operator_tg_supported_invoice_modes(): array {
 		return [
+			'friendly_pay_rub',
 			'rub',
 			'usdt',
 			'rub_usdt',
@@ -474,7 +475,7 @@ if ( ! function_exists( 'crm_operator_tg_invoice_mode_input_currency' ) ) {
 			return crm_fintech_create_order_mode_input_currency( $mode );
 		}
 
-		return $mode === 'rub' ? 'RUB' : 'USDT';
+		return in_array( $mode, [ 'friendly_pay_rub', 'rub' ], true ) ? 'RUB' : 'USDT';
 	}
 }
 
@@ -493,6 +494,8 @@ if ( ! function_exists( 'crm_operator_tg_invoice_mode_button_label' ) ) {
 		$mode = sanitize_key( $mode );
 
 		switch ( $mode ) {
+			case 'friendly_pay_rub':
+				return 'Friendly Pay SBP';
 			case 'rub':
 				return 'RUB paymentAmount';
 			case 'rub_usdt':
@@ -702,6 +705,8 @@ if ( ! function_exists( 'crm_operator_tg_invoice_mode_help_text' ) ) {
 		$mode = sanitize_key( $mode );
 
 		switch ( $mode ) {
+			case 'friendly_pay_rub':
+				return 'Оператор вводит RUB, а счёт создаётся через Friendly Pay SBP.';
 			case 'rub':
 				return 'Оператор вводит RUB, а ордер создаётся через paymentAmount в RUB.';
 			case 'rub_usdt':
@@ -731,6 +736,8 @@ if ( ! function_exists( 'crm_operator_tg_invoice_loading_text' ) ) {
 
 		if ( $mode === 'rub_usdt_live' || $mode === 'rub_thb_rub_live' || $mode === 'rub_thb_thb_live' ) {
 			$line2 = 'Делаем live quote и готовим QR-код.';
+		} elseif ( $mode === 'friendly_pay_rub' ) {
+			$line2 = 'Запрашиваем счёт Friendly Pay и готовим QR-код.';
 		} elseif ( $mode === 'rub_usdt' || $mode === 'rub_thb_rub_rapira' || $mode === 'rub_thb_thb_rapira' || $mode === 'rub' ) {
 			$line2 = 'Считаем курс и готовим QR-код.';
 		}
@@ -920,7 +927,7 @@ if ( ! function_exists( 'crm_operator_tg_invoice_keyboard' ) ) {
 	function crm_operator_tg_invoice_keyboard( int $company_id, string $chat_id, array $session = [] ): array {
 		$rows        = [];
 		$mode        = crm_operator_tg_normalize_invoice_mode( (string) ( $session['invoice_mode'] ?? '' ), $company_id );
-		$miniapp_url = $mode === 'rub' && function_exists( 'crm_tg_miniapp_url_for_operator_chat' )
+		$miniapp_url = in_array( $mode, [ 'friendly_pay_rub', 'rub' ], true ) && function_exists( 'crm_tg_miniapp_url_for_operator_chat' )
 			? crm_tg_miniapp_url_for_operator_chat( $company_id, $chat_id )
 			: '';
 
@@ -2185,7 +2192,7 @@ if ( ! function_exists( 'crm_operator_tg_route_message' ) ) {
 				null,
 				$description
 			)
-			: ( $mode === 'rub'
+			: ( in_array( $mode, [ 'friendly_pay_rub', 'rub' ], true )
 				? crm_fintech_create_order_by_payment_amount( (float) $amount, 'RUB', $company_id, 'telegram_operator', null, $description )
 				: crm_fintech_create_order( (float) $amount, $company_id, 'telegram_operator', null, $description ) );
 

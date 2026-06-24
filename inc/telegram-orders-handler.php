@@ -9,7 +9,7 @@
  *   kanyon_handle_cancel()            — кнопка «Отмена» под чеком
  *
  * Состояния хранятся в WP-транзиентах: tg_order_state_{chat_id}
- * Структура: [ 'step' => 'waiting_amount', 'amount_mode' => 'usdt|rub', 'payment_purpose' => '...' ]
+ * Структура: [ 'step' => 'waiting_amount', 'amount_mode' => 'usdt|rub|friendly_pay_rub', 'payment_purpose' => '...' ]
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -60,7 +60,11 @@ function _tg_orders_company_input_mode( int $company_id ): string {
 
 	$mode = (string) crm_fintech_company_create_order_input_mode( $company_id );
 
-	return $mode === 'rub' ? 'rub' : 'usdt';
+	return in_array( $mode, [ 'friendly_pay_rub', 'rub' ], true ) ? $mode : 'usdt';
+}
+
+function _tg_orders_is_rub_amount_mode( string $amount_mode ): bool {
+	return in_array( sanitize_key( $amount_mode ), [ 'friendly_pay_rub', 'rub' ], true );
 }
 
 function _tg_orders_default_payment_purpose( int $company_id ): string {
@@ -76,15 +80,22 @@ function _tg_orders_waiting_amount_prompt( array $state ): string {
 	$payment_purpose  = function_exists( 'crm_fintech_normalize_payment_purpose' )
 		? crm_fintech_normalize_payment_purpose( (string) ( $state['payment_purpose'] ?? '' ) )
 		: sanitize_text_field( (string) ( $state['payment_purpose'] ?? '' ) );
-	$is_rub_mode      = $amount_mode === 'rub';
+	$is_rub_mode      = _tg_orders_is_rub_amount_mode( $amount_mode );
 	$amount_currency  = $is_rub_mode ? 'RUB' : 'USDT';
 	$amount_example   = $is_rub_mode ? '30000' : '150.50';
-	$calculation_hint = $is_rub_mode
-		? "Сумма к оплате вводится в RUB.\nИтоговая сумма в USDT будет рассчитана провайдером."
-		: "Сумма ордера вводится в USDT.\nКонвертация в RUB производится провайдером.";
+	if ( $amount_mode === 'friendly_pay_rub' ) {
+		$calculation_hint = "Сумма к оплате вводится в RUB.\nСчёт будет создан через Friendly Pay SBP.";
+	} else {
+		$calculation_hint = $is_rub_mode
+			? "Сумма к оплате вводится в RUB.\nИтоговая сумма в USDT будет рассчитана провайдером."
+			: "Сумма ордера вводится в USDT.\nКонвертация в RUB производится провайдером.";
+	}
 
 	$text  = "💰 <b>Новый ордер</b>\n\n";
 	$text .= $calculation_hint . "\n\n";
+	if ( $amount_mode !== '' && function_exists( 'crm_fintech_create_order_mode_label' ) ) {
+		$text .= 'Контур: <code>' . htmlspecialchars( crm_fintech_create_order_mode_label( $amount_mode ), ENT_QUOTES ) . "</code>\n\n";
+	}
 	$text .= 'Введите сумму в ' . $amount_currency . ":\n";
 	$text .= '<i>Например: ' . $amount_example . '</i>';
 
@@ -170,6 +181,8 @@ function _tg_orders_format_rub( float $amount ): string {
  */
 function _tg_orders_success_message( array $result ): string {
 	$amount_usdt      = isset( $result['amount_usdt'] ) ? (float) $result['amount_usdt'] : 0.0;
+	$amount_asset_code = strtoupper( trim( (string) ( $result['amount_asset_code'] ?? 'USDT' ) ) );
+	$amount_asset_value = isset( $result['amount_asset_value'] ) ? (float) $result['amount_asset_value'] : 0.0;
 	$payment_rub      = isset( $result['payment_amount_rub'] ) ? (float) $result['payment_amount_rub'] : 0.0;
 	$order_db_id      = isset( $result['order_db_id'] ) ? (int) $result['order_db_id'] : 0;
 	$receipt_id       = $order_db_id > 0 ? '#' . $order_db_id : (string) ( $result['merchant_order_id'] ?? '—' );
@@ -190,7 +203,9 @@ function _tg_orders_success_message( array $result ): string {
 			],
 			[
 				'label' => 'TO:',
-				'value' => $amount_usdt > 0 ? crm_tg_receipt_format_amount( $amount_usdt, 'USDT', 2, true ) : '—',
+				'value' => $amount_usdt > 0
+					? crm_tg_receipt_format_amount( $amount_usdt, 'USDT', 2, true )
+					: ( $amount_asset_value > 0 ? crm_tg_receipt_format_amount( $amount_asset_value, $amount_asset_code !== '' ? $amount_asset_code : 'RUB', 2, true ) : '—' ),
 			],
 		],
 		[
@@ -637,7 +652,7 @@ if ( ! function_exists( 'tg_project_handle_message' ) ) {
 
 		if ( $amount === false || $amount <= 0 ) {
 			bot_send_message( $telegram, $chat_id,
-				$amount_mode === 'rub'
+				_tg_orders_is_rub_amount_mode( $amount_mode )
 					? '⚠️ Некорректная сумма. Введите положительное число в RUB, например <code>30000</code>.'
 					: '⚠️ Некорректная сумма. Введите положительное число в USDT, например <code>150.50</code>.'
 			);
@@ -662,7 +677,16 @@ if ( ! function_exists( 'tg_project_handle_message' ) ) {
 
 		$description = $payment_purpose !== '' ? $payment_purpose : 'Telegram bot order';
 
-		if ( $amount_mode === 'rub' ) {
+		if ( function_exists( 'crm_fintech_create_company_order_from_mode' ) ) {
+			$result = crm_fintech_create_company_order_from_mode(
+				$amount_mode,
+				(float) $amount,
+				$company_id,
+				$source_channel,
+				null,
+				$description
+			);
+		} elseif ( _tg_orders_is_rub_amount_mode( $amount_mode ) ) {
 			$result = crm_fintech_create_order_by_payment_amount(
 				$amount,
 				'RUB',
@@ -680,6 +704,8 @@ if ( ! function_exists( 'tg_project_handle_message' ) ) {
 				$description
 			);
 		}
+
+		$result['operator_invoice_mode'] = $amount_mode;
 
 		if ( empty( $result['success'] ) ) {
 			$new_order_callback = $bot_context === 'operator' ? 'o:invoice' : 'orders_new';

@@ -95,7 +95,7 @@ function crm_fintech_callback_handler( WP_REST_Request $request ): WP_REST_Respo
 		return new WP_REST_Response( 'Company scope not resolved', 400 );
 	}
 
-	// ── Проверка подписи (Kanyon) ────────────────────────────────────────────
+	// ── Проверка подписи ─────────────────────────────────────────────────────
 	$signature_valid = null;
 	if ( $provider === 'kanyon' ) {
 		$signature_valid = _crm_fintech_verify_kanyon_signature( $headers, $raw_body, $callback_company_id );
@@ -106,6 +106,23 @@ function crm_fintech_callback_handler( WP_REST_Request $request ): WP_REST_Respo
 				'level'       => 'warning',
 				'action'      => 'callback',
 				'message'     => 'Невалидная подпись Kanyon callback',
+				'target_type' => 'payment_order',
+				'org_id'      => $callback_company_id,
+				'is_success'  => false,
+				'context'     => [ 'provider' => $provider ],
+			] );
+
+			return new WP_REST_Response( 'Invalid signature', 400 );
+		}
+	} elseif ( $provider === 'friendly_pay' ) {
+		$signature_valid = _crm_fintech_verify_friendly_pay_signature( $headers, $raw_body, $callback_company_id );
+		if ( $signature_valid === false ) {
+			_crm_fintech_save_callback_record( $provider, $raw_body, $headers, null, 'invalid_signature', 400, 'Invalid signature', false );
+			crm_log( 'payment.callback.invalid_signature', [
+				'category'    => 'callbacks',
+				'level'       => 'warning',
+				'action'      => 'callback',
+				'message'     => 'Невалидная подпись Friendly Pay callback',
 				'target_type' => 'payment_order',
 				'org_id'      => $callback_company_id,
 				'is_success'  => false,
@@ -215,6 +232,9 @@ function _crm_fintech_detect_provider( array $payload ): string {
 	if ( isset( $payload['payment'] ) && is_array( $payload['payment'] ) ) {
 		return 'doverka';
 	}
+	if ( isset( $payload['id'], $payload['merchantOrderId'] ) ) {
+		return 'friendly_pay';
+	}
 	if ( isset( $payload['order_transaction_id'] ) || isset( $payload['id'] ) ) {
 		return 'doverka';
 	}
@@ -296,12 +316,62 @@ function _crm_fintech_verify_kanyon_signature( array $headers, string $raw_body,
 	return $verified === 1;
 }
 
+/**
+ * Проверка подписи Friendly Pay.
+ *
+ * Docs описывают строку подписи как `{timestamp}_{nonce}_{body}`.
+ * В тексте указана base64-подпись, а пример кода возвращает lowercase hex.
+ * До уточнения у провайдера принимаем оба формата, но всё равно проверяем токен
+ * и HMAC строго по секрету текущей компании.
+ */
+function _crm_fintech_verify_friendly_pay_signature( array $headers, string $raw_body, int $company_id ): bool {
+	if ( $company_id <= 0 ) {
+		return false;
+	}
+
+	$timestamp = trim( (string) _crm_fintech_header( $headers, 'x-fp-timestamp' ) );
+	$nonce     = trim( (string) _crm_fintech_header( $headers, 'x-fp-nonce' ) );
+	$api_token = trim( (string) _crm_fintech_header( $headers, 'x-fp-api-token' ) );
+	$signature = trim( (string) _crm_fintech_header( $headers, 'x-fp-signature' ) );
+
+	if ( $timestamp === '' || $nonce === '' || $api_token === '' || $signature === '' ) {
+		_crm_fintech_callback_log( 'Friendly Pay signed headers are incomplete', null, $company_id );
+
+		return false;
+	}
+
+	$expected_token = trim( (string) crm_get_setting( 'fintech_friendly_pay_api_token', $company_id, '' ) );
+	$secret_key     = trim( (string) crm_get_setting( 'fintech_friendly_pay_secret_key', $company_id, '' ) );
+
+	if ( $expected_token === '' || $secret_key === '' ) {
+		_crm_fintech_callback_log( 'Friendly Pay credentials are not configured for callback verification', null, $company_id );
+
+		return false;
+	}
+
+	if ( ! hash_equals( $expected_token, $api_token ) ) {
+		_crm_fintech_callback_log( 'Friendly Pay API token mismatch', null, $company_id );
+
+		return false;
+	}
+
+	$signing_string = $timestamp . '_' . $nonce . '_' . $raw_body;
+	$expected_hex   = hash_hmac( 'sha256', $signing_string, $secret_key );
+	$expected_b64   = base64_encode( hash_hmac( 'sha256', $signing_string, $secret_key, true ) );
+
+	return hash_equals( strtolower( $expected_hex ), strtolower( $signature ) )
+		|| hash_equals( $expected_b64, $signature );
+}
+
 function _crm_fintech_normalize_event( string $provider, array $payload ): array {
 	if ( $provider === 'kanyon' ) {
 		return _crm_fintech_normalize_kanyon( $payload );
 	}
 	if ( $provider === 'doverka' ) {
 		return _crm_fintech_normalize_doverka( $payload );
+	}
+	if ( $provider === 'friendly_pay' ) {
+		return _crm_fintech_normalize_friendly_pay( $payload );
 	}
 
 	return [ 'provider' => 'unknown', 'orderId' => '', 'merchantOrderId' => '', 'status' => null, 'providerStatus' => null, 'paymentAmount' => null, 'orderAmount' => null, 'orderCurrency' => null, 'paymentCurrency' => null, 'qrcId' => null, 'payload' => null, 'externalOrderId' => null, 'raw' => $payload ];
@@ -352,6 +422,35 @@ function _crm_fintech_normalize_doverka( array $payload ): array {
 		'qrcId'          => null,
 		'payload'        => $payment['link'] ?? null,
 		'externalOrderId'=> $payment['id'] ?? null,
+		'raw'            => $payload,
+	];
+}
+
+function _crm_fintech_normalize_friendly_pay( array $payload ): array {
+	$provider_status = $payload['status'] ?? null;
+	$order_amount    = null;
+	$order_currency  = null;
+
+	if ( isset( $payload['orderAmount'] ) && is_array( $payload['orderAmount'] ) ) {
+		$order_currency = isset( $payload['orderAmount']['currency'] ) ? (string) $payload['orderAmount']['currency'] : null;
+		if ( isset( $payload['orderAmount']['value'] ) && is_numeric( $payload['orderAmount']['value'] ) ) {
+			$order_amount = (int) round( ( (float) $payload['orderAmount']['value'] ) * 100 );
+		}
+	}
+
+	return [
+		'provider'       => 'friendly_pay',
+		'orderId'        => (string) ( $payload['id'] ?? '' ),
+		'merchantOrderId'=> (string) ( $payload['merchantOrderId'] ?? '' ),
+		'status'         => $provider_status,
+		'providerStatus' => $provider_status,
+		'paymentAmount'  => $order_amount,
+		'orderAmount'    => $order_amount,
+		'orderCurrency'  => $order_currency,
+		'paymentCurrency'=> $order_currency ?: 'RUB',
+		'qrcId'          => isset( $payload['id'] ) ? (string) $payload['id'] : null,
+		'payload'        => $payload['qrLink'] ?? null,
+		'externalOrderId'=> $payload['id'] ?? null,
 		'raw'            => $payload,
 	];
 }

@@ -245,6 +245,36 @@ function malibu_exchange_enqueue_pages_assets(): void
 JS
 	);
 
+	wp_add_inline_script( 'pages-custom-js', <<<'JS'
+(function($){
+    function cleanupStaleBackdrops(){
+        if (!$('.modal.show').length) {
+            $('.modal-backdrop').remove();
+            $('body').removeClass('modal-open').css({ paddingRight: '' });
+        }
+    }
+
+    $(function(){
+        cleanupStaleBackdrops();
+        setTimeout(function(){
+            var $searchOverlay = $('[data-pages="search"]');
+            if ($searchOverlay.length && !$searchOverlay.find('#overlay-search').is(':focus') && !$searchOverlay.data('crm-search-opened')) {
+                $searchOverlay.stop(true, true).hide().addClass('hide closed');
+            }
+        }, 300);
+    });
+
+    $(window).on('pageshow', cleanupStaleBackdrops);
+    $(document).on('click.crm-search-guard', '[data-toggle="search"]', function(){
+        $('[data-pages="search"]').data('crm-search-opened', true);
+    });
+    $(document).on('click.crm-search-guard', '.overlay-close', function(){
+        $('[data-pages="search"]').data('crm-search-opened', false);
+    });
+})(jQuery);
+JS
+	);
+
 	if (is_page_template('page-login.php')) {
 		wp_enqueue_script( 'pages-jquery-validate', $theme_uri . '/vendor/pages/assets/plugins/jquery-validation/js/jquery.validate.min.js', ['jquery'], $ver, true );
 		wp_add_inline_script( 'pages-jquery-validate', "jQuery(function($){ $('#form-login').validate(); });" );
