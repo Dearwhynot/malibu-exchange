@@ -21,6 +21,7 @@ if ( ! function_exists( 'crm_telegram_bot_context_labels' ) ) {
 			'merchant' => 'Мерчантский бот',
 			'operator' => 'Операторский бот',
 			'service'  => 'Сервисный бот',
+			'subscription' => 'Subscription bot',
 		];
 	}
 }
@@ -92,6 +93,9 @@ if ( ! function_exists( 'crm_telegram_seed_company_settings' ) ) {
 		$contexts = $context === null
 			? array_keys( crm_telegram_bot_context_labels() )
 			: [ crm_telegram_normalize_bot_context( $context ) ];
+		if ( $context === null ) {
+			$contexts = array_values( array_diff( $contexts, [ 'subscription' ] ) );
+		}
 
 		foreach ( $contexts as $bot_context ) {
 			foreach ( crm_telegram_default_settings( $bot_context ) as $key => $value ) {
@@ -148,6 +152,8 @@ if ( ! function_exists( 'crm_telegram_company_callback_url' ) ) {
 			$route = 'malibu-exchange/v1/telegram/operator-callback';
 		} elseif ( $context === 'service' ) {
 			$route = 'malibu-exchange/v1/telegram/service-callback';
+		} elseif ( $context === 'subscription' ) {
+			$route = 'malibu-exchange/v1/telegram/subscription-callback';
 		} else {
 			$route = 'malibu-exchange/v1/telegram/merchant-callback';
 		}
@@ -373,6 +379,11 @@ if ( ! function_exists( 'crm_telegram_get_context_status_meta' ) ) {
 					'blocked_default' => 'Чтобы включить сервисный бот, заполните имя и токен сервисного бота.',
 					'connect_message' => 'Telegram callback подключён. Сервисный бот готов к работе.',
 				];
+			case 'subscription':
+				return [
+					'blocked_default' => 'Чтобы включить subscription bot, заполните имя и токен бота подписок.',
+					'connect_message' => 'Telegram callback подключён. Subscription bot готов к работе.',
+				];
 			case 'merchant':
 			default:
 				return [
@@ -394,6 +405,7 @@ if ( ! function_exists( 'crm_telegram_get_configuration_status' ) ) {
 		$is_merchant    = $context === 'merchant';
 		$is_operator    = $context === 'operator';
 		$is_service     = $context === 'service';
+		$is_subscription = $context === 'subscription';
 
 		if ( $settings['bot_username'] === '' ) {
 			$missing_fields[] = [
@@ -444,6 +456,7 @@ if ( ! function_exists( 'crm_telegram_get_configuration_status' ) ) {
 			'invite_ready'         => $is_merchant && $ready,
 			'operator_ready'       => $is_operator && $ready,
 			'service_ready'        => $is_service && $ready,
+			'subscription_ready'   => $is_subscription && $ready,
 			'webhook_matches'      => $webhook_matches,
 			'blocked_reason'       => $blocked_reason,
 			'missing_fields'       => $missing_fields,
@@ -501,6 +514,74 @@ if ( ! function_exists( 'crm_telegram_bot_api_request' ) ) {
 			'ok'          => false,
 			'description' => 'Invalid Telegram API response.',
 			'raw'         => $body,
+		];
+	}
+}
+
+if ( ! function_exists( 'crm_telegram_bot_api_multipart_request' ) ) {
+	function crm_telegram_bot_api_multipart_request( string $token, string $method, array $payload = [], array $files = [] ): array {
+		$token  = trim( $token );
+		$method = trim( $method );
+		if ( $token === '' || $method === '' ) {
+			return [
+				'ok'          => false,
+				'description' => 'Bot token or API method is missing.',
+			];
+		}
+		if ( ! function_exists( 'curl_init' ) || ! function_exists( 'curl_file_create' ) ) {
+			return [
+				'ok'          => false,
+				'description' => 'PHP cURL extension is required for Telegram multipart requests.',
+			];
+		}
+
+		$body = $payload;
+		foreach ( $files as $field => $file ) {
+			$path = isset( $file['path'] ) ? (string) $file['path'] : '';
+			if ( $path === '' || ! is_readable( $path ) ) {
+				return [
+					'ok'          => false,
+					'description' => 'Upload file is missing or unreadable.',
+				];
+			}
+
+			$body[ $field ] = curl_file_create(
+				$path,
+				(string) ( $file['type'] ?? 'application/octet-stream' ),
+				(string) ( $file['name'] ?? basename( $path ) )
+			);
+		}
+
+		$ch = curl_init( 'https://api.telegram.org/bot' . $token . '/' . ltrim( $method, '/' ) );
+		curl_setopt_array(
+			$ch,
+			[
+				CURLOPT_POST           => true,
+				CURLOPT_POSTFIELDS     => $body,
+				CURLOPT_RETURNTRANSFER => true,
+				CURLOPT_TIMEOUT        => 30,
+			]
+		);
+		$raw = curl_exec( $ch );
+		if ( false === $raw ) {
+			$error = curl_error( $ch );
+			curl_close( $ch );
+			return [
+				'ok'          => false,
+				'description' => $error !== '' ? $error : 'Telegram multipart request failed.',
+			];
+		}
+		curl_close( $ch );
+
+		$decoded = json_decode( (string) $raw, true );
+		if ( is_array( $decoded ) ) {
+			return $decoded;
+		}
+
+		return [
+			'ok'          => false,
+			'description' => 'Invalid Telegram API response.',
+			'raw'         => (string) $raw,
 		];
 	}
 }
@@ -695,6 +776,18 @@ if ( ! function_exists( 'crm_telegram_run_post_connect_tasks' ) ) {
 				$result['message'] = trim( (string) ( $commands_result['message'] ?? 'Не удалось обновить команды operator-бота.' ) );
 			} else {
 				$result['message'] = 'Команды operator-бота обновлены.';
+			}
+		}
+
+		if ( $context === 'subscription' && function_exists( 'crm_telegram_channels_set_subscription_commands' ) ) {
+			$commands_result = crm_telegram_channels_set_subscription_commands( $company_id );
+			$result['steps']['subscription_commands'] = $commands_result;
+
+			if ( empty( $commands_result['success'] ) ) {
+				$result['success'] = false;
+				$result['message'] = trim( (string) ( $commands_result['message'] ?? 'Не удалось обновить команды subscription bot.' ) );
+			} else {
+				$result['message'] = 'Команды subscription bot обновлены.';
 			}
 		}
 

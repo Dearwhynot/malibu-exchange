@@ -367,6 +367,17 @@ if ( $_dashboard_is_root ) {
 
 	$_week_total_count = array_sum( $_week_data_total );
 	$_week_paid_count  = array_sum( $_week_data_paid );
+	$_week_max_daily_total = ! empty( $_week_data_total ) ? max( array_map( 'intval', $_week_data_total ) ) : 0;
+	$_week_active_days_count = 0;
+	$_week_paid_share = $_week_total_count > 0
+		? (int) round( ( $_week_paid_count / $_week_total_count ) * 100 )
+		: 0;
+
+	foreach ( $_week_data_total as $_week_daily_total ) {
+		if ( (int) $_week_daily_total > 0 ) {
+			$_week_active_days_count++;
+		}
+	}
 	// phpcs:enable
 }
 
@@ -769,23 +780,53 @@ get_header();
 											</h5>
 										</div>
 									</div>
-									<div class="row m-b-10">
-										<div class="col-6">
-											<span class="m-r-10" style="display:inline-block;width:12px;height:12px;background:#6d5cae;border-radius:2px;"></span>
-											<span class="hint-text fs-12">Всего</span>
-										</div>
-										<div class="col-6">
-											<span class="m-r-10" style="display:inline-block;width:12px;height:12px;background:#10cfbd;border-radius:2px;"></span>
-											<span class="hint-text fs-12">Paid</span>
-										</div>
+									<div class="dashboard-week-legend m-b-15">
+										<span class="dashboard-week-legend__item">
+											<span class="dashboard-week-legend__swatch dashboard-week-legend__swatch--total" aria-hidden="true"></span>
+											<span>Всего ордеров</span>
+										</span>
+										<span class="dashboard-week-legend__item">
+											<span class="dashboard-week-legend__swatch dashboard-week-legend__swatch--paid" aria-hidden="true"></span>
+											<span>Paid</span>
+										</span>
+										<?php if ( $_week_chart_is_fallback ) : ?>
+											<span class="dashboard-week-badge">Последние активные дни</span>
+										<?php endif; ?>
 									</div>
-									<div id="dash-sparkline-chart" style="min-height:90px; overflow-x:auto; white-space:nowrap;"></div>
-									<div class="row m-t-10">
+									<div class="dashboard-week-grid">
 										<?php foreach ( $_week_labels as $i => $label ) : ?>
-										<div class="col text-center">
-											<span class="hint-text fs-10"><?php echo esc_html( $label ); ?></span>
-										</div>
+											<?php
+											$_week_day_total = isset( $_week_data_total[ $i ] ) ? (int) $_week_data_total[ $i ] : 0;
+											$_week_day_paid  = isset( $_week_data_paid[ $i ] ) ? (int) $_week_data_paid[ $i ] : 0;
+											$_week_day_total_height = $_week_max_daily_total > 0 && $_week_day_total > 0
+												? max( 18, (int) round( ( $_week_day_total / $_week_max_daily_total ) * 100 ) )
+												: 8;
+											$_week_day_paid_height = $_week_max_daily_total > 0 && $_week_day_paid > 0
+												? max( 18, (int) round( ( $_week_day_paid / $_week_max_daily_total ) * 100 ) )
+												: 8;
+											$_week_day_paid_ratio = $_week_day_total > 0
+												? (int) round( ( $_week_day_paid / $_week_day_total ) * 100 )
+												: 0;
+											?>
+											<div class="dashboard-week-day<?php echo $_week_day_total > 0 ? ' is-active' : ' is-empty'; ?>">
+												<div class="dashboard-week-day__top">
+													<span class="dashboard-week-day__label"><?php echo esc_html( $label ); ?></span>
+													<span class="dashboard-week-day__share"><?php echo esc_html( $_week_day_paid_ratio ); ?>%</span>
+												</div>
+												<div class="dashboard-week-day__bars" aria-hidden="true">
+													<span class="dashboard-week-day__bar dashboard-week-day__bar--total" style="height:<?php echo esc_attr( $_week_day_total_height ); ?>%"></span>
+													<span class="dashboard-week-day__bar dashboard-week-day__bar--paid" style="height:<?php echo esc_attr( $_week_day_paid_height ); ?>%"></span>
+												</div>
+												<div class="dashboard-week-day__stats">
+													<span><strong><?php echo esc_html( number_format_i18n( $_week_day_total ) ); ?></strong> всего</span>
+													<span><strong><?php echo esc_html( number_format_i18n( $_week_day_paid ) ); ?></strong> paid</span>
+												</div>
+											</div>
 										<?php endforeach; ?>
+									</div>
+									<div class="dashboard-week-foot">
+										<span>Активных дней: <strong><?php echo esc_html( number_format_i18n( $_week_active_days_count ) ); ?></strong> из 7</span>
+										<span>Paid-rate: <strong><?php echo esc_html( number_format_i18n( $_week_paid_share ) ); ?>%</strong></span>
 									</div>
 								<?php else : ?>
 									<div class="dashboard-empty-state dashboard-empty-state--chart">
@@ -964,53 +1005,5 @@ get_header();
 
 <?php get_template_part( 'template-parts/quickview' ); ?>
 <?php get_template_part( 'template-parts/overlay' ); ?>
-
-<?php
-add_action( 'wp_footer', function () use ( $_week_data_total, $_week_data_paid, $_week_labels ) {
-?>
-<script>
-(function($) {
-	var totalData = <?php echo json_encode( array_values( $_week_data_total ) ); ?>;
-	var paidData  = <?php echo json_encode( array_values( $_week_data_paid ) ); ?>;
-	var labels    = <?php echo json_encode( array_values( $_week_labels ) ); ?>;
-
-	function initChart() {
-		if (typeof $.fn.sparkline === 'undefined') return;
-
-		var $el = $('#dash-sparkline-chart');
-		$el.empty();
-
-		// Рисуем два слоя sparkline (composite)
-		$el.sparkline(totalData, {
-			type:        'bar',
-			barWidth:    20,
-			barSpacing:  6,
-			barColor:    '#6d5cae',
-			zeroColor:   '#6d5cae',
-			tooltipFormatter: function(sp, opts, fields) {
-				return labels[fields[0].offset] + ': ' + fields[0].value + ' всего';
-			}
-		});
-		$el.sparkline(paidData, {
-			type:        'bar',
-			barWidth:    20,
-			barSpacing:  6,
-			barColor:    '#10cfbd',
-			zeroColor:   '#10cfbd',
-			composite:   true,
-			tooltipFormatter: function(sp, opts, fields) {
-				return labels[fields[0].offset] + ': ' + fields[0].value + ' paid';
-			}
-		});
-	}
-
-	$(document).ready(function() {
-		initChart();
-	});
-})(jQuery);
-</script>
-<?php
-}, 99 );
-?>
 
 <?php get_footer(); ?>

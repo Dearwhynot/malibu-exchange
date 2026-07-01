@@ -1847,6 +1847,7 @@ if ( ! function_exists( 'crm_fintech_run_terminal_order_side_effects' ) ) {
 			'accrual'           => null,
 			'merchant_telegram' => null,
 			'operator_telegram' => null,
+			'telegram_channels' => null,
 		];
 
 		if ( $order_id <= 0 ) {
@@ -1855,6 +1856,14 @@ if ( ! function_exists( 'crm_fintech_run_terminal_order_side_effects' ) ) {
 
 		if ( $status_code === 'paid' && function_exists( 'crm_merchant_create_paid_order_accrual' ) ) {
 			$result['accrual'] = crm_merchant_create_paid_order_accrual( $order_id, $source_code !== '' ? $source_code : 'system' );
+		}
+
+		if ( in_array( $status_code, [ 'paid', 'declined', 'cancelled', 'expired', 'error' ], true ) ) {
+			if ( function_exists( 'crm_telegram_channels_handle_terminal_order' ) ) {
+				$result['telegram_channels'] = crm_telegram_channels_handle_terminal_order( $order_id, $status_code, $source_code !== '' ? $source_code : 'system' );
+			} elseif ( $status_code === 'paid' && function_exists( 'crm_telegram_channels_handle_paid_order' ) ) {
+				$result['telegram_channels'] = crm_telegram_channels_handle_paid_order( $order_id, $source_code !== '' ? $source_code : 'system' );
+			}
 		}
 
 		if ( in_array( $status_code, [ 'paid', 'declined', 'cancelled', 'expired', 'error' ], true ) && function_exists( 'crm_merchant_tg_sync_order_status' ) ) {

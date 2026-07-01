@@ -43,6 +43,17 @@ $company_enabled_invoice_directions = function_exists( 'crm_company_get_enabled_
 	? crm_company_get_enabled_invoice_directions( $current_company_id )
 	: [];
 $company_enabled_invoice_directions_map = array_fill_keys( $company_enabled_invoice_directions, true );
+$merchant_feature_definitions = function_exists( 'crm_merchant_feature_definitions' )
+	? crm_merchant_feature_definitions()
+	: [];
+$company_available_merchant_features = [];
+if ( function_exists( 'crm_merchant_company_feature_available' ) ) {
+	foreach ( array_keys( $merchant_feature_definitions ) as $feature_code ) {
+		if ( crm_merchant_company_feature_available( $current_company_id, $feature_code ) ) {
+			$company_available_merchant_features[] = $feature_code;
+		}
+	}
+}
 
 $companies_payload = array_map(
 	static function ( $company ) {
@@ -665,6 +676,75 @@ get_header();
 						</div>
 					</div>
 
+					<?php if ( ! empty( $merchant_feature_definitions ) ) : ?>
+					<div class="row">
+						<div class="col-md-12">
+							<div class="form-group merchant-features-group">
+								<label class="d-block m-b-8">Доступ к сервисам мерчанта</label>
+								<div class="hint-text fs-12 m-b-10">Сервис должен быть включён для компании; здесь он выдаётся конкретному мерчанту.</div>
+								<div class="row">
+									<?php foreach ( $merchant_feature_definitions as $feature_code => $feature ) : ?>
+										<?php
+										$feature_slug         = sanitize_html_class( $feature_code );
+										$is_company_available = in_array( $feature_code, $company_available_merchant_features, true );
+										?>
+										<div class="col-md-6">
+											<div class="merchant-feature-card">
+												<div class="form-check complete m-b-5">
+													<input type="checkbox"
+													       id="merchant-feature-<?php echo esc_attr( $feature_slug ); ?>"
+													       class="js-merchant-feature"
+													       value="<?php echo esc_attr( $feature_code ); ?>"
+													       <?php disabled( ! $is_company_available ); ?>>
+													<label for="merchant-feature-<?php echo esc_attr( $feature_slug ); ?>">
+														<?php echo esc_html( (string) ( $feature['label'] ?? $feature_code ) ); ?>
+													</label>
+												</div>
+												<div class="hint-text fs-12">
+													<?php echo esc_html( $is_company_available ? (string) ( $feature['description'] ?? '' ) : 'Сначала root должен включить этот сервис для компании.' ); ?>
+												</div>
+												<?php if ( $feature_code === 'telegram_channels' ) : ?>
+													<div class="m-t-15">
+														<div class="row">
+															<div class="col-md-12">
+																<div class="form-group form-group-default form-group-default-select2">
+																	<label for="merchant-telegram-markup-basis">База расчёта Telegram</label>
+																	<select id="merchant-telegram-markup-basis" name="telegram_channels_markup_basis" class="full-width" data-select2-hide-search="1" <?php disabled( ! $is_company_available ); ?>>
+																		<?php foreach ( crm_merchant_markup_bases() as $basis_code => $label ) : ?>
+																		<option value="<?php echo esc_attr( $basis_code ); ?>"><?php echo esc_html( $label ); ?></option>
+																		<?php endforeach; ?>
+																	</select>
+																</div>
+															</div>
+															<div class="col-md-6">
+																<div class="form-group form-group-default form-group-default-select2">
+																	<label for="merchant-telegram-markup-type">Тип</label>
+																	<select id="merchant-telegram-markup-type" name="telegram_channels_markup_type" class="full-width" data-select2-hide-search="1" <?php disabled( ! $is_company_available ); ?>>
+																		<?php foreach ( crm_merchant_markup_types() as $type_code => $label ) : ?>
+																		<option value="<?php echo esc_attr( $type_code ); ?>"><?php echo esc_html( $label ); ?></option>
+																		<?php endforeach; ?>
+																	</select>
+																</div>
+															</div>
+															<div class="col-md-6">
+																<div class="form-group form-group-default">
+																	<label for="merchant-telegram-markup-value">Значение</label>
+																	<input type="text" class="form-control" id="merchant-telegram-markup-value" name="telegram_channels_markup_value" value="0" <?php disabled( ! $is_company_available ); ?>>
+																</div>
+															</div>
+														</div>
+														<div class="hint-text fs-12">Процент прибавляется к выбранной базе. Фиксированная сумма — RUB к курсу за 1 USDT.</div>
+													</div>
+												<?php endif; ?>
+											</div>
+										</div>
+									<?php endforeach; ?>
+								</div>
+							</div>
+						</div>
+					</div>
+					<?php endif; ?>
+
 					<div class="row">
 						<div class="col-md-12">
 							<div class="form-group">
@@ -811,7 +891,7 @@ get_header();
 <?php
 add_action(
 	'wp_footer',
-	function () use ( $nonce_list, $nonce_save, $nonce_status, $nonce_invite, $nonce_ledger, $nonce_api_create, $nonce_api_revoke, $is_root, $can_edit, $can_block, $can_invite, $can_ledger, $can_orders, $can_manage_api, $companies_payload, $referrers_by_company, $current_company_id, $telegram_invite_status, $exchange_pair_definitions, $company_enabled_invoice_directions ) {
+	function () use ( $nonce_list, $nonce_save, $nonce_status, $nonce_invite, $nonce_ledger, $nonce_api_create, $nonce_api_revoke, $is_root, $can_edit, $can_block, $can_invite, $can_ledger, $can_orders, $can_manage_api, $companies_payload, $referrers_by_company, $current_company_id, $telegram_invite_status, $exchange_pair_definitions, $company_enabled_invoice_directions, $merchant_feature_definitions, $company_available_merchant_features ) {
 	?>
 <style>
 #merchant-telegram-invite-modal .modal-dialog {
@@ -912,11 +992,13 @@ add_action(
 	resize: vertical;
 }
 #merchant-telegram-invite-modal .merchant-directions-group,
-#merchant-modal .merchant-directions-group {
+#merchant-modal .merchant-directions-group,
+#merchant-modal .merchant-features-group {
 	margin-bottom: 16px;
 }
 #merchant-telegram-invite-modal .merchant-direction-card,
-#merchant-modal .merchant-direction-card {
+#merchant-modal .merchant-direction-card,
+#merchant-modal .merchant-feature-card {
 	height: 100%;
 	padding: 12px 14px;
 	border: 1px solid #e8edf2;
@@ -924,7 +1006,8 @@ add_action(
 	background: #f7fafc;
 }
 #merchant-telegram-invite-modal .merchant-direction-card .form-check,
-#merchant-modal .merchant-direction-card .form-check {
+#merchant-modal .merchant-direction-card .form-check,
+#merchant-modal .merchant-feature-card .form-check {
 	margin-bottom: 6px;
 }
 .merchant-direction-summary {
@@ -972,6 +1055,26 @@ add_action(
 .merchant-direction-summary .badge-direction-compact-more {
 	background: #edf7f4;
 	color: #327c74;
+}
+.merchant-feature-summary {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin-top: 6px;
+}
+.merchant-feature-pill {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 4px 10px;
+	border-radius: 999px;
+	font-size: 11px;
+	line-height: 1.25;
+	font-weight: 600;
+	white-space: nowrap;
+	background: #fff3d9;
+	color: #a26500;
 }
 .merchant-created-at {
 	display: inline-flex;
@@ -1155,6 +1258,8 @@ add_action(
 	var CAN_MANAGE_API = <?php echo $can_manage_api ? 'true' : 'false'; ?>;
 	var EXCHANGE_PAIR_TITLES = <?php echo crm_json_for_inline_js( array_column( $exchange_pair_definitions, 'title', 'code' ) ); ?> || {};
 	var COMPANY_ENABLED_DIRECTIONS = <?php echo crm_json_for_inline_js( array_values( array_map( 'strval', $company_enabled_invoice_directions ) ) ); ?> || [];
+	var MERCHANT_FEATURE_DEFINITIONS = <?php echo crm_json_for_inline_js( $merchant_feature_definitions ); ?> || {};
+	var COMPANY_AVAILABLE_MERCHANT_FEATURES = <?php echo crm_json_for_inline_js( array_values( array_map( 'strval', $company_available_merchant_features ) ) ); ?> || [];
 	var TELEGRAM_INVITE_STATUS = <?php echo crm_json_for_inline_js( $telegram_invite_status ); ?> || {};
 	var TELEGRAM_INVITE_STATUS_LABELS = <?php echo crm_json_for_inline_js( crm_merchant_invite_statuses() ); ?> || {};
 	var TELEGRAM_INVITE_STATUS_BADGES = { new: 'primary', used: 'success', expired: 'warning', revoked: 'secondary' };
@@ -1169,6 +1274,7 @@ add_action(
 	var currentLedgerMerchant = null;
 	var currentMerchantApi = null;
 	var latestTelegramInvite = null;
+	var telegramInviteCreating = false;
 	var telegramInviteHistoryMap = {};
 	var telegramInviteServerOffsetMs = 0;
 
@@ -1308,6 +1414,66 @@ add_action(
 		return normalizeDirectionCodes(selected);
 	}
 
+	function normalizeMerchantFeatureCodes(features) {
+		var items = [];
+		var seen = {};
+		var normalized = [];
+
+		if ($.isArray(features)) {
+			items = features;
+		} else if (features && typeof features === 'object') {
+			$.each(features, function (code, meta) {
+				if (meta === true || (meta && meta.enabled)) {
+					items.push(code);
+				}
+			});
+		}
+
+		$.each(items || [], function (_, featureCode) {
+			var code = $.trim(String(featureCode || '')).toLowerCase();
+			if (!code || seen[code] || !MERCHANT_FEATURE_DEFINITIONS[code]) {
+				return;
+			}
+			seen[code] = true;
+			normalized.push(code);
+		});
+
+		return normalized;
+	}
+
+	function setMerchantFeatureCheckboxes(featureAccess) {
+		var enabled = normalizeMerchantFeatureCodes(featureAccess);
+
+		$('.js-merchant-feature').each(function () {
+			var $checkbox = $(this);
+			var code = String($checkbox.val() || '');
+			var isCompanyAvailable = COMPANY_AVAILABLE_MERCHANT_FEATURES.indexOf(code) !== -1;
+			$checkbox.prop('disabled', !isCompanyAvailable);
+			$checkbox.prop('checked', isCompanyAvailable && enabled.indexOf(code) !== -1);
+		});
+	}
+
+	function collectMerchantFeatureCheckboxes() {
+		var selected = [];
+		$('.js-merchant-feature:checked:not(:disabled)').each(function () {
+			selected.push($(this).val());
+		});
+
+		return normalizeMerchantFeatureCodes(selected);
+	}
+
+	function renderMerchantFeatureBadges(featureAccess) {
+		var enabled = normalizeMerchantFeatureCodes(featureAccess);
+		var html = '';
+
+		$.each(enabled, function (_, code) {
+			var definition = MERCHANT_FEATURE_DEFINITIONS[code] || {};
+			html += '<span class="merchant-feature-pill">' + escHtml(definition.short_label || definition.label || code) + '</span>';
+		});
+
+		return html ? '<div class="merchant-feature-summary">' + html + '</div>' : '';
+	}
+
 	function showConfirm(message, callback, options) {
 		if (window.MalibuConfirm && typeof window.MalibuConfirm.show === 'function') {
 			window.MalibuConfirm.show(message, callback, options || {});
@@ -1407,7 +1573,7 @@ add_action(
 		TELEGRAM_INVITE_STATUS = status || {};
 		var html = telegramInviteStatusHtml(TELEGRAM_INVITE_STATUS);
 		$('#telegram-invite-page-status-host, #telegram-invite-modal-status-host').html(html);
-		$('#btn-create-telegram-invite').prop('disabled', !TELEGRAM_INVITE_STATUS.invite_ready);
+		$('#btn-create-telegram-invite').prop('disabled', !TELEGRAM_INVITE_STATUS.invite_ready || telegramInviteCreating);
 		$('#btn-open-telegram-invite-modal')
 			.prop('disabled', !TELEGRAM_INVITE_STATUS.invite_ready)
 			.attr('title', TELEGRAM_INVITE_STATUS.invite_ready ? '' : (TELEGRAM_INVITE_STATUS.blocked_reason || 'Сначала подключите мерчантский Telegram callback в настройках.'));
@@ -1682,8 +1848,12 @@ add_action(
 		$('#merchant-status').val('active').trigger('change.select2');
 		$('#merchant-markup-basis').val('acquirer_cost').trigger('change.select2');
 		$('#merchant-markup-type').val('percent').trigger('change.select2');
+		$('#merchant-telegram-markup-basis').val('acquirer_cost').trigger('change.select2');
+		$('#merchant-telegram-markup-type').val('percent').trigger('change.select2');
+		$('#merchant-telegram-markup-value').val('0');
 		$('input[name="rub_invoice_markup_mode"][value="none"]').prop('checked', true);
 		setDirectionCheckboxes('.js-merchant-direction', COMPANY_ENABLED_DIRECTIONS);
+		setMerchantFeatureCheckboxes({});
 		setMerchantAvatarPreview('', 'TG');
 		var companyId = IS_ROOT ? ($('#merchant-company-id').val() || '') : '<?php echo (int) $current_company_id; ?>';
 		syncMerchantFormOptions(companyId, '', 0);
@@ -1792,6 +1962,10 @@ add_action(
 				: '';
 			var statusHtml = '<span class="badge badge-' + escHtml(row.status_badge) + '">' + escHtml(row.status_label) + '</span>';
 			var directionsCellHtml = renderMerchantDirectionColumn(row.enabled_invoice_directions || []);
+			var featureBadgesHtml = renderMerchantFeatureBadges(row.feature_access || row.enabled_features || []);
+			if (featureBadgesHtml) {
+				directionsCellHtml += featureBadgesHtml;
+			}
 
 			var html = '<tr>'
 				+ '<td class="v-align-middle"><span class="hint-text fs-12">#' + row.id + '</span></td>'
@@ -1861,8 +2035,12 @@ add_action(
 			$('#merchant-status').val(row.status).trigger('change.select2');
 			$('#merchant-markup-basis').val(row.base_markup_basis || 'acquirer_cost').trigger('change.select2');
 			$('#merchant-markup-type').val(row.base_markup_type).trigger('change.select2');
+			$('#merchant-telegram-markup-basis').val(row.telegram_channels_markup_basis || 'acquirer_cost').trigger('change.select2');
+			$('#merchant-telegram-markup-type').val(row.telegram_channels_markup_type || 'percent').trigger('change.select2');
+			$('#merchant-telegram-markup-value').val(row.telegram_channels_markup_value || '0');
 			$('input[name="rub_invoice_markup_mode"][value="' + (row.rub_invoice_markup_mode || 'none') + '"]').prop('checked', true);
 			setDirectionCheckboxes('.js-merchant-direction', row.enabled_invoice_directions || COMPANY_ENABLED_DIRECTIONS);
+			setMerchantFeatureCheckboxes(row.feature_access || row.enabled_features || []);
 			$('#merchant-markup-value').val(row.base_markup_value);
 			$('#merchant-ref-code').val(row.ref_code || '');
 			$('#merchant-note').val(row.note || '');
@@ -1896,7 +2074,11 @@ add_action(
 			base_markup_basis:      $('#merchant-markup-basis').val(),
 			base_markup_type:       $('#merchant-markup-type').val(),
 			rub_invoice_markup_mode: $('input[name="rub_invoice_markup_mode"]:checked').val() || 'none',
+			telegram_channels_markup_basis: $('#merchant-telegram-markup-basis').val(),
+			telegram_channels_markup_type:  $('#merchant-telegram-markup-type').val(),
+			telegram_channels_markup_value: $('#merchant-telegram-markup-value').val(),
 			enabled_invoice_directions: collectDirectionCheckboxes('.js-merchant-direction'),
+			merchant_features:      collectMerchantFeatureCheckboxes(),
 			base_markup_value:      $('#merchant-markup-value').val(),
 			ref_code:               $('#merchant-ref-code').val(),
 			referred_by_merchant_id: $('#merchant-referred-by').val(),
@@ -2212,12 +2394,19 @@ add_action(
 	}
 
 	function createTelegramInvite() {
+		if (telegramInviteCreating) {
+			return;
+		}
+
 		hideInlineAlert($('#telegram-invite-alert'));
 		var enabledDirections = collectDirectionCheckboxes('.js-merchant-invite-direction');
 		if (!enabledDirections.length) {
 			showInlineAlert($('#telegram-invite-alert'), 'Выберите хотя бы одно направление обмена для invite.', 'warning');
 			return;
 		}
+
+		telegramInviteCreating = true;
+		$('#btn-create-telegram-invite').prop('disabled', true).addClass('disabled');
 
 		$.post(AJAX_URL, {
 			action: 'me_merchants_telegram_invite_create',
@@ -2241,10 +2430,17 @@ add_action(
 				renderTelegramInviteStatus(res.data.telegram_status);
 			}
 			renderTelegramInvitePreview(res.data.invite || null);
+			$('#merchant-telegram-invite-modal').modal('hide');
 			clearTelegramInviteHistoryFocus();
 			loadTelegramInviteHistory(1);
+			showInlineAlert($('#telegram-invite-page-alert'), res.data.message || 'Telegram-инвайт создан. Ссылка добавлена в историю.', 'success');
 		}, 'json').fail(function () {
 			showInlineAlert($('#telegram-invite-alert'), 'Ошибка сервера при создании Telegram-инвайта.', 'danger');
+		}).always(function () {
+			telegramInviteCreating = false;
+			$('#btn-create-telegram-invite')
+				.prop('disabled', !TELEGRAM_INVITE_STATUS.invite_ready)
+				.removeClass('disabled');
 		});
 	}
 
@@ -2515,7 +2711,7 @@ add_action(
 
 	$('#merchant-modal').on('shown.bs.modal', function () {
 		initModalSelect2(
-			$('#merchant-referred-by, #merchant-status, #merchant-markup-basis, #merchant-markup-type, select#merchant-company-id'),
+			$('#merchant-referred-by, #merchant-status, #merchant-markup-basis, #merchant-markup-type, #merchant-telegram-markup-basis, #merchant-telegram-markup-type, select#merchant-company-id'),
 			$('#merchant-modal')
 		);
 		syncMerchantModalFooter($('#merchant-modal-tab-api').hasClass('active') ? '#merchant-modal-tab-api' : '#merchant-modal-tab-profile');
@@ -2523,7 +2719,7 @@ add_action(
 
 	$('#merchant-modal').on('hidden.bs.modal', function () {
 		destroyModalSelect2(
-			$('#merchant-referred-by, #merchant-status, #merchant-markup-basis, #merchant-markup-type, select#merchant-company-id')
+			$('#merchant-referred-by, #merchant-status, #merchant-markup-basis, #merchant-markup-type, #merchant-telegram-markup-basis, #merchant-telegram-markup-type, select#merchant-company-id')
 		);
 		$('#merchant-company-id').prop('disabled', false);
 		setMerchantApiTabEnabled(false);

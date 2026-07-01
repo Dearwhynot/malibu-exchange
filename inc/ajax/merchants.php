@@ -348,8 +348,17 @@ function _me_merchants_format_row( object $row, array $balance = [] ): array {
 	$markup_basis       = crm_merchant_normalize_markup_basis( (string) ( $row->base_markup_basis ?? 'acquirer_cost' ) );
 	$rub_invoice_markup_mode = crm_merchant_normalize_rub_invoice_markup_mode( (string) ( $row->rub_invoice_markup_mode ?? 'none' ) );
 	$markup_value_label = crm_merchant_markup_display_label( $markup_type, $markup_value, $markup_basis );
+	$telegram_markup_value = max( 0, (float) ( $row->telegram_channels_markup_value ?? 0 ) );
+	$telegram_markup_type  = sanitize_key( (string) ( $row->telegram_channels_markup_type ?? 'percent' ) );
+	if ( ! isset( crm_merchant_markup_types()[ $telegram_markup_type ] ) ) {
+		$telegram_markup_type = 'percent';
+	}
+	$telegram_markup_basis = crm_merchant_normalize_markup_basis( (string) ( $row->telegram_channels_markup_basis ?? 'acquirer_cost' ) );
 	$enabled_invoice_directions = function_exists( 'crm_merchant_resolve_invoice_directions_from_row' )
 		? crm_merchant_resolve_invoice_directions_from_row( $row, true )
+		: [];
+	$feature_access = function_exists( 'crm_merchant_feature_access_payload' )
+		? crm_merchant_feature_access_payload( $company_id, (int) $row->id )
 		: [];
 
 	return [
@@ -375,6 +384,12 @@ function _me_merchants_format_row( object $row, array $balance = [] ): array {
 		'rub_invoice_markup_mode_label' => crm_merchant_rub_invoice_markup_mode_label( $rub_invoice_markup_mode ),
 		'base_markup_value'     => number_format( $markup_value, 8, '.', '' ),
 		'base_markup_label'     => $markup_value_label,
+		'telegram_channels_markup_basis' => $telegram_markup_basis,
+		'telegram_channels_markup_basis_label' => crm_merchant_markup_basis_label( $telegram_markup_basis ),
+		'telegram_channels_markup_type' => $telegram_markup_type,
+		'telegram_channels_markup_type_label' => crm_merchant_markup_type_label( $telegram_markup_type ),
+		'telegram_channels_markup_value' => number_format( $telegram_markup_value, 8, '.', '' ),
+		'telegram_channels_markup_label' => crm_merchant_markup_display_label( $telegram_markup_type, $telegram_markup_value, $telegram_markup_basis ),
 		'enabled_invoice_directions' => $enabled_invoice_directions,
 		'enabled_invoice_directions_badges_html' => function_exists( 'crm_merchant_render_exchange_pair_badges_html' )
 			? crm_merchant_render_exchange_pair_badges_html( $enabled_invoice_directions )
@@ -382,6 +397,10 @@ function _me_merchants_format_row( object $row, array $balance = [] ): array {
 		'has_custom_invoice_directions' => function_exists( 'crm_merchant_has_custom_invoice_directions' )
 			? crm_merchant_has_custom_invoice_directions( $row )
 			: false,
+		'feature_access'        => $feature_access,
+		'enabled_features'      => function_exists( 'crm_merchant_feature_access_enabled_codes' )
+			? crm_merchant_feature_access_enabled_codes( $company_id, (int) $row->id )
+			: [],
 		'ref_code'              => (string) ( $row->ref_code ?? '' ),
 		'referred_by_merchant_id' => $row->referred_by_merchant_id ? (int) $row->referred_by_merchant_id : null,
 		'referred_by_name'      => (string) ( $row->referred_by_name ?? '' ),
@@ -575,6 +594,9 @@ function me_ajax_merchants_save(): void {
 	$markup_basis  = crm_merchant_normalize_markup_basis( sanitize_key( wp_unslash( $_POST['base_markup_basis'] ?? 'acquirer_cost' ) ) );
 	$rub_invoice_markup_mode = crm_merchant_normalize_rub_invoice_markup_mode( sanitize_key( wp_unslash( $_POST['rub_invoice_markup_mode'] ?? 'none' ) ) );
 	$markup_value  = trim( (string) wp_unslash( $_POST['base_markup_value'] ?? '0' ) );
+	$telegram_markup_type  = sanitize_key( wp_unslash( $_POST['telegram_channels_markup_type'] ?? 'percent' ) );
+	$telegram_markup_basis = crm_merchant_normalize_markup_basis( sanitize_key( wp_unslash( $_POST['telegram_channels_markup_basis'] ?? 'acquirer_cost' ) ) );
+	$telegram_markup_value = trim( (string) wp_unslash( $_POST['telegram_channels_markup_value'] ?? '0' ) );
 	$ref_code      = sanitize_text_field( wp_unslash( $_POST['ref_code'] ?? '' ) );
 	$note          = sanitize_textarea_field( wp_unslash( $_POST['note'] ?? '' ) );
 	$referred_by   = (int) ( $_POST['referred_by_merchant_id'] ?? 0 );
@@ -604,6 +626,19 @@ function me_ajax_merchants_save(): void {
 	}
 	$markup_value = number_format( (float) $markup_value, 8, '.', '' );
 
+	if ( ! isset( crm_merchant_markup_types()[ $telegram_markup_type ] ) ) {
+		$telegram_markup_type = 'percent';
+	}
+
+	if ( $telegram_markup_value === '' || ! is_numeric( $telegram_markup_value ) ) {
+		_me_merchants_error( 'Наценка Telegram-каналов должна быть числом.', 422 );
+	}
+	$telegram_markup_value_float = (float) $telegram_markup_value;
+	if ( $telegram_markup_value_float < 0 ) {
+		_me_merchants_error( 'Наценка Telegram-каналов не может быть отрицательной.', 422 );
+	}
+	$telegram_markup_value = number_format( $telegram_markup_value_float, 8, '.', '' );
+
 	$existing = _me_merchants_fetch_row( $merchant_id );
 	if ( ! $existing ) {
 		_me_merchants_error( 'Мерчант не найден.', 404 );
@@ -612,6 +647,8 @@ function me_ajax_merchants_save(): void {
 	$company_id                  = (int) $existing->company_id;
 	$has_invoice_directions_param = array_key_exists( 'enabled_invoice_directions', $_POST );
 	$enabled_invoice_directions   = null;
+	$has_feature_access_param     = array_key_exists( 'merchant_features', $_POST );
+	$enabled_feature_codes        = [];
 
 	$referred_by = _me_merchants_validate_referred_by( $company_id, $merchant_id, $referred_by );
 	if ( $has_invoice_directions_param && function_exists( 'crm_merchant_validate_invoice_directions_for_company' ) ) {
@@ -621,6 +658,19 @@ function me_ajax_merchants_save(): void {
 		);
 		if ( is_wp_error( $enabled_invoice_directions ) ) {
 			_me_merchants_error( $enabled_invoice_directions->get_error_message(), 422 );
+		}
+	}
+	if ( $has_feature_access_param ) {
+		if ( ! function_exists( 'crm_merchant_validate_feature_access_for_company' ) ) {
+			_me_merchants_error( 'Feature-доступы мерчантов недоступны в текущей версии кода.', 500 );
+		}
+
+		$enabled_feature_codes = crm_merchant_validate_feature_access_for_company(
+			$company_id,
+			wp_unslash( $_POST['merchant_features'] )
+		);
+		if ( is_wp_error( $enabled_feature_codes ) ) {
+			_me_merchants_error( $enabled_feature_codes->get_error_message(), 422 );
 		}
 	}
 
@@ -654,11 +704,14 @@ function me_ajax_merchants_save(): void {
 		'base_markup_basis'      => $markup_basis,
 		'rub_invoice_markup_mode'=> $rub_invoice_markup_mode,
 		'base_markup_value'      => $markup_value,
+		'telegram_channels_markup_basis' => $telegram_markup_basis,
+		'telegram_channels_markup_type'  => $telegram_markup_type,
+		'telegram_channels_markup_value' => $telegram_markup_value,
 		'ref_code'               => $ref_code !== '' ? $ref_code : null,
 		'referred_by_merchant_id'=> $referred_by,
 		'note'                   => $note !== '' ? $note : null,
 	];
-	$update_format = [ '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s' ];
+	$update_format = [ '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s' ];
 
 	if ( $has_invoice_directions_param ) {
 		$data['enabled_invoice_directions_json'] = function_exists( 'crm_merchant_encode_invoice_directions' )
@@ -677,6 +730,17 @@ function me_ajax_merchants_save(): void {
 		$update_format,
 		[ '%d' ]
 	);
+
+	if ( $has_feature_access_param ) {
+		if ( ! function_exists( 'crm_merchant_apply_feature_access' ) ) {
+			_me_merchants_error( 'Feature-доступы мерчантов недоступны в текущей версии кода.', 500 );
+		}
+
+		$feature_access_result = crm_merchant_apply_feature_access( $company_id, $merchant_id, $enabled_feature_codes, $current_uid );
+		if ( is_wp_error( $feature_access_result ) ) {
+			_me_merchants_error( $feature_access_result->get_error_message(), 422 );
+		}
+	}
 
 	crm_sync_merchant_referral_link( $company_id, $merchant_id, (int) $referred_by );
 
@@ -699,7 +763,13 @@ function me_ajax_merchants_save(): void {
 				'base_markup_basis'  => $markup_basis,
 				'rub_invoice_markup_mode' => $rub_invoice_markup_mode,
 				'base_markup_value'  => $markup_value,
+				'telegram_channels_markup_basis' => $telegram_markup_basis,
+				'telegram_channels_markup_type'  => $telegram_markup_type,
+				'telegram_channels_markup_value' => $telegram_markup_value,
 				'enabled_invoice_directions' => $has_invoice_directions_param ? $enabled_invoice_directions : crm_merchant_resolve_invoice_directions_from_row( $existing, true ),
+				'enabled_features'   => $has_feature_access_param
+					? $enabled_feature_codes
+					: ( function_exists( 'crm_merchant_feature_access_enabled_codes' ) ? crm_merchant_feature_access_enabled_codes( $company_id, $merchant_id ) : [] ),
 				'referred_by_id'     => $referred_by ?: null,
 			],
 		]

@@ -71,16 +71,4 @@ INSERT IGNORE INTO `crm_settings` (`org_id`, `setting_key`, `setting_value`) VAL
 (1, 'fintech_friendly_pay_cart_currency', 'RUB'),
 (1, 'fintech_friendly_pay_min_amount_rub', '30'),
 (1, 'fintech_friendly_pay_max_amount_rub', '200000'),
-(1, 'module_telegram_channels_enabled', '0'),
-(1, 'telegram_subscription_bot_token', ''),
-(1, 'telegram_subscription_bot_username', ''),
-(1, 'telegram_subscription_webhook_url', ''),
-(1, 'telegram_subscription_webhook_connected_at', ''),
-(1, 'telegram_subscription_webhook_last_error', ''),
-(1, 'telegram_subscription_webhook_lock', '0'),
-(1, 'telegram_channels_admin_chat_id', ''),
-(1, 'telegram_channels_reminders_enabled', '1'),
-(1, 'telegram_channels_reminder_days', '3'),
-(1, 'telegram_channels_invite_ttl_hours', '24'),
-(1, 'telegram_channels_texts_json', '{}'),
-(1, 'telegram_channels_debug', '0');
+(1, 'module_telegram_channels_enabled', '0');

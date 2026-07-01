@@ -769,6 +769,7 @@ if ( ! function_exists( 'crm_merchant_tg_normalize_screen' ) ) {
 			'orders_open',
 			'orders_paid',
 			'orders_cancelled',
+			'channel_subscription',
 			'profile',
 			'help',
 		];
@@ -800,6 +801,88 @@ if ( ! function_exists( 'crm_merchant_tg_fmt_rate' ) ) {
 if ( ! function_exists( 'crm_merchant_tg_fmt_money' ) ) {
 	function crm_merchant_tg_fmt_money( float $value, int $decimals = 2 ): string {
 		return number_format( $value, $decimals, '.', ' ' );
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_channel_subscription_company_enabled' ) ) {
+	function crm_merchant_tg_channel_subscription_company_enabled( int $company_id ): bool {
+		if ( $company_id <= 0 || ! function_exists( 'crm_telegram_channels_seed_company_foundation' ) ) {
+			return false;
+		}
+
+		if ( function_exists( 'crm_company_contour_is_enabled' ) ) {
+			return crm_company_contour_is_enabled( $company_id, 'telegram_channels' );
+		}
+
+		return function_exists( 'crm_get_setting' )
+			&& crm_get_setting( 'module_telegram_channels_enabled', $company_id, '0' ) === '1';
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_channel_subscription_is_enabled' ) ) {
+	function crm_merchant_tg_channel_subscription_is_enabled( int $company_id, int $merchant_id = 0 ): bool {
+		if ( ! crm_merchant_tg_channel_subscription_company_enabled( $company_id ) || $merchant_id <= 0 ) {
+			return false;
+		}
+
+		return function_exists( 'crm_merchant_has_feature_access' )
+			&& crm_merchant_has_feature_access( $company_id, $merchant_id, 'telegram_channels' );
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_channel_subscription_issues_text' ) ) {
+	function crm_merchant_tg_channel_subscription_issues_text( array $readiness ): string {
+		$issues = array_slice( (array) ( $readiness['issues'] ?? [] ), 0, 6 );
+		if ( empty( $issues ) ) {
+			return 'Проверьте настройки канала, subscription-бота, тарифов и fintech provider.';
+		}
+
+		$lines = [];
+		foreach ( $issues as $issue ) {
+			$label = trim( (string) ( $issue['label'] ?? '' ) );
+			if ( $label !== '' ) {
+				$lines[] = '• ' . crm_merchant_tg_escape( $label );
+			}
+		}
+
+		return ! empty( $lines )
+			? implode( "\n", $lines )
+			: 'Проверьте настройки канала, subscription-бота, тарифов и fintech provider.';
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_channel_tariff_line' ) ) {
+	function crm_merchant_tg_channel_tariff_line( object $tariff ): string {
+		$price    = crm_merchant_tg_fmt_money( (float) ( $tariff->price_amount ?? 0 ), 2 );
+		$currency = strtoupper( trim( (string) ( $tariff->price_currency ?? '' ) ) );
+		$days     = (int) ( $tariff->duration_days ?? 0 );
+		$title    = trim( (string) ( $tariff->title ?? '' ) );
+
+		return crm_merchant_tg_escape( $title !== '' ? $title : 'Тариф #' . (int) ( $tariff->id ?? 0 ) )
+			. ' — <b>' . crm_merchant_tg_escape( $price . ' ' . $currency ) . '</b>'
+			. ( $days > 0 ? ' · ' . $days . ' дн.' : '' );
+	}
+}
+
+if ( ! function_exists( 'crm_merchant_tg_channel_sale_success_text' ) ) {
+	function crm_merchant_tg_channel_sale_success_text( array $result ): string {
+		$tariff     = isset( $result['tariff'] ) && is_object( $result['tariff'] ) ? $result['tariff'] : null;
+		$url        = trim( (string) ( $result['url'] ?? '' ) );
+		$expires_at = trim( (string) ( $result['expires_at'] ?? '' ) );
+
+		$text  = "📣 <b>Ссылка на подписку готова</b>\n\n";
+		if ( $tariff ) {
+			$text .= crm_merchant_tg_channel_tariff_line( $tariff ) . "\n\n";
+		}
+		$text .= "Отправьте клиенту эту ссылку. Клиент откроет subscription-бот, оплатит тариф, после оплаты бот выдаст одноразовую invite-ссылку в закрытый канал.\n\n";
+		if ( $url !== '' ) {
+			$text .= "<code>" . crm_merchant_tg_escape( $url ) . "</code>\n";
+		}
+		if ( $expires_at !== '' ) {
+			$text .= "\n<i>Ссылка продажи действует до " . crm_merchant_tg_escape( $expires_at ) . " UTC.</i>";
+		}
+
+		return $text;
 	}
 }
 
@@ -1255,9 +1338,11 @@ if ( ! function_exists( 'crm_merchant_tg_rub_invoice_prompt_text' ) ) {
 		if ( (string) ( $mode_summary['provider_mode'] ?? '' ) === 'orderAmount' && $requested_currency === 'USDT' ) {
 			$payment_purpose = crm_merchant_tg_rub_invoice_effective_payment_purpose( $merchant, $state );
 			$purpose_hint    = $payment_purpose !== ''
-				? "📝 Назначение платежа:\n<code>" . crm_merchant_tg_escape( $payment_purpose ) . "</code>\n\n"
+				? "📝 Назначение платежа сейчас:\n<code>" . crm_merchant_tg_escape( $payment_purpose ) . "</code>\n\n"
+					. "Если не менять, будет использовано это значение.\n"
 					. "Если хотите заменить назначение,\nнажмите кнопку ниже\n"
-				: "📝 Назначение платежа можно задать отдельно.\n"
+				: "📝 Назначение платежа сейчас:\n<code>автоматически: мерчант + сумма счёта</code>\n\n"
+					. "Если не указать своё значение, система сформирует назначение при выпуске счёта.\n"
 					. "Если хотите указать своё значение,\nнажмите кнопку ниже\n";
 
 			$text = '';
@@ -1269,9 +1354,6 @@ if ( ! function_exists( 'crm_merchant_tg_rub_invoice_prompt_text' ) ) {
 				. "━━━━━━━━━━━━━━━━━━━\n"
 				. "💳 Клиент оплачивает сумму в RUB,\n"
 				. "💵 вы задаёте сумму счёта в USDT\n"
-				. "━━━━━━━━━━━━━━━━━━━\n"
-				. "📦 У компании сейчас активен\n"
-				. "Kanyon contour через <b>orderAmount</b>\n"
 				. "━━━━━━━━━━━━━━━━━━━\n"
 				. $purpose_hint
 				. "━━━━━━━━━━━━━━━━━━━\n"
@@ -1311,9 +1393,11 @@ if ( ! function_exists( 'crm_merchant_tg_rub_invoice_prompt_text' ) ) {
 		}
 		$payment_purpose = crm_merchant_tg_rub_invoice_effective_payment_purpose( $merchant, $state );
 		$purpose_hint    = $payment_purpose !== ''
-			? "📝 Назначение платежа:\n<code>" . crm_merchant_tg_escape( $payment_purpose ) . "</code>\n\n"
+			? "📝 Назначение платежа сейчас:\n<code>" . crm_merchant_tg_escape( $payment_purpose ) . "</code>\n\n"
+			. "Если не менять, будет использовано это значение.\n"
 			. "Если хотите заменить назначение,\nнажмите кнопку ниже\n"
-			: "📝 Назначение платежа можно задать отдельно.\n"
+			: "📝 Назначение платежа сейчас:\n<code>автоматически: мерчант + сумма счёта</code>\n\n"
+			. "Если не указать своё значение, система сформирует назначение при выпуске счёта.\n"
 			. "Если хотите указать своё значение,\nнажмите кнопку ниже\n";
 
 		$text = '';
@@ -2283,7 +2367,12 @@ if ( ! function_exists( 'crm_merchant_tg_rates_snapshot' ) ) {
 				if ( ! empty( $fallback['ok'] ) ) {
 					$last_kanyon = rates_kanyon_get_last( $company_id );
 				} else {
-					$rub_usdt_error = (string) ( $fallback['error'] ?? 'Не удалось получить курс Kanyon.' );
+					$rub_usdt_error = preg_replace(
+						'/Kanyon\s*\(Pay2Day\)|Pay2Day|Kanyon/i',
+						'платёжный провайдер',
+						(string) ( $fallback['error'] ?? 'Не удалось получить курс платёжного провайдера.' )
+					);
+					$rub_usdt_error = is_string( $rub_usdt_error ) ? $rub_usdt_error : 'Не удалось получить курс платёжного провайдера.';
 				}
 			}
 
@@ -2658,21 +2747,30 @@ if ( ! function_exists( 'crm_merchant_tg_screen_payload' ) ) {
 		$balance       = $balance_map[ (int) $merchant->id ] ?? [ 'main_balance' => 0, 'bonus_balance' => 0, 'referral_balance' => 0, 'total_balance' => 0 ];
 		$order_counts  = crm_merchant_tg_orders_counts( (int) ( $merchant->company_id ?? 0 ), (int) $merchant->id );
 
-		$main_keyboard = [
-			'inline_keyboard' => [
-				[
-					[ 'text' => '💱 Узнать курс', 'callback_data' => 'm:rates' ],
-					[ 'text' => '💼 Балансы', 'callback_data' => 'm:balances' ],
-				],
-				[
-					[ 'text' => '🧾 Выставить счёт', 'callback_data' => 'm:invoice' ],
-					[ 'text' => '📂 Мои счета', 'callback_data' => 'm:orders' ],
-				],
-				[
-					[ 'text' => '👤 Профиль', 'callback_data' => 'm:profile' ],
-					[ 'text' => 'ℹ️ Помощь', 'callback_data' => 'm:help' ],
-				],
+		$main_keyboard_rows = [
+			[
+				[ 'text' => '💱 Узнать курс', 'callback_data' => 'm:rates' ],
+				[ 'text' => '💼 Балансы', 'callback_data' => 'm:balances' ],
 			],
+			[
+				[ 'text' => '🧾 Выставить счёт', 'callback_data' => 'm:invoice' ],
+				[ 'text' => '📂 Мои счета', 'callback_data' => 'm:orders' ],
+			],
+		];
+
+		if ( crm_merchant_tg_channel_subscription_is_enabled( (int) ( $merchant->company_id ?? 0 ), (int) ( $merchant->id ?? 0 ) ) ) {
+			$main_keyboard_rows[] = [
+				[ 'text' => '📣 Telegram-канал', 'callback_data' => 'm:channel' ],
+			];
+		}
+
+		$main_keyboard_rows[] = [
+			[ 'text' => '👤 Профиль', 'callback_data' => 'm:profile' ],
+			[ 'text' => 'ℹ️ Помощь', 'callback_data' => 'm:help' ],
+		];
+
+		$main_keyboard = [
+			'inline_keyboard' => $main_keyboard_rows,
 		];
 
 		$company_id_for_rates = (int) ( $merchant->company_id ?? 0 );
@@ -3007,7 +3105,6 @@ if ( ! function_exists( 'crm_merchant_tg_screen_payload' ) ) {
 					return [
 						'screen'   => 'invoice_rub_usdt',
 						'text'     => "🧾 <b>Счёт ₽ → ₮</b>\n\n"
-							. "У компании сейчас активен Kanyon contour через <b>orderAmount</b>.\n"
 							. "В этом режиме вы задаёте сумму счёта в USDT,\n"
 							. "а клиент оплачивает RUB по курсу провайдера.\n\n"
 							. "Нажмите кнопку ниже, чтобы перейти к вводу суммы.",
@@ -3145,6 +3242,83 @@ if ( ! function_exists( 'crm_merchant_tg_screen_payload' ) ) {
 					),
 				];
 
+			case 'channel_subscription':
+				$channel_company_id = (int) ( $merchant->company_id ?? 0 );
+				$channel_merchant_id = (int) ( $merchant->id ?? 0 );
+				if ( ! crm_merchant_tg_channel_subscription_company_enabled( $channel_company_id ) ) {
+					return [
+						'screen'   => 'channel_subscription',
+						'text'     => "📣 <b>Telegram-канал</b>\n\n<i>Модуль подписок не включён для вашей компании.</i>",
+						'keyboard' => crm_merchant_tg_inline_menu_keyboard( '↩ Меню' ),
+					];
+				}
+
+				if ( ! crm_merchant_tg_channel_subscription_is_enabled( $channel_company_id, $channel_merchant_id ) ) {
+					return [
+						'screen'   => 'channel_subscription',
+						'text'     => "📣 <b>Telegram-канал</b>\n\n<i>Доступ к продаже подписок не выдан этому мерчанту.</i>",
+						'keyboard' => crm_merchant_tg_inline_menu_keyboard( '↩ Меню' ),
+					];
+				}
+
+				if ( function_exists( 'crm_telegram_channels_seed_company_foundation' ) ) {
+					crm_telegram_channels_seed_company_foundation( $channel_company_id );
+				}
+				if ( function_exists( 'crm_telegram_channels_seed_merchant_foundation' ) ) {
+					crm_telegram_channels_seed_merchant_foundation( $channel_company_id, $channel_merchant_id );
+				}
+
+				$readiness = function_exists( 'crm_telegram_channels_get_readiness_status' )
+					? crm_telegram_channels_get_readiness_status( $channel_company_id, true, $channel_merchant_id )
+					: [ 'is_ready' => false, 'issues' => [] ];
+
+				if ( empty( $readiness['is_ready'] ) ) {
+					return [
+						'screen'   => 'channel_subscription',
+						'text'     => "📣 <b>Telegram-канал</b>\n\n"
+							. "Продажа подписок пока недоступна. Администратору нужно завершить настройку:\n\n"
+							. crm_merchant_tg_channel_subscription_issues_text( $readiness ),
+						'keyboard' => crm_merchant_tg_inline_menu_keyboard( '↩ Меню' ),
+					];
+				}
+
+				$tariffs = function_exists( 'crm_telegram_channels_get_merchant_active_tariffs' )
+					? crm_telegram_channels_get_merchant_active_tariffs( $channel_company_id, $channel_merchant_id )
+					: [];
+				if ( empty( $tariffs ) ) {
+					return [
+						'screen'   => 'channel_subscription',
+						'text'     => "📣 <b>Telegram-канал</b>\n\n<i>Нет активных тарифов для продажи.</i>",
+						'keyboard' => crm_merchant_tg_inline_menu_keyboard( '↩ Меню' ),
+					];
+				}
+
+				$tariff_lines = [];
+				$tariff_rows  = [];
+				foreach ( $tariffs as $tariff ) {
+					$tariff_lines[] = crm_merchant_tg_channel_tariff_line( $tariff );
+					$tariff_rows[]  = [
+						[
+							'text'          => 'Продать: ' . trim( (string) ( $tariff->title ?? 'Тариф' ) ),
+							'callback_data' => 'ch:create_sale:' . (int) $tariff->id,
+						],
+					];
+				}
+				$tariff_rows[] = [
+					[ 'text' => '🔄 Обновить', 'callback_data' => 'm:channel' ],
+					[ 'text' => '↩ Меню',     'callback_data' => 'm:main' ],
+				];
+
+				return [
+					'screen'   => 'channel_subscription',
+					'text'     => "📣 <b>Продажа подписки</b>\n\n"
+						. implode( "\n", $tariff_lines )
+						. "\n\nВыберите тариф. Бот создаст персональную ссылку для клиента.",
+					'keyboard' => [
+						'inline_keyboard' => $tariff_rows,
+					],
+				];
+
 			case 'profile':
 				return [
 					'screen'   => 'profile',
@@ -3166,6 +3340,7 @@ if ( ! function_exists( 'crm_merchant_tg_screen_payload' ) ) {
 					'📂 <code>/orders</code> — мои счета',
 					'💼 <code>/balance</code> — балансы',
 					'💹 <code>/rates</code> — курсы',
+					'📣 <code>/channel</code> — продать подписку',
 					'👤 <code>/profile</code> — профиль',
 					'ℹ️ <code>/help</code> — помощь',
 				];
@@ -3294,6 +3469,7 @@ if ( ! function_exists( 'crm_merchant_tg_map_callback_to_screen' ) ) {
 			'm:orders:open'    => 'orders_open',
 			'm:orders:paid'    => 'orders_paid',
 			'm:orders:cancelled' => 'orders_cancelled',
+			'm:channel'        => 'channel_subscription',
 			'm:profile'        => 'profile',
 			'm:help'           => 'help',
 		];
@@ -3361,6 +3537,92 @@ if ( ! function_exists( 'crm_merchant_tg_route_callback' ) ) {
 		}
 
 		$session = crm_merchant_tg_session_get( $company_id, $chat_id );
+
+		if ( preg_match( '/^ch:create_sale:(\d+)$/', $callback_data, $matches ) ) {
+			$tariff_id = (int) $matches[1];
+			$merchant  = $access['merchant'];
+
+			if ( ! crm_merchant_tg_channel_subscription_company_enabled( $company_id ) ) {
+				if ( function_exists( 'tg_safe_answer_callback' ) ) {
+					tg_safe_answer_callback( $telegram, $ctx['callback_query_id'] ?? null, 'Модуль выключен', true );
+				}
+				return crm_merchant_tg_present_screen( $telegram, $merchant, $ctx, 'channel_subscription', false, false );
+			}
+
+			if ( ! crm_merchant_tg_channel_subscription_is_enabled( $company_id, (int) $merchant->id ) ) {
+				if ( function_exists( 'tg_safe_answer_callback' ) ) {
+					tg_safe_answer_callback( $telegram, $ctx['callback_query_id'] ?? null, 'Нет доступа', true );
+				}
+				return crm_merchant_tg_present_screen( $telegram, $merchant, $ctx, 'channel_subscription', false, false );
+			}
+
+			$result = function_exists( 'crm_telegram_channels_create_sale' )
+				? crm_telegram_channels_create_sale( $company_id, $tariff_id, (int) $merchant->id, 'merchant_bot' )
+				: [
+					'success' => false,
+					'message' => 'Модуль Telegram-каналы недоступен.',
+				];
+
+			if ( empty( $result['success'] ) ) {
+				$error_text = "📣 <b>Telegram-канал</b>\n\n"
+					. crm_merchant_tg_escape( (string) ( $result['message'] ?? 'Не удалось создать ссылку продажи.' ) );
+				if ( ! empty( $result['readiness'] ) && is_array( $result['readiness'] ) ) {
+					$error_text .= "\n\n" . crm_merchant_tg_channel_subscription_issues_text( $result['readiness'] );
+				}
+
+				if ( function_exists( 'tg_safe_answer_callback' ) ) {
+					tg_safe_answer_callback( $telegram, $ctx['callback_query_id'] ?? null, 'Недоступно', true );
+				}
+
+				return crm_merchant_tg_present_anchor_message(
+					$telegram,
+					$merchant,
+					$ctx,
+					$error_text,
+					crm_merchant_tg_inline_menu_keyboard( '↩ Меню' ),
+					[
+						'last_menu_screen'     => 'channel_subscription',
+						'active_pipeline_code' => null,
+						'pipeline_state_json'  => null,
+					]
+				);
+			}
+
+			if ( function_exists( 'tg_safe_answer_callback' ) ) {
+				tg_safe_answer_callback( $telegram, $ctx['callback_query_id'] ?? null, 'Ссылка готова' );
+			}
+
+			$url      = trim( (string) ( $result['url'] ?? '' ) );
+			$keyboard = [
+				'inline_keyboard' => array_values( array_filter( [
+					$url !== ''
+						? [
+							[
+								'text' => 'Открыть ссылку',
+								'url'  => $url,
+							],
+						]
+						: null,
+					[
+						[ 'text' => 'Продать ещё', 'callback_data' => 'm:channel' ],
+						[ 'text' => '↩ Меню',      'callback_data' => 'm:main' ],
+					],
+				] ) ),
+			];
+
+			return crm_merchant_tg_present_anchor_message(
+				$telegram,
+				$merchant,
+				$ctx,
+				crm_merchant_tg_channel_sale_success_text( $result ),
+				$keyboard,
+				[
+					'last_menu_screen'     => 'channel_subscription',
+					'active_pipeline_code' => null,
+					'pipeline_state_json'  => null,
+				]
+			);
+		}
 
 		if ( preg_match( '/^m:payout:confirm:(\d+)$/', $callback_data, $matches ) ) {
 			$payout_id = (int) $matches[1];

@@ -111,13 +111,28 @@ body.menu-pin .page-sidebar:not(.page-sidebar-root) .sidebar-header .sidebar-hea
 	color: rgba(255, 233, 233, 0.82);
 }
 
-.page-sidebar-root .sidebar-menu .menu-items > li > a > .title {
-	color: #fff4f4;
+.page-sidebar .sidebar-menu .menu-items > li > a {
+	width: calc(100% - 78px);
+	padding-right: 10px;
 }
 
-.page-sidebar-root .sidebar-menu .menu-items > li > a,
+.page-sidebar .sidebar-menu .menu-items > li > a > .title {
+	width: calc(100% - 24px);
+	max-width: 100%;
+}
+
+.page-sidebar .sidebar-menu .menu-items > li > a > .title:last-child {
+	width: 100%;
+}
+
+.page-sidebar .sidebar-menu .menu-items > li > a > .arrow {
+	width: 18px;
+	padding-right: 0;
+	text-align: right;
+}
+
 .page-sidebar-root .sidebar-menu .menu-items > li > a > .title {
-	width: calc(100% - 92px);
+	color: #fff4f4;
 }
 
 .page-sidebar-root .sidebar-menu .menu-items > li > a:hover .title,

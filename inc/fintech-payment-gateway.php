@@ -1002,6 +1002,20 @@ class Fintech_Payment_Gateway {
 			'secret',
 			'private_key',
 			'login',
+			'payload',
+			'qrpayload',
+			'paymentpayload',
+			'qrlink',
+			'qr_link',
+			'qrcid',
+			'qrc_id',
+			'qrcdata',
+			'payment_link',
+			'paymentlink',
+			'payment_url',
+			'paymenturl',
+			'approve_url',
+			'kyc_redirect_url',
 		];
 		$masked = [];
 

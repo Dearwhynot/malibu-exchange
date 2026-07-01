@@ -61,6 +61,7 @@ require_once get_template_directory() . '/inc/telegram-merchant-commands.php';
 require_once get_template_directory() . '/inc/telegram-operator-commands.php';
 require_once get_template_directory() . '/inc/telegram-miniapp.php';
 require_once get_template_directory() . '/inc/ajax/settings.php';
+require_once get_template_directory() . '/inc/ajax/telegram-channels.php';
 
 // Мерчанты: company-scoped бизнес-сущность + AJAX
 require_once get_template_directory() . '/inc/merchants.php';

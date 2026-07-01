@@ -35,6 +35,15 @@ $roadmap_url = function_exists( 'crm_get_product_roadmap_url' ) ? crm_get_produc
 $release_notes_url = function_exists( 'crm_get_product_release_notes_url' ) ? crm_get_product_release_notes_url() : home_url( '/release-notes/' );
 $can_view_roadmap = function_exists( 'crm_can_access' ) ? crm_can_access( 'roadmap.view' ) : is_user_logged_in();
 $can_view_release_notes = function_exists( 'crm_can_access' ) ? crm_can_access( 'release_notes.view' ) : is_user_logged_in();
+$telegram_channels_company_id = ( ! $is_root && is_user_logged_in() && function_exists( 'crm_get_current_user_company_id' ) )
+    ? crm_get_current_user_company_id( get_current_user_id() )
+    : 0;
+$can_view_telegram_channels = ! $is_root
+    && function_exists( 'crm_can_access' )
+    && crm_can_access( 'telegram_channels.view' )
+    && $telegram_channels_company_id > 0
+    && function_exists( 'crm_company_contour_is_enabled' )
+    && crm_company_contour_is_enabled( $telegram_channels_company_id, 'telegram_channels' );
 ?>
 
 <nav class="page-sidebar<?php echo $is_root ? ' page-sidebar-root' : ''; ?>" data-pages="sidebar">
@@ -225,6 +234,14 @@ $can_view_release_notes = function_exists( 'crm_can_access' ) ? crm_can_access( 
             <li class="">
                 <a href="<?php echo esc_url(home_url('/operator-telegram/')); ?>">
                     <span class="title">Операторы TG</span>
+                </a>
+                <span class="icon-thumbnail"><i class="pg-icon">send</i></span>
+            </li>
+            <?php endif; ?>
+            <?php if ( $can_view_telegram_channels ) : ?>
+            <li class="">
+                <a href="<?php echo esc_url(home_url('/telegram-channels/')); ?>">
+                    <span class="title">Telegram-каналы</span>
                 </a>
                 <span class="icon-thumbnail"><i class="pg-icon">send</i></span>
             </li>

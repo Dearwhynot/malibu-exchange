@@ -44,6 +44,11 @@ if ( ! function_exists( 'crm_merchant_tg_command_definitions' ) ) {
 				'description' => '💹 Курсы',
 				'screen'      => 'rates',
 			],
+			'/channel' => [
+				'command'     => 'channel',
+				'description' => '📣 Продать подписку',
+				'screen'      => 'channel_subscription',
+			],
 			'/profile' => [
 				'command'     => 'profile',
 				'description' => '👤 Профиль',

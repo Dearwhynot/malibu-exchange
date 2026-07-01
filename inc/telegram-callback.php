@@ -22,6 +22,10 @@ function malibu_exchange_get_telegram_callback_route( string $context = 'merchan
         return '/telegram/service-callback';
     }
 
+    if ( $context === 'subscription' ) {
+        return '/telegram/subscription-callback';
+    }
+
     return '/telegram/merchant-callback';
 }
 
@@ -67,6 +71,14 @@ function malibu_exchange_register_telegram_callback_route(): void
         'permission_callback' => '__return_true',
     ]);
 
+    register_rest_route('malibu-exchange/v1', malibu_exchange_get_telegram_callback_route( 'subscription' ), [
+        'methods' => ['GET', 'POST'],
+        'callback' => static function ( WP_REST_Request $request ) {
+            return malibu_exchange_handle_telegram_callback_request( $request, 'subscription' );
+        },
+        'permission_callback' => '__return_true',
+    ]);
+
     register_rest_route('malibu-exchange/v1', malibu_exchange_get_telegram_callback_route( 'legacy' ), [
         'methods' => ['GET', 'POST'],
         'callback' => static function ( WP_REST_Request $request ) {
@@ -89,6 +101,19 @@ function malibu_exchange_handle_telegram_callback_request(WP_REST_Request $reque
 
     $GLOBALS['CRM_TELEGRAM_CALLBACK_CONTEXT'] = $context;
     $GLOBALS['TG_UNIVERSAL_RAW_UPDATE'] = (string) $request->get_body();
+
+    if ( $context === 'subscription' ) {
+        if ( function_exists( 'crm_telegram_channels_handle_subscription_callback' ) ) {
+            $response = crm_telegram_channels_handle_subscription_callback( $request );
+            unset($GLOBALS['TG_UNIVERSAL_RAW_UPDATE']);
+            unset($GLOBALS['CRM_TELEGRAM_CALLBACK_CONTEXT']);
+            return $response;
+        }
+
+        unset($GLOBALS['TG_UNIVERSAL_RAW_UPDATE']);
+        unset($GLOBALS['CRM_TELEGRAM_CALLBACK_CONTEXT']);
+        return new WP_REST_Response('Subscription callback handler is missing', 500);
+    }
 
     if ( $context === 'operator' ) {
         $callback_file = '/callbacks/telegram/telegram-callback-operator.php';

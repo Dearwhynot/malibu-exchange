@@ -32,6 +32,9 @@ $telegram_states   = [];
 
 foreach ( $telegram_contexts as $telegram_context => $telegram_context_label ) {
 	$telegram_context = crm_telegram_normalize_bot_context( $telegram_context );
+	if ( $telegram_context === 'subscription' ) {
+		continue;
+	}
 
 	if ( $org_id > 0 ) {
 		$telegram_settings = crm_telegram_collect_settings( $org_id, $telegram_context );
@@ -183,6 +186,20 @@ if ( ! function_exists( 'me_settings_telegram_context_meta' ) ) {
 					'connect_label'   => 'сервисного бота',
 					'status_saved'    => '<strong>Сервисный бот: данные сохранены.</strong> Осталось нажать «Подключить callback».',
 					'status_ready'    => '<strong>Сервисный бот: callback зарегистрирован.</strong> Контур готов к работе.',
+				];
+			case 'subscription':
+				return [
+					'ready_flag'      => 'webhook_ready',
+					'ready_title'     => 'Бот подписок готов к работе.',
+					'ready_text'      => 'Публичный flow платных Telegram-каналов настраивается на странице Telegram-каналов.',
+					'blocked_title'   => 'Бот подписок сейчас не настроен.',
+					'blocked_default' => 'Чтобы включить продажи подписок, заполните имя и токен бота на странице Telegram-каналов.',
+					'warning_title'   => 'Callback бота подписок не подключён.',
+					'placeholder'     => 'my_subscription_bot',
+					'callback_hint'   => 'Отдельный callback для бота подписок текущей компании.',
+					'connect_label'   => 'бота подписок',
+					'status_saved'    => '<strong>Бот подписок: данные сохранены.</strong> Осталось подключить callback на странице Telegram-каналов.',
+					'status_ready'    => '<strong>Бот подписок: callback зарегистрирован.</strong> Продажи подписок могут работать после настройки канала и тарифов.',
 				];
 			case 'merchant':
 			default:
@@ -547,6 +564,21 @@ get_header();
 				<?php endif; ?>
 
 				<!-- ─── Telegram ───────────────────────────────────────────────────── -->
+				<div class="card card-default m-b-30">
+					<div class="card-header">
+						<div class="card-title">Subscription bot</div>
+					</div>
+					<div class="card-body">
+						<div class="alert alert-info bordered m-b-20">
+							<strong>Боты подписок настраиваются по мерчантам.</strong><br>
+							Откройте Telegram-каналы, выберите мерчанта и заполните username, token, callback, reminders и TTL для его отдельного subscription bot.
+						</div>
+						<a href="<?php echo esc_url( home_url( '/telegram-channels/' ) ); ?>" class="btn btn-primary btn-cons">
+							Открыть Telegram-каналы
+						</a>
+					</div>
+				</div>
+
 				<?php foreach ( $telegram_states as $telegram_context => $telegram_state ) : ?>
 					<?php
 					$telegram_context_label = (string) $telegram_state['label'];
@@ -556,23 +588,74 @@ get_header();
 						static fn( $item ) => isset( $item['id'] ) ? (string) $item['id'] : '',
 						$telegram_status['missing_fields'] ?? []
 					) ) );
-					$telegram_meta        = me_settings_telegram_context_meta( $telegram_context );
-					$telegram_id_prefix   = 'telegram_' . $telegram_context;
-					?>
-					<div class="card card-default m-b-30" data-telegram-context-card="<?php echo esc_attr( $telegram_context ); ?>">
-						<div class="card-header">
-							<div class="card-title"><?php echo esc_html( $telegram_context_label ); ?></div>
-						</div>
+						$telegram_meta                 = me_settings_telegram_context_meta( $telegram_context );
+						$telegram_id_prefix            = 'telegram_' . $telegram_context;
+						$is_subscription_bot           = $telegram_context === 'subscription';
+						$subscription_bot_token_set    = trim( (string) ( $telegram_settings['bot_token'] ?? '' ) ) !== '';
+						$subscription_bot_username     = trim( (string) ( $telegram_settings['bot_username'] ?? '' ) );
+						?>
+						<div class="card card-default m-b-30" data-telegram-context-card="<?php echo esc_attr( $telegram_context ); ?>">
+							<div class="card-header">
+								<div class="card-title"><?php echo esc_html( $telegram_context_label ); ?></div>
+							</div>
 						<div class="card-body">
 							<div id="<?php echo esc_attr( $telegram_id_prefix ); ?>_config_alert">
 								<?php echo me_settings_render_telegram_status_html( $telegram_status ); ?>
-							</div>
-							<div id="<?php echo esc_attr( $telegram_id_prefix ); ?>_status_line" class="crm-fintech-status-line"></div>
-							<form id="<?php echo esc_attr( $telegram_id_prefix ); ?>_settings_form"
-							      class="telegram-settings-form"
-							      data-telegram-context="<?php echo esc_attr( $telegram_context ); ?>"
-							      data-saved-bot-username="<?php echo esc_attr( $telegram_settings['bot_username'] ?? '' ); ?>"
-							      data-saved-bot-token="<?php echo esc_attr( $telegram_settings['bot_token'] ?? '' ); ?>">
+								</div>
+								<div id="<?php echo esc_attr( $telegram_id_prefix ); ?>_status_line" class="crm-fintech-status-line"></div>
+								<?php if ( $is_subscription_bot ) : ?>
+								<div class="alert alert-info bordered m-b-20">
+									<strong>Редактирование перенесено в Telegram-каналы.</strong><br>
+									Это сводка по bot-настройкам подписок. Имя бота, токен, callback, тексты, reminders и TTL настраиваются в модуле платных Telegram-каналов.
+								</div>
+								<div class="row">
+									<div class="col-md-4">
+										<div class="form-group">
+											<label>Имя бота подписок</label>
+											<input type="text"
+											       class="form-control crm-telegram-readonly"
+											       value="<?php echo esc_attr( $subscription_bot_username !== '' ? '@' . ltrim( $subscription_bot_username, '@' ) : 'Не задано' ); ?>"
+											       readonly>
+											<p class="hint-text m-t-5">Источник: Telegram-каналы → Настройки.</p>
+										</div>
+									</div>
+									<div class="col-md-4">
+										<div class="form-group">
+											<label>Токен бота</label>
+											<input type="text"
+											       class="form-control crm-telegram-readonly"
+											       value="<?php echo esc_attr( $subscription_bot_token_set ? 'Сохранён' : 'Не задан' ); ?>"
+											       readonly>
+											<p class="hint-text m-t-5">Токен не показывается в сводке настроек.</p>
+										</div>
+									</div>
+									<div class="col-md-4">
+										<div class="form-group">
+											<label>Callback URL</label>
+											<input type="text"
+											       class="form-control crm-telegram-readonly"
+											       value="<?php echo esc_attr( $telegram_status['callback_url'] ?? '' ); ?>"
+											       readonly>
+											<p class="hint-text m-t-5">
+												Webhook:
+												<?php if ( ! empty( $telegram_status['webhook_ready'] ) ) : ?>
+													<span class="badge badge-success">connected</span>
+												<?php else : ?>
+													<span class="badge badge-warning">not connected</span>
+												<?php endif; ?>
+											</p>
+										</div>
+									</div>
+								</div>
+								<a href="<?php echo esc_url( home_url( '/telegram-channels/' ) ); ?>" class="btn btn-primary btn-cons">
+									Открыть Telegram-каналы
+								</a>
+								<?php else : ?>
+								<form id="<?php echo esc_attr( $telegram_id_prefix ); ?>_settings_form"
+								      class="telegram-settings-form"
+								      data-telegram-context="<?php echo esc_attr( $telegram_context ); ?>"
+								      data-saved-bot-username="<?php echo esc_attr( $telegram_settings['bot_username'] ?? '' ); ?>"
+								      data-saved-bot-token="<?php echo esc_attr( $telegram_settings['bot_token'] ?? '' ); ?>">
 								<div class="row">
 									<div class="col-md-4">
 										<div class="form-group">
@@ -633,14 +716,15 @@ get_header();
 									<button type="button" class="btn btn-success btn-cons btn-telegram-connect" data-telegram-context="<?php echo esc_attr( $telegram_context ); ?>">
 										Подключить callback
 									</button>
-									<button type="button" class="btn btn-default btn-cons btn-telegram-unlock<?php echo empty( $telegram_status['webhook_lock'] ) ? ' d-none' : ''; ?>" data-telegram-context="<?php echo esc_attr( $telegram_context ); ?>">
-										Разблокировать редактирование
-									</button>
-								</div>
-							</form>
+										<button type="button" class="btn btn-default btn-cons btn-telegram-unlock<?php echo empty( $telegram_status['webhook_lock'] ) ? ' d-none' : ''; ?>" data-telegram-context="<?php echo esc_attr( $telegram_context ); ?>">
+											Разблокировать редактирование
+										</button>
+									</div>
+								</form>
+								<?php endif; ?>
+							</div>
 						</div>
-					</div>
-				<?php endforeach; ?>
+					<?php endforeach; ?>
 
 				<!-- ─── Курсы (по парам) ─────────────────────────────────────────── -->
 				<?php if ( empty( $rates_pair_blocks ) ) : ?>

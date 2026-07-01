@@ -776,6 +776,317 @@ function crm_merchant_has_invoice_direction( $merchant, string $direction_code )
 }
 
 /**
+ * Справочник feature-доступов, которые компания может выдать конкретному мерчанту.
+ *
+ * @return array<string,array<string,string>>
+ */
+function crm_merchant_feature_definitions(): array {
+	return [
+		'telegram_channels' => [
+			'label'           => 'Telegram-каналы',
+			'short_label'     => 'TG-канал',
+			'description'     => 'Продажа платной подписки в Telegram-канал через merchant bot.',
+			'company_contour' => 'telegram_channels',
+		],
+	];
+}
+
+function crm_merchant_normalize_feature_code( string $feature_code ): string {
+	return sanitize_key( strtolower( trim( $feature_code ) ) );
+}
+
+function crm_merchant_feature_access_table_exists(): bool {
+	static $exists = null;
+
+	if ( $exists !== null ) {
+		return $exists;
+	}
+
+	global $wpdb;
+	$exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', 'crm_merchant_feature_access' ) ) === 'crm_merchant_feature_access';
+
+	return $exists;
+}
+
+function crm_merchant_company_feature_available( int $company_id, string $feature_code ): bool {
+	if ( $company_id <= 0 ) {
+		return false;
+	}
+
+	$feature_code = crm_merchant_normalize_feature_code( $feature_code );
+	$definitions  = crm_merchant_feature_definitions();
+	if ( ! isset( $definitions[ $feature_code ] ) ) {
+		return false;
+	}
+
+	$company_contour = (string) ( $definitions[ $feature_code ]['company_contour'] ?? '' );
+	if ( $company_contour !== '' && function_exists( 'crm_company_contour_is_enabled' ) ) {
+		return crm_company_contour_is_enabled( $company_id, $company_contour );
+	}
+
+	if ( $feature_code === 'telegram_channels' && function_exists( 'crm_get_setting' ) ) {
+		return crm_get_setting( 'module_telegram_channels_enabled', $company_id, '0' ) === '1';
+	}
+
+	return false;
+}
+
+/**
+ * Возвращает feature-доступы конкретного мерчанта, учитывая company-level availability.
+ *
+ * @return array<string,array<string,mixed>>
+ */
+function crm_merchant_feature_access_payload( int $company_id, int $merchant_id ): array {
+	$definitions = crm_merchant_feature_definitions();
+	$rows_map    = [];
+
+	if ( $company_id > 0 && $merchant_id > 0 && crm_merchant_feature_access_table_exists() ) {
+		global $wpdb;
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT feature_code, is_enabled
+				 FROM crm_merchant_feature_access
+				 WHERE company_id = %d
+				   AND merchant_id = %d",
+				$company_id,
+				$merchant_id
+			),
+			ARRAY_A
+		) ?: [];
+
+		foreach ( $rows as $row ) {
+			$code = crm_merchant_normalize_feature_code( (string) ( $row['feature_code'] ?? '' ) );
+			if ( $code !== '' ) {
+				$rows_map[ $code ] = (int) ( $row['is_enabled'] ?? 0 ) === 1;
+			}
+		}
+	}
+
+	$payload = [];
+	foreach ( $definitions as $feature_code => $definition ) {
+		$available = crm_merchant_company_feature_available( $company_id, $feature_code );
+		$payload[ $feature_code ] = [
+			'code'        => $feature_code,
+			'label'       => (string) ( $definition['label'] ?? $feature_code ),
+			'short_label' => (string) ( $definition['short_label'] ?? ( $definition['label'] ?? $feature_code ) ),
+			'description' => (string) ( $definition['description'] ?? '' ),
+			'available'   => $available,
+			'enabled'     => $available && ! empty( $rows_map[ $feature_code ] ),
+		];
+	}
+
+	return $payload;
+}
+
+/**
+ * @return string[]
+ */
+function crm_merchant_feature_access_enabled_codes( int $company_id, int $merchant_id ): array {
+	$enabled = [];
+	foreach ( crm_merchant_feature_access_payload( $company_id, $merchant_id ) as $feature_code => $payload ) {
+		if ( ! empty( $payload['enabled'] ) ) {
+			$enabled[] = $feature_code;
+		}
+	}
+
+	return $enabled;
+}
+
+function crm_merchant_has_feature_access( int $company_id, int $merchant_id, string $feature_code ): bool {
+	$feature_code = crm_merchant_normalize_feature_code( $feature_code );
+	if ( $company_id <= 0 || $merchant_id <= 0 || $feature_code === '' ) {
+		return false;
+	}
+
+	if ( ! crm_merchant_company_feature_available( $company_id, $feature_code ) || ! crm_merchant_feature_access_table_exists() ) {
+		return false;
+	}
+
+	global $wpdb;
+	$is_enabled = (int) $wpdb->get_var(
+		$wpdb->prepare(
+			"SELECT is_enabled
+			 FROM crm_merchant_feature_access
+			 WHERE company_id = %d
+			   AND merchant_id = %d
+			   AND feature_code = %s
+			 LIMIT 1",
+			$company_id,
+			$merchant_id,
+			$feature_code
+		)
+	);
+
+	return $is_enabled === 1;
+}
+
+/**
+ * @param mixed $raw_value
+ * @return string[]|WP_Error
+ */
+function crm_merchant_validate_feature_access_for_company( int $company_id, $raw_value ) {
+	if ( $company_id <= 0 ) {
+		return new WP_Error( 'invalid_company_scope', 'У мерчанта нет валидной компании.' );
+	}
+
+	if ( is_string( $raw_value ) ) {
+		$decoded = json_decode( $raw_value, true );
+		if ( is_array( $decoded ) ) {
+			$items = $decoded;
+		} else {
+			$items = $raw_value === '' ? [] : preg_split( '/\s*,\s*/', $raw_value );
+		}
+	} elseif ( is_array( $raw_value ) ) {
+		$items = $raw_value;
+	} else {
+		$items = [];
+	}
+
+	$definitions = crm_merchant_feature_definitions();
+	$requested   = [];
+	foreach ( $items as $item ) {
+		$code = crm_merchant_normalize_feature_code( (string) $item );
+		if ( $code === '' ) {
+			continue;
+		}
+		if ( ! isset( $definitions[ $code ] ) ) {
+			return new WP_Error( 'invalid_merchant_feature', 'Выбран неизвестный сервис мерчанта.' );
+		}
+		if ( ! crm_merchant_company_feature_available( $company_id, $code ) ) {
+			return new WP_Error( 'merchant_feature_company_disabled', 'Сначала включите этот сервис для компании.' );
+		}
+		$requested[ $code ] = $code;
+	}
+
+	$result = [];
+	foreach ( array_keys( $definitions ) as $feature_code ) {
+		if ( isset( $requested[ $feature_code ] ) ) {
+			$result[] = $feature_code;
+		}
+	}
+
+	return $result;
+}
+
+function crm_merchant_set_feature_access( int $company_id, int $merchant_id, string $feature_code, bool $enabled, int $granted_by_user_id = 0 ) {
+	$feature_code = crm_merchant_normalize_feature_code( $feature_code );
+	$definitions  = crm_merchant_feature_definitions();
+
+	if ( $company_id <= 0 || $merchant_id <= 0 ) {
+		return new WP_Error( 'invalid_company_scope', 'У мерчанта нет валидной компании.' );
+	}
+
+	if ( ! isset( $definitions[ $feature_code ] ) ) {
+		return new WP_Error( 'invalid_merchant_feature', 'Выбран неизвестный сервис мерчанта.' );
+	}
+
+	if ( $enabled && ! crm_merchant_company_feature_available( $company_id, $feature_code ) ) {
+		return new WP_Error( 'merchant_feature_company_disabled', 'Сначала включите этот сервис для компании.' );
+	}
+
+	if ( ! crm_merchant_feature_access_table_exists() ) {
+		return $enabled
+			? new WP_Error( 'merchant_feature_access_table_missing', 'Таблица доступов мерчантов ещё не создана. Обновите страницу после миграции.' )
+			: true;
+	}
+
+	global $wpdb;
+	$merchant_exists = (int) $wpdb->get_var(
+		$wpdb->prepare(
+			'SELECT id FROM crm_merchants WHERE id = %d AND company_id = %d LIMIT 1',
+			$merchant_id,
+			$company_id
+		)
+	);
+	if ( $merchant_exists <= 0 ) {
+		return new WP_Error( 'merchant_not_found', 'Мерчант не найден в текущей компании.' );
+	}
+
+	$existing = $wpdb->get_row(
+		$wpdb->prepare(
+			"SELECT id, is_enabled
+			 FROM crm_merchant_feature_access
+			 WHERE company_id = %d
+			   AND merchant_id = %d
+			   AND feature_code = %s
+			 LIMIT 1",
+			$company_id,
+			$merchant_id,
+			$feature_code
+		)
+	);
+	$was_enabled = $existing && (int) $existing->is_enabled === 1;
+	if ( $was_enabled === $enabled ) {
+		return true;
+	}
+
+	$now = current_time( 'mysql', true );
+	$ok  = $wpdb->replace(
+		'crm_merchant_feature_access',
+		[
+			'company_id'          => $company_id,
+			'merchant_id'         => $merchant_id,
+			'feature_code'        => $feature_code,
+			'is_enabled'          => $enabled ? 1 : 0,
+			'granted_by_user_id'  => $enabled && $granted_by_user_id > 0 ? $granted_by_user_id : null,
+			'granted_at'          => $enabled ? $now : null,
+			'created_at'          => $now,
+			'updated_at'          => $now,
+		],
+		[ '%d', '%d', '%s', '%d', '%d', '%s', '%s', '%s' ]
+	);
+
+	if ( $ok === false ) {
+		return new WP_Error( 'merchant_feature_access_save_failed', 'Не удалось сохранить доступ к сервису мерчанта.' );
+	}
+
+	if ( function_exists( 'crm_log_entity' ) ) {
+		crm_log_entity(
+			'merchant.feature_access_updated',
+			'users',
+			'update',
+			'Обновлён доступ мерчанта к сервису.',
+			'merchant',
+			$merchant_id,
+			[
+				'org_id'  => $company_id,
+				'context' => [
+					'feature_code'       => $feature_code,
+					'enabled'            => $enabled,
+					'granted_by_user_id' => $granted_by_user_id > 0 ? $granted_by_user_id : null,
+				],
+			]
+		);
+	}
+
+	return true;
+}
+
+/**
+ * @param string[] $enabled_feature_codes
+ * @return true|WP_Error
+ */
+function crm_merchant_apply_feature_access( int $company_id, int $merchant_id, array $enabled_feature_codes, int $user_id = 0 ) {
+	$enabled_map = array_fill_keys( array_map( 'crm_merchant_normalize_feature_code', $enabled_feature_codes ), true );
+
+	foreach ( array_keys( crm_merchant_feature_definitions() ) as $feature_code ) {
+		$result = crm_merchant_set_feature_access(
+			$company_id,
+			$merchant_id,
+			$feature_code,
+			! empty( $enabled_map[ $feature_code ] ),
+			$user_id
+		);
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+	}
+
+	return true;
+}
+
+/**
  * Рендерит HTML-бейджи доступных направлений мерчанта.
  */
 function crm_merchant_render_exchange_pair_badges_html( array $direction_codes ): string {
@@ -831,6 +1142,17 @@ function crm_merchant_normalize_usdt_amount( $value ): float {
 	}
 
 	return round( max( 0, (float) $value ), 8 );
+}
+
+function crm_merchant_public_error_text( $message, string $fallback = 'Ошибка платёжного провайдера.' ): string {
+	$message = trim( (string) $message );
+	if ( $message === '' ) {
+		$message = $fallback;
+	}
+
+	$message = preg_replace( '/Kanyon\s*\(Pay2Day\)|Pay2Day|Kanyon/i', 'платёжный провайдер', $message );
+
+	return is_string( $message ) && trim( $message ) !== '' ? trim( $message ) : $fallback;
 }
 
 /**
@@ -954,26 +1276,20 @@ function crm_merchant_validate_rub_invoice_prerequisites( $merchant ): array {
 	}
 
 	if ( ! in_array( $active_provider, [ Fintech_Payment_Gateway::PROVIDER_KANYON, Fintech_Payment_Gateway::PROVIDER_FRIENDLY_PAY ], true ) ) {
-		$result['error'] = sprintf(
-			'Merchant RUB -> USDT flow работает только через Kanyon или Friendly Pay. Сейчас активный провайдер компании: %s.',
-			$active_provider !== '' ? crm_fintech_provider_label( $active_provider ) : 'не выбран'
-		);
+		$result['error'] = 'Merchant RUB -> USDT flow сейчас недоступен для активного платёжного контура компании.';
 		return $result;
 	}
 
 	if ( $active_provider === Fintech_Payment_Gateway::PROVIDER_KANYON && $order_currency !== 'RUB' ) {
 		$result['error'] = sprintf(
-			'У компании сейчас включён legacy Kanyon-контур `%s`. Новый merchant RUB -> USDT flow через Kanyon доступен только при `fintech_pay2day_order_currency = RUB`.',
+			'Текущий платёжный контур компании работает в режиме `%s`. Новый merchant RUB -> USDT flow доступен только при валюте RUB.',
 			$order_currency !== '' ? $order_currency : 'не задано'
 		);
 		return $result;
 	}
 
 	if ( ! crm_fintech_is_provider_allowed( $company_id, $active_provider ) ) {
-		$result['error'] = sprintf(
-			'%s отключён для этой компании. Обратитесь к root-администратору.',
-			crm_fintech_provider_label( $active_provider )
-		);
+		$result['error'] = 'Платёжный контур отключён для этой компании. Обратитесь к root-администратору.';
 		return $result;
 	}
 
@@ -993,7 +1309,7 @@ function crm_merchant_validate_rub_invoice_prerequisites( $merchant ): array {
 			$config_status['missing_fields'] ?? []
 		);
 		$missing_labels = array_values( array_filter( $missing_labels ) );
-		$result['error'] = crm_fintech_provider_label( $active_provider ) . ' не настроен для этой компании.'
+		$result['error'] = 'Платёжный контур не настроен для этой компании.'
 			. ( ! empty( $missing_labels ) ? ' Не хватает: ' . implode( ', ', $missing_labels ) . '.' : '' );
 		return $result;
 	}
@@ -1070,15 +1386,12 @@ function crm_merchant_validate_usdt_invoice_prerequisites( $merchant ): array {
 	}
 
 	if ( $active_provider !== Fintech_Payment_Gateway::PROVIDER_KANYON ) {
-		$result['error'] = sprintf(
-			'Legacy merchant RUB -> USDT flow через orderAmount пока работает только через Kanyon. Сейчас активный провайдер компании: %s.',
-			$active_provider !== '' ? crm_fintech_provider_label( $active_provider ) : 'не выбран'
-		);
+		$result['error'] = 'Legacy merchant RUB -> USDT flow через orderAmount сейчас недоступен для активного платёжного контура компании.';
 		return $result;
 	}
 
 	if ( ! crm_fintech_is_provider_allowed( $company_id, Fintech_Payment_Gateway::PROVIDER_KANYON ) ) {
-		$result['error'] = 'Kanyon отключён для этой компании. Обратитесь к root-администратору.';
+		$result['error'] = 'Платёжный контур отключён для этой компании. Обратитесь к root-администратору.';
 		return $result;
 	}
 
@@ -1098,7 +1411,7 @@ function crm_merchant_validate_usdt_invoice_prerequisites( $merchant ): array {
 			$config_status['missing_fields'] ?? []
 		);
 		$missing_labels = array_values( array_filter( $missing_labels ) );
-		$result['error'] = 'Kanyon не настроен для этой компании.'
+		$result['error'] = 'Платёжный контур не настроен для этой компании.'
 			. ( ! empty( $missing_labels ) ? ' Не хватает: ' . implode( ', ', $missing_labels ) . '.' : '' );
 		return $result;
 	}
@@ -1197,7 +1510,7 @@ function crm_merchant_create_usdt_invoice( int $merchant_id, float $requested_us
 			'category'    => 'payments',
 			'level'       => 'error',
 			'action'      => 'create',
-			'message'     => 'Kanyon не создал merchant USDT invoice.',
+			'message'     => 'Платёжный провайдер не создал merchant USDT invoice.',
 			'target_type' => 'merchant',
 			'target_id'   => $merchant_id,
 			'org_id'      => $company_id,
@@ -1210,7 +1523,7 @@ function crm_merchant_create_usdt_invoice( int $merchant_id, float $requested_us
 			],
 		] );
 
-		$result['error'] = (string) ( $invoice['error'] ?? 'Gateway error' );
+		$result['error'] = crm_merchant_public_error_text( $invoice['error'] ?? '', 'Gateway error' );
 		return $result;
 	}
 
@@ -1275,7 +1588,7 @@ function crm_merchant_create_usdt_invoice( int $merchant_id, float $requested_us
 				$merchant_meta,
 				JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
 			),
-			'notes'                       => 'Merchant RUB -> USDT invoice created via Kanyon orderAmount flow.',
+			'notes'                       => 'Merchant RUB -> USDT invoice created via payment provider orderAmount flow.',
 		]
 	);
 
@@ -1317,7 +1630,7 @@ function crm_merchant_create_usdt_invoice( int $merchant_id, float $requested_us
 		'category'    => 'payments',
 		'level'       => 'info',
 		'action'      => 'create',
-		'message'     => 'Создан merchant RUB -> USDT invoice через Kanyon orderAmount.',
+		'message'     => 'Создан merchant RUB -> USDT invoice через payment provider orderAmount.',
 		'target_type' => 'payment_order',
 		'target_id'   => $order_db_id,
 		'org_id'      => $company_id,
@@ -1495,7 +1808,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 			'category'    => 'payments',
 			'level'       => 'error',
 			'action'      => 'create',
-			'message'     => crm_fintech_provider_label( $active_provider ) . ' не создал merchant RUB invoice.',
+			'message'     => 'Платёжный провайдер не создал merchant RUB invoice.',
 			'target_type' => 'merchant',
 			'target_id'   => $merchant_id,
 			'org_id'      => $company_id,
@@ -1508,7 +1821,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 			],
 		] );
 
-		$result['error'] = (string) ( $invoice['error'] ?? 'Gateway error' );
+		$result['error'] = crm_merchant_public_error_text( $invoice['error'] ?? '', 'Gateway error' );
 		return $result;
 	}
 
@@ -1613,8 +1926,8 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 			'notes'                       => $is_friendly_pay_provider
 				? 'Merchant RUB -> USDT invoice created via Rapira + Friendly Pay SBP flow.'
 				: ( $kanyon_gross_usdt > 0
-					? 'Merchant RUB -> USDT invoice created via Rapira + Kanyon paymentAmount flow.'
-					: 'Merchant RUB -> USDT invoice created via Rapira + Kanyon paymentAmount flow. Waiting for provider gross orderAmount.' ),
+					? 'Merchant RUB -> USDT invoice created via Rapira + payment provider paymentAmount flow.'
+					: 'Merchant RUB -> USDT invoice created via Rapira + payment provider paymentAmount flow. Waiting for provider gross orderAmount.' ),
 		]
 	);
 
@@ -1660,7 +1973,7 @@ function crm_merchant_create_rub_invoice( int $merchant_id, float $requested_rub
 			'category'    => 'payments',
 			'level'       => 'warning',
 			'action'      => 'create',
-			'message'     => 'Фактический gross Kanyon отличается от ожидаемого расчёта Rapira.',
+			'message'     => 'Фактический gross платёжного провайдера отличается от ожидаемого расчёта Rapira.',
 			'target_type' => 'payment_order',
 			'target_id'   => $order_db_id,
 			'org_id'      => $company_id,

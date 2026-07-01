@@ -645,6 +645,12 @@ function me_ajax_settings_save(): void {
 	$telegram_context = crm_telegram_normalize_bot_context(
 		isset( $_POST['telegram_context'] ) ? (string) wp_unslash( $_POST['telegram_context'] ) : 'merchant'
 	);
+	if ( $telegram_context === 'subscription' ) {
+		wp_send_json_error( [
+			'message'      => 'Subscription bot настраивается отдельно для каждого мерчанта на странице Telegram-каналы.',
+			'redirect_url' => home_url( '/telegram-channels/' ),
+		], 422 );
+	}
 	$token_key        = crm_telegram_setting_key( $telegram_context, 'bot_token' );
 	$username_key     = crm_telegram_setting_key( $telegram_context, 'bot_username' );
 	$context_label    = crm_telegram_bot_context_labels()[ $telegram_context ];
@@ -811,6 +817,12 @@ function me_ajax_settings_telegram_connect(): void {
 	$telegram_context = crm_telegram_normalize_bot_context(
 		isset( $_POST['telegram_context'] ) ? (string) wp_unslash( $_POST['telegram_context'] ) : 'merchant'
 	);
+	if ( $telegram_context === 'subscription' ) {
+		wp_send_json_error( [
+			'message'      => 'Subscription bot настраивается отдельно для каждого мерчанта на странице Telegram-каналы.',
+			'redirect_url' => home_url( '/telegram-channels/' ),
+		], 422 );
+	}
 	$saved_settings = crm_telegram_collect_settings( $org_id, $telegram_context );
 	$token          = trim( (string) ( $saved_settings['bot_token'] ?? '' ) );
 	$username       = crm_telegram_sanitize_bot_username( (string) ( $saved_settings['bot_username'] ?? '' ) );
@@ -903,6 +915,12 @@ function me_ajax_settings_telegram_unlock(): void {
 	$telegram_context = crm_telegram_normalize_bot_context(
 		isset( $_POST['telegram_context'] ) ? (string) wp_unslash( $_POST['telegram_context'] ) : 'merchant'
 	);
+	if ( $telegram_context === 'subscription' ) {
+		wp_send_json_error( [
+			'message'      => 'Subscription bot настраивается отдельно для каждого мерчанта на странице Telegram-каналы.',
+			'redirect_url' => home_url( '/telegram-channels/' ),
+		], 422 );
+	}
 
 	crm_telegram_set_config_lock( $org_id, false, $telegram_context );
 
